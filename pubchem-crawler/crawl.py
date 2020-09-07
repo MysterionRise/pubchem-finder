@@ -127,11 +127,14 @@ class Extractor:
             for file in self.cast_path(Path(root), files):
                 if file.suffix == ".gz":
                     try:
+                        logging.info("Extracting file %s", file)
                         extracted = self.__gunzip_content(file)
                         handler(extracted)
                         extracted.unlink(missing_ok=True)
                     except EOFError as err_:
                         logging.error("File %s: %s", file, err_)
+                    finally:
+                        logging.info("File %s uploaded", file)
 
 
 class BingoNoSQLDatabase:
@@ -182,7 +185,10 @@ def extract(arg_ns: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        level=logging.INFO,
+        datefmt='%Y-%m-%d %H:%M:%S')
 
     parser = argparse.ArgumentParser(description="Pubchem crawler")
 
