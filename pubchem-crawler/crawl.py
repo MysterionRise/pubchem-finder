@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable, Generator, Iterable, List, Set
 
 import indigo
+from elasticsearch import Elasticsearch
 from ftpretty import ftpretty
 from indigo.bingo import Bingo
 
@@ -27,7 +28,6 @@ class FTP:
 
 
 class PubchemLoader:
-
     dir_mapping = {"compounds": "Compound"}
 
     # Order make sense
@@ -71,7 +71,7 @@ class PubchemLoader:
         return set([Path(name).name for name in dir_])
 
     def __diff(
-        self, source_dir: str, source_file_list: List[str], ext_: str
+            self, source_dir: str, source_file_list: List[str], ext_: str
     ) -> Generator[Path, None, None]:
         pth = self.target_dir / source_dir
         targets = self.get_names(pth.glob(f"*.{ext_}"))
@@ -94,7 +94,7 @@ class PubchemLoader:
         with FTP(self.ftp, "anonymous", "anonymous@domain.com") as ftp_:
             for ext_ in self.sup_extensions:
                 for remote_file in self.__diff(
-                    source_dir, ftp_.list(source_dir), ext_[1:]
+                        source_dir, ftp_.list(source_dir), ext_[1:]
                 ):
                     try:
                         logging.info("start download %s", remote_file)
@@ -166,10 +166,24 @@ class BingoNoSQLDatabase:
 
 class ElasticDatabase:
     def __init__(self, arg_ns: argparse.Namespace):
-        pass
+        self.arg_ns = arg_ns
+        self.index = arg_ns.elastic_index
+        self.session = indigo.Indigo()
+        self.es = Elasticsearch([arg_ns.elastic_url],
+                                verify_certs=arg_ns.elastic_verify_certs,
+                                ssl_show_warn=arg_ns.elastic_verify_certs)
 
     def handler(self, source_file: Path):
-        pass
+        for molecule in self.session.iterateSDFile(str(source_file)):
+            try:
+                # todo add check for incremental update
+                # todo get pubchem id?
+                self.es.index(self.index, body={
+                    "smiles": molecule.canonicalSmiles(),
+                    "fingerprint": molecule.fingerprint(type='sim').oneBitsList().split(' ')
+                })
+            except indigo.bingo.BingoException as e:
+                logging.error("Cannot upload molecule: %s", e)
 
 
 def download(arg_ns: argparse.Namespace) -> None:
@@ -181,10 +195,11 @@ def extract(arg_ns: argparse.Namespace) -> None:
     extractor = Extractor(arg_ns.pubchem_dir)
     if arg_ns.database == "bingo_nosql":
         extractor.extract(BingoNoSQLDatabase(arg_ns).handler)
+    elif arg_ns.database == "elastic":
+        extractor.extract(ElasticDatabase(arg_ns).handler)
 
 
 if __name__ == "__main__":
-
     logging.basicConfig(
         format='%(asctime)s [%(levelname)s] %(message)s',
         level=logging.INFO,
@@ -204,7 +219,8 @@ if __name__ == "__main__":
     )
 
     parser_extract = subparsers.add_parser("extract")
-    parser_extract.add_argument("--database", type=str, default="bingo_nosql")
+    parser_extract.add_argument("--database", type=str, default="bingo_nosql",
+                                help="Type of the storage, options = [elastic, bingo_nosql]")
     parser_extract.add_argument(
         "--pubchem-dir",
         type=str,
@@ -213,6 +229,19 @@ if __name__ == "__main__":
     )
     parser_extract.add_argument(
         "--bingo-dir", type=str, help="Bingo nosql db location"
+    )
+    parser_extract.add_argument(
+        "--elastic-url", type=str, help="Elastic URL in RFC-1738 format https://user:password@host:port",
+        default="https://admin:admin@localhost:9200"
+    )
+    parser_extract.add_argument(
+        "--elastic-verify-certs", default=False, action='store_true', help="Force client to verify ssl certs"
+    )
+    parser_extract.add_argument(
+        "--elastic-no-verify-certs", action='store_false', dest="elastic-verify-certs", help="Don't verify certs"
+    )
+    parser_extract.add_argument(
+        "--elastic-index", type=str, help="Name of the index in Elastic", default="pubchem"
     )
     parser_extract.set_defaults(func=extract)
 
