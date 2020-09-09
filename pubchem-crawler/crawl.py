@@ -246,7 +246,7 @@ if __name__ == '__main__':
         '--database',
         type=str,
         default='bingo_nosql',
-        help='Type of the storage, options = ' '[elastic, bingo_nosql]',
+        help='Type of the storage, options = [elastic, bingo_nosql]',
     )
     parser_extract.add_argument(
         '--pubchem-dir',
