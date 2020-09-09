@@ -175,13 +175,19 @@ class ElasticDatabase:
 
     def handler(self, source_file: Path):
         for molecule in self.session.iterateSDFile(str(source_file)):
+            docs = []
             try:
                 # todo add check for incremental update
                 # todo get pubchem id?
-                self.es.index(self.index, body={
+                docs.append({"index": {}})
+                docs.append({
                     "smiles": molecule.canonicalSmiles(),
                     "fingerprint": molecule.fingerprint(type='sim').oneBitsList().split(' ')
                 })
+                if len(docs) == 10000:
+                    print('Indexing docs of len {}'.format(len(docs)))
+                    self.es.bulk(index=self.index, body=docs)
+                    docs = []
             except indigo.bingo.BingoException as e:
                 logging.error("Cannot upload molecule: %s", e)
 
