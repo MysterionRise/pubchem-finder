@@ -2,3 +2,4 @@
 .idea
 /pubchem_dir/
 /odfe-data1/
+/elastic/docker-compose-dev.yml
