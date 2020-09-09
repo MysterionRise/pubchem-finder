@@ -1,3 +1,5 @@
 /venv/
 .idea
 /pubchem_dir/
+/elastic/docker-compose-dev.yml
+/dbdir

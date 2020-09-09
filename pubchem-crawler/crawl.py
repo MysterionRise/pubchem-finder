@@ -4,6 +4,7 @@ import gzip
 import logging
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Generator, Iterable, List, Set
 
@@ -11,6 +12,11 @@ import indigo
 from elasticsearch import Elasticsearch
 from ftpretty import ftpretty
 from indigo.bingo import Bingo
+
+
+def info(msg_: str,) -> None:
+    now_ = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    print(f'{now_} [INFO] {msg_}')
 
 
 class FTP:
@@ -60,7 +66,7 @@ class PubchemLoader:
         try:
             with open(pth, "xb") as target_file:
                 ftp_.get(filename, target_file)
-                logging.info("Downloaded %s", pth)
+                info(f'Downloaded {pth}')
         except FileExistsError:
             if pth.suffix == ".md5":
                 # always reload md5 files
@@ -76,7 +82,7 @@ class PubchemLoader:
         return set([Path(name).name for name in dir_])
 
     def __diff(
-            self, source_dir: str, source_file_list: List[str], ext_: str
+        self, source_dir: str, source_file_list: List[str], ext_: str
     ) -> Generator[Path, None, None]:
         pth = self.target_dir / source_dir
         targets = self.get_names(pth.glob(f"*.{ext_}"))
@@ -104,12 +110,12 @@ class PubchemLoader:
                     source_dir, ftp_.list(source_dir), ext_[1:]
                 ):
                     try:
-                        logging.info("start download %s", remote_file)
+                        info(f'start download {remote_file}')
                         self.__download_file(ftp_, remote_file)
                     except (ftplib.error_temp, EOFError, BaseException) as err_:
-                        logging.warning("%s, sleeping 5 seconds", err_)
+                        logging.warning('%s, sleeping 5 seconds', err_)
                         time.sleep(5)
-                        logging.warning("retry...")
+                        logging.warning('retry...')
                         self.full_download()
 
 
@@ -119,8 +125,8 @@ class Extractor:
 
     @staticmethod
     def __gunzip_content(file: Path) -> Path:
-        target_file = file.with_suffix("")
-        with open(target_file, "wb") as target, gzip.open(file, "rb") as src:
+        target_file = file.with_suffix('')
+        with open(target_file, 'wb') as target, gzip.open(file, 'rb') as src:
             target.write(src.read())
         return target_file
 
@@ -132,16 +138,16 @@ class Extractor:
     def extract(self, handler: Callable[[Path], None]):
         for root, dirs, files in os.walk(self.chembl_dir):
             for file in self.cast_path(Path(root), files):
-                if file.suffix == ".gz":
+                if file.suffix == '.gz':
                     try:
-                        logging.info("Extracting file %s", file)
+                        info(f'Extracting file {file}')
                         extracted = self.__gunzip_content(file)
                         handler(extracted)
                         extracted.unlink(missing_ok=True)
                     except EOFError as err_:
-                        logging.error("File %s: %s", file, err_)
+                        logging.error('File %s: %s', file, err_)
                     finally:
-                        logging.info("File %s uploaded", file)
+                        info(f'File {file} uploaded')
 
 
 class BingoNoSQLDatabase:
@@ -152,15 +158,15 @@ class BingoNoSQLDatabase:
         if arg_ns.bingo_dir:
             self.bingo_dir = arg_ns.bingo_dir
         else:
-            self.bingo_dir = Path(arg_ns.pubchem_dir) / "bingo_dir"
+            self.bingo_dir = Path(arg_ns.pubchem_dir) / 'bingo_dir'
 
         if self.bingo_dir.is_dir():
             self.bingo_conn = Bingo.loadDatabaseFile(
-                self.session, str(self.bingo_dir), ""
+                self.session, str(self.bingo_dir), ''
             )
         else:
             self.bingo_conn = Bingo.createDatabaseFile(
-                self.session, str(self.bingo_dir), "molecule", ""
+                self.session, str(self.bingo_dir), 'molecule', ''
             )
 
     def handler(self, source_file: Path):
@@ -168,7 +174,7 @@ class BingoNoSQLDatabase:
             try:
                 self.bingo_conn.insert(molecule)
             except indigo.bingo.BingoException as e:
-                logging.error("Cannot upload molecule: %s", e)
+                logging.error('Cannot upload molecule: %s', e)
 
 
 class ElasticDatabase:
@@ -176,97 +182,111 @@ class ElasticDatabase:
         self.arg_ns = arg_ns
         self.index = arg_ns.elastic_index
         self.session = indigo.Indigo()
-        self.es = Elasticsearch([arg_ns.elastic_url],
-                                verify_certs=arg_ns.elastic_verify_certs,
-                                ssl_show_warn=arg_ns.elastic_verify_certs)
+        self.es = Elasticsearch(
+            [arg_ns.elastic_url],
+            verify_certs=arg_ns.elastic_verify_certs,
+            ssl_show_warn=arg_ns.elastic_verify_certs,
+        )
 
     def handler(self, source_file: Path):
         for molecule in self.session.iterateSDFile(str(source_file)):
             try:
                 # todo add check for incremental update
                 # todo get pubchem id?
-                self.es.index(self.index, body={
-                    "smiles": molecule.canonicalSmiles(),
-                    "fingerprint": molecule.fingerprint(type='sim').oneBitsList().split(' ')
-                })
+                self.es.index(
+                    self.index,
+                    body={
+                        'smiles': molecule.canonicalSmiles(),
+                        'fingerprint': molecule.fingerprint(type='sim')
+                        .oneBitsList()
+                        .split(' '),
+                    },
+                )
             except indigo.bingo.BingoException as e:
-                logging.error("Cannot upload molecule: %s", e)
+                logging.error('Cannot upload molecule: %s', e)
 
 
 def download(arg_ns: argparse.Namespace) -> None:
-    loader = PubchemLoader("compounds", arg_ns.pubchem_dir, "sdf")
+    loader = PubchemLoader('compounds', arg_ns.pubchem_dir, 'sdf')
     loader.full_download()
 
 
 def extract(arg_ns: argparse.Namespace) -> None:
     extractor = Extractor(arg_ns.pubchem_dir)
-    if arg_ns.database == "bingo_nosql":
+    if arg_ns.database == 'bingo_nosql':
         extractor.extract(BingoNoSQLDatabase(arg_ns).handler)
-    elif arg_ns.database == "elastic":
+    elif arg_ns.database == 'elastic':
         extractor.extract(ElasticDatabase(arg_ns).handler)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
 
     logging.basicConfig(
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        level=logging.INFO,
-        datefmt="%Y-%m-%d %H:%M:%S",
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        level=logging.WARNING,
+        datefmt='%Y-%m-%d %H:%M:%S',
     )
 
-    parser = argparse.ArgumentParser(description="Pubchem crawler")
+    parser = argparse.ArgumentParser(description='Pubchem crawler')
 
-    subparsers = parser.add_subparsers(help="select mode: download, extract")
+    subparsers = parser.add_subparsers(help='select mode: download, extract')
 
-    parser_download = subparsers.add_parser("download")
+    parser_download = subparsers.add_parser('download')
     parser_download.set_defaults(func=download)
     parser_download.add_argument(
-        "--pubchem-dir",
+        '--pubchem-dir',
         type=str,
-        default="./pubchem_dir",
-        help="Pubchem directory path",
+        default='./pubchem_dir',
+        help='Pubchem directory path',
     )
 
-    parser_extract = subparsers.add_parser("extract")
-    parser_extract.add_argument("--database", type=str, default="bingo_nosql",
-                                help="Type of the storage, options = "
-                                     "[elastic, bingo_nosql]")
+    parser_extract = subparsers.add_parser('extract')
     parser_extract.add_argument(
-        "--pubchem-dir",
+        '--database',
         type=str,
-        default="./pubchem_dir",
-        help="Pubchem directory path",
+        default='bingo_nosql',
+        help='Type of the storage, options = ' '[elastic, bingo_nosql]',
+    )
+    parser_extract.add_argument(
+        '--pubchem-dir',
+        type=str,
+        default='./pubchem_dir',
+        help='Pubchem directory path',
     )
     parser_download.add_argument(
-        "--timeout",
-        type=int,
-        default=30,
-        help="Max connection timeout. "
+        '--timeout', type=int, default=30, help='Max connection timeout. '
     )
     parser_extract.add_argument(
-        "--bingo-dir", type=str, help="Bingo nosql db location"
+        '--bingo-dir', type=str, help='Bingo nosql db location'
     )
     parser_extract.add_argument(
-        "--skip-file",
+        '--skip-file',
         type=str,
-        help="Files listed in skip file " "will not be uploaded.",
+        help='Files listed in skip file will not be uploaded.',
     )
     parser_extract.add_argument(
-        "--elastic-url", type=str,
-        help="Elastic URL in RFC-1738 format https://user:password@host:port",
-        default="https://admin:admin@localhost:9200"
+        '--elastic-url',
+        type=str,
+        help='Elastic URL in RFC-1738 format https://user:password@host:port',
+        default='https://admin:admin@localhost:9200',
     )
     parser_extract.add_argument(
-        "--elastic-verify-certs", default=False, action='store_true',
-        help="Force client to verify ssl certs"
+        '--elastic-verify-certs',
+        default=False,
+        action='store_true',
+        help='Force client to verify ssl certs',
     )
     parser_extract.add_argument(
-        "--elastic-no-verify-certs", action='store_false',
-        dest="elastic-verify-certs", help="Don't verify certs"
+        '--elastic-no-verify-certs',
+        action='store_false',
+        dest='elastic-verify-certs',
+        help="Don't verify certs",
     )
     parser_extract.add_argument(
-        "--elastic-index", type=str, help="Name of the index in Elastic",
-        default="pubchem"
+        '--elastic-index',
+        type=str,
+        help='Name of the index in Elastic',
+        default='pubchem',
     )
     parser_extract.set_defaults(func=extract)
 
