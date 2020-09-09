@@ -28,20 +28,25 @@ class FTP:
 
 
 class PubchemLoader:
+
     dir_mapping = {"compounds": "Compound"}
 
     # Order make sense
     sup_extensions = [".md5", ".gz"]
 
-    def __init__(self, data: str, target_dir: str, fmt: str) -> None:
+    def __init__(
+        self, data: str, target_dir: str, fmt: str, timeout: int = 30
+    ) -> None:
         self.ftp = "ftp.ncbi.nlm.nih.gov"
         self.target = Path("pubchem") / self.dir_mapping[data]
         self.fmt = fmt.upper()
         self.target_dir = Path(target_dir)
+        self.timeout = timeout
 
     def __checksum(self, target_file: Path) -> bool:
-        # todo: create checksum functionality
-        target_file.with_suffix(".gz.md5").is_file()
+
+        with open(target_file.with_suffix(".gz.md5"), "r") as md5_remote:
+            md5_remote_str = md5_remote.readline()
         return True
 
     def __download_file(self, ftp_: ftpretty, filename: Path, tries: int = 0):
@@ -91,10 +96,12 @@ class PubchemLoader:
     def full_download(self):
         source_dir = f"{self.target}/CURRENT-Full/{self.fmt}"
 
-        with FTP(self.ftp, "anonymous", "anonymous@domain.com") as ftp_:
+        with FTP(
+            self.ftp, "anonymous", "anonymous@domain.com", timeout=self.timeout
+        ) as ftp_:
             for ext_ in self.sup_extensions:
                 for remote_file in self.__diff(
-                        source_dir, ftp_.list(source_dir), ext_[1:]
+                    source_dir, ftp_.list(source_dir), ext_[1:]
                 ):
                     try:
                         logging.info("start download %s", remote_file)
@@ -200,10 +207,12 @@ def extract(arg_ns: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
+
     logging.basicConfig(
-        format='%(asctime)s [%(levelname)s] %(message)s',
+        format="%(asctime)s [%(levelname)s] %(message)s",
         level=logging.INFO,
-        datefmt='%Y-%m-%d %H:%M:%S')
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
     parser = argparse.ArgumentParser(description="Pubchem crawler")
 
@@ -220,28 +229,44 @@ if __name__ == "__main__":
 
     parser_extract = subparsers.add_parser("extract")
     parser_extract.add_argument("--database", type=str, default="bingo_nosql",
-                                help="Type of the storage, options = [elastic, bingo_nosql]")
+                                help="Type of the storage, options = "
+                                     "[elastic, bingo_nosql]")
     parser_extract.add_argument(
         "--pubchem-dir",
         type=str,
         default="./pubchem_dir",
         help="Pubchem directory path",
     )
+    parser_download.add_argument(
+        "--timeout",
+        type=int,
+        default=30,
+        help="Max connection timeout. "
+    )
     parser_extract.add_argument(
         "--bingo-dir", type=str, help="Bingo nosql db location"
     )
     parser_extract.add_argument(
-        "--elastic-url", type=str, help="Elastic URL in RFC-1738 format https://user:password@host:port",
+        "--skip-file",
+        type=str,
+        help="Files listed in skip file " "will not be uploaded.",
+    )
+    parser_extract.add_argument(
+        "--elastic-url", type=str,
+        help="Elastic URL in RFC-1738 format https://user:password@host:port",
         default="https://admin:admin@localhost:9200"
     )
     parser_extract.add_argument(
-        "--elastic-verify-certs", default=False, action='store_true', help="Force client to verify ssl certs"
+        "--elastic-verify-certs", default=False, action='store_true',
+        help="Force client to verify ssl certs"
     )
     parser_extract.add_argument(
-        "--elastic-no-verify-certs", action='store_false', dest="elastic-verify-certs", help="Don't verify certs"
+        "--elastic-no-verify-certs", action='store_false',
+        dest="elastic-verify-certs", help="Don't verify certs"
     )
     parser_extract.add_argument(
-        "--elastic-index", type=str, help="Name of the index in Elastic", default="pubchem"
+        "--elastic-index", type=str, help="Name of the index in Elastic",
+        default="pubchem"
     )
     parser_extract.set_defaults(func=extract)
 
