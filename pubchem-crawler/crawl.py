@@ -202,8 +202,9 @@ class ElasticDatabase:
                         .split(' '),
                     },
                 )
-            except indigo.bingo.BingoException as e:
+            except indigo.IndigoException as e:
                 logging.error('Cannot upload molecule: %s', e)
+
 
 
 def download(arg_ns: argparse.Namespace) -> None:
