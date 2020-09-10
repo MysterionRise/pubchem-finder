@@ -174,22 +174,28 @@ class ElasticDatabase:
                                 ssl_show_warn=arg_ns.elastic_verify_certs)
 
     def handler(self, source_file: Path):
+        docs = []
         for molecule in self.session.iterateSDFile(str(source_file)):
-            docs = []
             try:
                 # todo add check for incremental update
                 # todo get pubchem id?
-                docs.append({"index": {}})
-                docs.append({
+                doc = {
                     "smiles": molecule.canonicalSmiles(),
                     "fingerprint": molecule.fingerprint(type='sim').oneBitsList().split(' ')
-                })
+                }
+                docs.append({"index": {}})
+                docs.append(doc)
                 if len(docs) == 10000:
                     print('Indexing docs of len {}'.format(len(docs)))
                     self.es.bulk(index=self.index, body=docs)
+                    time.sleep(1)
                     docs = []
-            except indigo.bingo.BingoException as e:
+            except indigo.IndigoException as e:
                 logging.error("Cannot upload molecule: %s", e)
+        if len(docs) > 0:
+            print('Indexing docs of len {}'.format(len(docs)))
+            self.es.bulk(index=self.index, body=docs)
+        self.es.indices.refresh(index=self.index)
 
 
 def download(arg_ns: argparse.Namespace) -> None:
