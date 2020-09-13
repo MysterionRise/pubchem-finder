@@ -15,7 +15,7 @@ from indigo.bingo import Bingo
 
 
 def info(msg_: str,) -> None:
-    now_ = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    now_ = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
     print(f'{now_} [INFO] {msg_}')
 
 
@@ -189,22 +189,28 @@ class ElasticDatabase:
         )
 
     def handler(self, source_file: Path):
-        molecule: indigo.IndigoObject
+        docs = []
         for molecule in self.session.iterateSDFile(str(source_file)):
             try:
                 # todo add check for incremental update
                 # todo get pubchem id?
-                self.es.index(
-                    self.index,
-                    body={
-                        'smiles': molecule.canonicalSmiles(),
-                        'fingerprint': molecule.fingerprint(type='sim')
-                        .oneBitsList()
-                        .split(' '),
-                    },
-                )
+                doc = {
+                    "smiles": molecule.canonicalSmiles(),
+                    "fingerprint": molecule.fingerprint(type='sim').oneBitsList().split(' ')
+                }
+                docs.append({"index": {}})
+                docs.append(doc)
+                if len(docs) == 10000:
+                    print('Indexing docs of len {}'.format(len(docs)))
+                    self.es.bulk(index=self.index, body=docs)
+                    time.sleep(1)
+                    docs = []
             except indigo.IndigoException as e:
-                logging.error('Cannot upload molecule: %s', e)
+                logging.error("Cannot upload molecule: %s", e)
+        if len(docs) > 0:
+            print('Indexing docs of len {}'.format(len(docs)))
+            self.es.bulk(index=self.index, body=docs)
+        self.es.indices.refresh(index=self.index)
 
 
 def download(arg_ns: argparse.Namespace) -> None:
@@ -229,7 +235,7 @@ if __name__ == '__main__':
     )
 
     parser = argparse.ArgumentParser(description='Pubchem crawler')
-    # extract, transform (stdout), load (stdin)
+
     subparsers = parser.add_subparsers(help='select mode: download, extract')
 
     parser_download = subparsers.add_parser('download')
@@ -248,6 +254,11 @@ if __name__ == '__main__':
         default='bingo_nosql',
         help='Type of the storage, options = [elastic, bingo_nosql]',
     )
+
+    parser_extract = subparsers.add_parser("extract")
+    parser_extract.add_argument("--database", type=str, default="bingo_nosql",
+                                help="Type of the storage, options = "
+                                     "[elastic, bingo_nosql]")
     parser_extract.add_argument(
         '--pubchem-dir',
         type=str,

@@ -20,7 +20,7 @@ services:
         soft: -1
         hard: -1
     volumes:
-      - odfe-data1:/usr/share/elasticsearch/data
+      - ./odfe-data1:/usr/share/elasticsearch/data
     ports:
       - "9200:9200"
     networks:
