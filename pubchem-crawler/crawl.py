@@ -15,7 +15,7 @@ from indigo.bingo import Bingo
 
 
 def info(msg_: str,) -> None:
-    now_ = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    now_ = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print(f'{now_} [INFO] {msg_}')
 
 
@@ -156,7 +156,7 @@ class BingoNoSQLDatabase:
         self.session = indigo.Indigo()
 
         if arg_ns.bingo_dir:
-            self.bingo_dir = arg_ns.bingo_dir
+            self.bingo_dir = Path(arg_ns.bingo_dir)
         else:
             self.bingo_dir = Path(arg_ns.pubchem_dir) / 'bingo_dir'
 
@@ -189,6 +189,7 @@ class ElasticDatabase:
         )
 
     def handler(self, source_file: Path):
+        molecule: indigo.IndigoObject
         for molecule in self.session.iterateSDFile(str(source_file)):
             try:
                 # todo add check for incremental update
@@ -204,7 +205,6 @@ class ElasticDatabase:
                 )
             except indigo.IndigoException as e:
                 logging.error('Cannot upload molecule: %s', e)
-
 
 
 def download(arg_ns: argparse.Namespace) -> None:
@@ -229,7 +229,7 @@ if __name__ == '__main__':
     )
 
     parser = argparse.ArgumentParser(description='Pubchem crawler')
-
+    # extract, transform (stdout), load (stdin)
     subparsers = parser.add_subparsers(help='select mode: download, extract')
 
     parser_download = subparsers.add_parser('download')
