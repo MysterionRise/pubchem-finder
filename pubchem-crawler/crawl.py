@@ -14,7 +14,9 @@ from ftpretty import ftpretty
 from indigo.bingo import Bingo
 
 
-def info(msg_: str,) -> None:
+def info(
+    msg_: str,
+) -> None:
     now_ = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
     print(f'{now_} [INFO] {msg_}')
 
@@ -112,7 +114,11 @@ class PubchemLoader:
                     try:
                         info(f'start download {remote_file}')
                         self.__download_file(ftp_, remote_file)
-                    except (ftplib.error_temp, EOFError, BaseException) as err_:
+                    except (
+                        ftplib.error_temp,
+                        EOFError,
+                        BaseException,
+                    ) as err_:
                         logging.warning('%s, sleeping 5 seconds', err_)
                         time.sleep(5)
                         logging.warning('retry...')
@@ -196,7 +202,9 @@ class ElasticDatabase:
                 # todo get pubchem id?
                 doc = {
                     "smiles": molecule.canonicalSmiles(),
-                    "fingerprint": molecule.fingerprint(type='sim').oneBitsList().split(' ')
+                    "fingerprint": molecule.fingerprint(type='sim')
+                    .oneBitsList()
+                    .split(' '),
                 }
                 docs.append({"index": {}})
                 docs.append(doc)
@@ -256,9 +264,12 @@ if __name__ == '__main__':
     )
 
     parser_extract = subparsers.add_parser("extract")
-    parser_extract.add_argument("--database", type=str, default="bingo_nosql",
-                                help="Type of the storage, options = "
-                                     "[elastic, bingo_nosql]")
+    parser_extract.add_argument(
+        "--database",
+        type=str,
+        default="bingo_nosql",
+        help="Type of the storage, options = " "[elastic, bingo_nosql]",
+    )
     parser_extract.add_argument(
         '--pubchem-dir',
         type=str,

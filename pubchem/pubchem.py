@@ -1,4 +1,5 @@
 import argparse
+import logging
 import pathlib
 from os.path import expanduser
 
@@ -32,8 +33,8 @@ def elastic_args_inject(parser) -> None:
     )
 
 
-def pull_args_inject(subparsers) -> None:
-    parser_pull = subparsers.add_parser('pull')
+def pull_args_inject(parser) -> None:
+    parser_pull = parser.add_parser('pull')
     parser_pull.add_argument(
         '--workdir', default=pathlib.Path(expanduser('~')) / 'pubchem'
     )
@@ -44,10 +45,21 @@ def pull_args_inject(subparsers) -> None:
     parser_pull.set_defaults(func=pull)
 
 
+def init_logger():
+    logging.basicConfig(
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        level=logging.WARNING,
+        datefmt='%Y-%m-%d %H:%M:%S',
+    )
+
+
 if __name__ == '__main__':
+
+    init_logger()
 
     parser = argparse.ArgumentParser(description='Pubchem crawler')
     subparsers = parser.add_subparsers(help='select mode')
     pull_args_inject(subparsers)
+
     args = parser.parse_args()
     args.func(args)
