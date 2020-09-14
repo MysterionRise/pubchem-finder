@@ -183,6 +183,7 @@ class Pull:
         text_file = self.tmpdir / gzipped_file.with_suffix('').name
         target_md5_file = pathlib.Path(state.get_state().get('source_file') + '.md5')
         local_md5_file = self.tmpdir / target_md5_file.name
+        info(f'Clear')
         gzipped_file.unlink(missing_ok=True)
         text_file.unlink(missing_ok=True)
         local_md5_file.unlink(missing_ok=True)
