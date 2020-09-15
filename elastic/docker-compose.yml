@@ -1,46 +1,46 @@
 version: '3.7'
 services:
-  odfe-node1:
+  pubchem-elastic:
     build:
       context: .
       args:
         OPEN_DISTRO_VERSION: ${OPEN_DISTRO_VERSION}
     image: odfe:${OPEN_DISTRO_VERSION}
-    container_name: odfe-node1
+    container_name: pubchem-elastic-node1
     environment:
-      - node.name=odfe-node1
-      - cluster.name=odfe-cluster
+      - node.name=pubchem-elastic-node1
+      - cluster.name=pubchem-odfe-cluster
       - bootstrap.memory_lock=true # along with the memlock settings below, disables swapping
 #      - opendistro_security.ssl.http.enabled=false
       - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
-      - cluster.initial_master_nodes=odfe-node1
-      - discovery.seed_hosts=odfe-node1
+      - cluster.initial_master_nodes=pubchem-elastic-node1
+      - discovery.seed_hosts=pubchem-elastic-node1
     ulimits:
       memlock:
         soft: -1
         hard: -1
     volumes:
-      - ./odfe-data1:/usr/share/elasticsearch/data
+      - ./pubchem-odfe-data1:/usr/share/elasticsearch/data
     ports:
       - "9200:9200"
     networks:
-      - odfe-net
+      - pubchem-net
   kibana:
     image: amazon/opendistro-for-elasticsearch-kibana:${OPEN_DISTRO_VERSION}
-    container_name: odfe-kibana
+    container_name: pubchem-odfe-kibana
     ports:
       - "5601:5601"
     expose:
       - "5601"
     environment:
-      ELASTICSEARCH_HOSTS: https://odfe-node1:9200
+      ELASTICSEARCH_HOSTS: https://pubchem-elastic-node1:9200
     #volumes:
       #- ./custom-kibana.yml:/usr/share/kibana/config/kibana.yml
     networks:
-      - odfe-net
+      - pubchem-net
 
 volumes:
-  odfe-data1:
+  pubchem-odfe-data1:
 
 networks:
-  odfe-net:
+  pubchem-net:
