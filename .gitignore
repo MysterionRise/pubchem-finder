@@ -1,6 +1,7 @@
 /venv/
 .idea
 /pubchem_dir/
+/odfe-data1/
 /elastic/docker-compose-dev.yml
 /elastic/pubchem-odfe-data1/
 **/__pycache__/*
