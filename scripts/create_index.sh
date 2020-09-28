@@ -4,13 +4,14 @@ PUT pubchem
     "index": {
       "number_of_shards": 1,
       "number_of_replicas": 0
-    }
-    , "refresh_interval": "5m"
+    },
+    "refresh_interval": "5m"
   },
   "mappings": {
     "properties": {
       "fingerprint": {
-        "type": "integer"
+        "type": "integer",
+        "similarity": "boolean"
       },
       "smiles": {
         "type": "text",

@@ -1,9 +1,9 @@
 from typing import List
-
+import json
 from elasticsearch import Elasticsearch
 
 
-def generate_must(fingerprint: str):
+def generate_clauses(fingerprint: str):
     bits = fingerprint.split(' ')
     json = []
     for bit in bits:
@@ -13,10 +13,8 @@ def generate_must(fingerprint: str):
     return json
 
 
-def exact_match(
-    es: Elasticsearch, fingerprint: str, index: str = "pubchem"
-) -> List[str]:
-    query = {'query': {'bool': {'must': generate_must(fingerprint)}}}
+def exact_match(es: Elasticsearch, fingerprint: str, index: str = "pubchem") -> List[str]:
+    query = {'query': {'bool': {'must': generate_clauses(fingerprint)}}}
 
     res = es.search(body=query, index=index)
     hits = res['hits']['hits']
