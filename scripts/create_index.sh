@@ -10,8 +10,11 @@ PUT pubchem
   "mappings": {
     "properties": {
       "fingerprint": {
-        "type": "integer",
+        "type": "keyword",
         "similarity": "boolean"
+      },
+      "fingerprint_len": {
+        "type": "short"
       },
       "smiles": {
         "type": "text",

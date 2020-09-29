@@ -8,7 +8,7 @@ def generate_clauses(fingerprint: str):
     json = []
     for bit in bits:
         json.append(
-            {"term": {"fingerprint.keyword": {"value": "{}".format(bit)}}}
+            {"term": {"fingerprint": {"value": "{}".format(bit)}}}
         )
     return json
 
