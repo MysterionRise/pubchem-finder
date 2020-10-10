@@ -11,7 +11,7 @@ services:
       - node.name=pubchem-elastic-node1
       - cluster.name=pubchem-odfe-cluster
       - bootstrap.memory_lock=true # along with the memlock settings below, disables swapping
-#      - opendistro_security.ssl.http.enabled=false
+      - opendistro_security.disabled=true
       - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
       - cluster.initial_master_nodes=pubchem-elastic-node1
       - discovery.seed_hosts=pubchem-elastic-node1
@@ -33,7 +33,7 @@ services:
     expose:
       - "5601"
     environment:
-      ELASTICSEARCH_HOSTS: https://pubchem-elastic-node1:9200
+      ELASTICSEARCH_HOSTS: http://pubchem-elastic-node1:9200
     #volumes:
       #- ./custom-kibana.yml:/usr/share/kibana/config/kibana.yml
     networks:

@@ -11,7 +11,7 @@ def elastic_args_inject(parser) -> None:
         '--elastic-url',
         type=str,
         help='Elastic URL in RFC-1738 format https://user:password@host:port',
-        default='https://admin:admin@localhost:9200',
+        default='http://localhost:9200',
     )
     parser.add_argument(
         '--elastic-verify-certs',
