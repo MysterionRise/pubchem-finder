@@ -25,19 +25,6 @@ services:
       - "9200:9200"
     networks:
       - pubchem-net
-  kibana:
-    image: amazon/opendistro-for-elasticsearch-kibana:${OPEN_DISTRO_VERSION}
-    container_name: pubchem-odfe-kibana
-    ports:
-      - "5601:5601"
-    expose:
-      - "5601"
-    environment:
-      ELASTICSEARCH_HOSTS: http://pubchem-elastic-node1:9200
-    #volumes:
-      #- ./custom-kibana.yml:/usr/share/kibana/config/kibana.yml
-    networks:
-      - pubchem-net
 
 volumes:
   pubchem-odfe-data1:
