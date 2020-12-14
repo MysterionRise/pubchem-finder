@@ -1,0 +1,6 @@
+{
+    "folder_name": "elastic",
+    "elastic_version": "1.10.1",
+    "num_elastic": 3,
+    "xmx": 512
+}

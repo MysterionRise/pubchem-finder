@@ -1,0 +1,75 @@
+{% set num_elastic = cookiecutter.num_elastic|int-1 %}
+
+version: '3.8'
+
+services:
+  pubchem-kibana:
+    image: amazon/opendistro-for-elasticsearch-kibana:{{ cookiecutter.elastic_version }}
+    container_name: pubchem-kibana
+    ports:
+      - "5601:5601"
+    expose:
+      - "5601"
+    environment:
+      ELASTICSEARCH_URL: https://pubchem-elastic-node0:9200
+      ELASTICSEARCH_HOSTS: https://pubchem-elastic-node0:9200
+    networks:
+      - pubchem-net
+
+  pubchem-elastic0:
+    image: amazon/opendistro-for-elasticsearch:{{ cookiecutter.elastic_version }}
+    container_name: pubchem-elastic-node0
+    environment:
+      - cluster.name=pubchem-elastic
+      - node.name=pubchem-elastic-node0
+      - discovery.seed_hosts=pubchem-elastic-node0
+      - cluster.initial_master_nodes=pubchem-elastic-node0
+      - bootstrap.memory_lock=true # along with the memlock settings below, disables swapping
+      - "ES_JAVA_OPTS=-Xms{{cookiecutter.xmx}}m -Xmx{{cookiecutter.xmx}}m" # minimum and maximum Java heap size, recommend setting both to 50% of system RAM
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536 # maximum number of open files for the Elasticsearch user, set to at least 65536 on modern systems
+        hard: 65536
+    volumes:
+      - ./pubchem-elastic-data0:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - pubchem-net
+
+  {%- for i in range(num_elastic) %}
+
+  pubchem-elastic{{i+1}}:
+    image: amazon/opendistro-for-elasticsearch:{{ cookiecutter.elastic_version }}
+    container_name: pubchem-elastic-node{{i+1}}
+    environment:
+      - cluster.name=pubchem-elastic
+      - node.name=pubchem-elastic-node{{i+1}}
+      - discovery.seed_hosts=pubchem-elastic-node0
+      - cluster.initial_master_nodes=pubchem-elastic-node0
+      - bootstrap.memory_lock=true # along with the memlock settings below, disables swapping
+      - "ES_JAVA_OPTS=-Xms{{cookiecutter.xmx}}m -Xmx{{cookiecutter.xmx}}m" # minimum and maximum Java heap size, recommend setting both to 50% of system RAM
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536 # maximum number of open files for the Elasticsearch user, set to at least 65536 on modern systems
+        hard: 65536
+    volumes:
+      - ./pubchem-elastic-data{{i+1}}:/usr/share/elasticsearch/data
+    networks:
+      - pubchem-net
+
+  {%- endfor %}
+
+volumes:
+  {%- for i in range(num_elastic) %}
+  pubchem-elastic-data{{i}}:
+  {%- endfor %}
+
+networks:
+  pubchem-net:
