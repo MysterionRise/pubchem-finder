@@ -7,8 +7,8 @@ from ftpretty import ftpretty
 def info(
     msg_: str,
 ) -> None:
-    now_ = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(f'{now_} [INFO] {msg_}')
+    now_ = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"{now_} [INFO] {msg_}")
 
 
 class FTP:
