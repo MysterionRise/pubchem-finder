@@ -16,6 +16,6 @@ six==1.15.0
 toml==0.10.1
 typed-ast==1.4.1
 typing-extensions==3.7.4.3
-urllib3==1.25.10
+urllib3==1.26.5
 bingo-elastic==1.4.1
 cookiecutter==1.7.2
