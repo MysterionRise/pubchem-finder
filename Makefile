@@ -93,3 +93,12 @@ validate:  ## Validate project structure and imports
 
 benchmark:  ## Run performance benchmarks and show results
 	poetry run pytest tests/test_performance.py -v --durations=10 --tb=short
+
+ci-check:  ## Run full CI simulation locally
+	@python scripts/ci_check.py
+
+ci-check-fast:  ## Run quick CI checks
+	@python scripts/ci_check.py --fast
+
+ci-status:  ## Show CI configuration status
+	@bash scripts/check_ci.sh
