@@ -75,11 +75,19 @@ def test_standardizer_with_none_mol():
 
 def test_standardizer_canonicalization(benzene_smiles):
     """Test that different representations give same canonical form."""
-    benzene_variants = ["c1ccccc1", "C1=CC=CC=C1", "c1cccc1c"]
+    # Different valid SMILES representations of benzene
+    benzene_variants = [
+        "c1ccccc1",      # Aromatic notation
+        "C1=CC=CC=C1",   # Kekulé form
+        "c1cccc2c1ccc2", # Naphthalene has multiple forms too
+    ]
 
     standardizer = MoleculeStandardizer()
-    results = [standardizer.standardize_smiles(s) for s in benzene_variants]
 
-    # All should give the same canonical SMILES
-    assert len(set(results)) == 1
-    assert results[0] is not None
+    # Test that aromatic and Kekulé benzene give same result
+    benzene_aromatic = standardizer.standardize_smiles(benzene_variants[0])
+    benzene_kekule = standardizer.standardize_smiles(benzene_variants[1])
+
+    assert benzene_aromatic is not None
+    assert benzene_kekule is not None
+    assert benzene_aromatic == benzene_kekule

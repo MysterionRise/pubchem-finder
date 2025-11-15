@@ -28,6 +28,7 @@ class Molecule:
         tpsa: Topological polar surface area
         num_rotatable_bonds: Number of rotatable bonds
         num_aromatic_rings: Number of aromatic rings
+        num_heavy_atoms: Number of heavy (non-hydrogen) atoms
         fingerprints: Dictionary of fingerprints {type: vector}
         source: Data source (e.g., "pubchem", "chembl")
         metadata: Additional metadata
@@ -52,6 +53,7 @@ class Molecule:
     tpsa: float | None = None
     num_rotatable_bonds: int | None = None
     num_aromatic_rings: int | None = None
+    num_heavy_atoms: int | None = None
 
     # Fingerprints (stored as dict: {type: vector})
     fingerprints: dict[str, Any] = field(default_factory=dict)
@@ -100,8 +102,9 @@ class Molecule:
 
     def __repr__(self) -> str:
         """String representation."""
+        mw_str = f"{self.molecular_weight:.2f}" if self.molecular_weight else "N/A"
         return (
             f"Molecule(id={self.id}, "
             f"smiles={self.canonical_smiles or self.smiles}, "
-            f"mw={self.molecular_weight:.2f if self.molecular_weight else 'N/A'})"
+            f"mw={mw_str})"
         )

@@ -47,15 +47,15 @@ class TestMorganFingerprint:
         with pytest.raises(FingerprintGenerationError):
             generator.generate_from_smiles(invalid_smiles)
 
-    def test_different_radius(self, ethanol_mol):
+    def test_different_radius(self, aspirin_mol):
         """Test fingerprints with different radius."""
         gen_r2 = MorganFingerprint(radius=2, n_bits=2048)
         gen_r3 = MorganFingerprint(radius=3, n_bits=2048)
 
-        fp_r2 = gen_r2.generate(ethanol_mol)
-        fp_r3 = gen_r3.generate(ethanol_mol)
+        fp_r2 = gen_r2.generate(aspirin_mol)
+        fp_r3 = gen_r3.generate(aspirin_mol)
 
-        # Different radius should give different fingerprints
+        # Different radius should give different fingerprints for larger molecules
         assert not np.array_equal(fp_r2, fp_r3)
 
     def test_feature_based_morgan(self, ethanol_mol):
