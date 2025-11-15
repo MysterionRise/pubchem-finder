@@ -1,7 +1,6 @@
 """Molecule standardization and normalization."""
 
 import logging
-from typing import Optional
 
 from rdkit import Chem
 from rdkit.Chem.MolStandardize import rdMolStandardize
@@ -42,7 +41,7 @@ class MoleculeStandardizer:
         self.normalizer = rdMolStandardize.Normalizer()
         self.uncharger = rdMolStandardize.Uncharger()
 
-    def standardize(self, mol: Chem.Mol) -> Optional[Chem.Mol]:
+    def standardize(self, mol: Chem.Mol) -> Chem.Mol | None:
         """
         Standardize a molecule.
 
@@ -97,7 +96,7 @@ class MoleculeStandardizer:
         # Return fragment with most heavy atoms
         return max(frags, key=lambda m: m.GetNumHeavyAtoms())
 
-    def standardize_smiles(self, smiles: str) -> Optional[str]:
+    def standardize_smiles(self, smiles: str) -> str | None:
         """
         Standardize SMILES string.
 

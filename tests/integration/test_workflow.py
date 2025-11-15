@@ -1,6 +1,5 @@
 """Integration test for complete molecule processing workflow."""
 
-import pytest
 from rdkit import Chem
 
 from pubchem_finder.chemistry import MoleculeStandardizer, calculate_properties
@@ -57,7 +56,7 @@ def test_end_to_end_workflow():
     metric = TanimotoSimilarity()
     query_fp = molecules[0].get_fingerprint("morgan_2")  # Aspirin
 
-    for i, mol in enumerate(molecules[1:], 1):
+    for mol in molecules[1:]:
         target_fp = mol.get_fingerprint("morgan_2")
         similarity = metric.calculate(query_fp, target_fp)
 
@@ -71,4 +70,6 @@ def test_end_to_end_workflow():
     sim_salicylic = metric.calculate(query_fp, sal_fp)
     sim_caffeine = metric.calculate(query_fp, caf_fp)
 
-    assert sim_salicylic > sim_caffeine, "Aspirin should be more similar to salicylic acid than caffeine"
+    assert (
+        sim_salicylic > sim_caffeine
+    ), "Aspirin should be more similar to salicylic acid than caffeine"

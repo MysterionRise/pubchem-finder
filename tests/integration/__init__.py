@@ -107,9 +107,7 @@ class TestMoleculeProcessingPipeline:
         fp_gen = MorganFingerprint(radius=2, n_bits=2048)
         query_fp = fp_gen.generate(query_mol)
 
-        target_fps = [
-            fp_gen.generate(Chem.MolFromSmiles(smi)) for smi in target_smiles
-        ]
+        target_fps = [fp_gen.generate(Chem.MolFromSmiles(smi)) for smi in target_smiles]
 
         # Calculate similarities
         metric = TanimotoSimilarity()

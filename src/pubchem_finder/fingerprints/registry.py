@@ -1,7 +1,5 @@
 """Fingerprint registry for dynamic fingerprint selection."""
 
-from typing import Dict
-
 from ..core.fingerprint import FingerprintGenerator
 from .maccs import MACCSFingerprint
 from .morgan import MorganFingerprint
@@ -22,7 +20,7 @@ class FingerprintRegistry:
     """
 
     def __init__(self) -> None:
-        self._generators: Dict[str, FingerprintGenerator] = {}
+        self._generators: dict[str, FingerprintGenerator] = {}
         self._register_defaults()
 
     def _register_defaults(self) -> None:
@@ -66,9 +64,7 @@ class FingerprintRegistry:
         """
         if name not in self._generators:
             available = ", ".join(self.list_available())
-            raise KeyError(
-                f"Unknown fingerprint type: {name}. Available: {available}"
-            )
+            raise KeyError(f"Unknown fingerprint type: {name}. Available: {available}")
         return self._generators[name]
 
     def list_available(self) -> list[str]:

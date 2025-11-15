@@ -1,7 +1,6 @@
 """Abstract base classes for fingerprints and similarity metrics."""
 
 from abc import ABC, abstractmethod
-from typing import Any
 
 import numpy as np
 from rdkit import Chem

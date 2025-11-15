@@ -1,7 +1,6 @@
 """Performance and benchmark tests."""
 
 import time
-from typing import List
 
 import numpy as np
 import pytest
@@ -19,7 +18,7 @@ class TestPerformance:
     """Performance benchmarks for core operations."""
 
     @pytest.fixture
-    def molecule_batch(self) -> List[Chem.Mol]:
+    def molecule_batch(self) -> list[Chem.Mol]:
         """Generate batch of molecules for testing."""
         smiles_list = [
             "CCO",
@@ -132,12 +131,11 @@ class TestPerformance:
 @pytest.fixture
 def benchmark():
     """Optional pytest-benchmark fixture."""
-    try:
-        import pytest_benchmark
+    import importlib.util
 
+    if importlib.util.find_spec("pytest_benchmark") is not None:
         return pytest.mark.benchmark
-    except ImportError:
-        return None
+    return None
 
 
 class TestScalability:

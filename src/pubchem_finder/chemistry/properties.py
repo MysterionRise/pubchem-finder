@@ -1,12 +1,10 @@
 """Calculate molecular descriptors and properties."""
 
-from typing import Dict
-
 from rdkit import Chem
 from rdkit.Chem import Crippen, Descriptors, Lipinski
 
 
-def calculate_properties(mol: Chem.Mol) -> Dict[str, float]:
+def calculate_properties(mol: Chem.Mol) -> dict[str, float]:
     """
     Calculate common molecular properties.
 

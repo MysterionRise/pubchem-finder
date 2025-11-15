@@ -1,6 +1,5 @@
 """Tests for molecular property calculation."""
 
-import pytest
 from rdkit import Chem
 
 from pubchem_finder.chemistry import calculate_properties

@@ -2,7 +2,6 @@
 
 import numpy as np
 import pytest
-from rdkit import Chem
 
 from pubchem_finder.core import FingerprintGenerationError
 from pubchem_finder.fingerprints import (

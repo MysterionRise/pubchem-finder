@@ -33,9 +33,7 @@ class MorganFingerprint(FingerprintGenerator):
         (2048,)
     """
 
-    def __init__(
-        self, radius: int = 2, n_bits: int = 2048, use_features: bool = False
-    ):
+    def __init__(self, radius: int = 2, n_bits: int = 2048, use_features: bool = False):
         self.radius = radius
         self.n_bits = n_bits
         self.use_features = use_features

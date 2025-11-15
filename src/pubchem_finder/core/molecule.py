@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .exceptions import MoleculeValidationError
 
@@ -36,31 +36,31 @@ class Molecule:
     """
 
     # Identifiers
-    id: Optional[str] = None
+    id: str | None = None
 
     # Chemical representations
     smiles: str = ""
     canonical_smiles: str = ""
-    inchi: Optional[str] = None
-    inchi_key: Optional[str] = None
+    inchi: str | None = None
+    inchi_key: str | None = None
 
     # Molecular properties
-    molecular_weight: Optional[float] = None
-    logp: Optional[float] = None
-    num_h_donors: Optional[int] = None
-    num_h_acceptors: Optional[int] = None
-    tpsa: Optional[float] = None
-    num_rotatable_bonds: Optional[int] = None
-    num_aromatic_rings: Optional[int] = None
+    molecular_weight: float | None = None
+    logp: float | None = None
+    num_h_donors: int | None = None
+    num_h_acceptors: int | None = None
+    tpsa: float | None = None
+    num_rotatable_bonds: int | None = None
+    num_aromatic_rings: int | None = None
 
     # Fingerprints (stored as dict: {type: vector})
-    fingerprints: Dict[str, Any] = field(default_factory=dict)
+    fingerprints: dict[str, Any] = field(default_factory=dict)
 
     # Metadata
     source: str = "pubchem"
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     def __post_init__(self) -> None:
         """Validate essential fields."""
@@ -82,7 +82,7 @@ class Molecule:
         """
         self.fingerprints[fp_type] = fingerprint
 
-    def get_fingerprint(self, fp_type: str) -> Optional[Any]:
+    def get_fingerprint(self, fp_type: str) -> Any | None:
         """
         Get a fingerprint by type.
 

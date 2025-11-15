@@ -1,6 +1,5 @@
 """Tests for molecule standardizer."""
 
-import pytest
 from rdkit import Chem
 
 from pubchem_finder.chemistry import MoleculeStandardizer
