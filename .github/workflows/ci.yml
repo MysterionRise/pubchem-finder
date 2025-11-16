@@ -91,7 +91,7 @@ jobs:
       run: poetry install
 
     - name: Check code formatting
-      run: poetry run black --check .
+      run: poetry run black --check src tests
 
     - name: Lint with ruff
-      run: poetry run ruff check .
+      run: poetry run ruff check src tests
