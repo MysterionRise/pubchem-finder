@@ -1,9 +1,8 @@
 """Tests for molecular property calculation."""
 
-from rdkit import Chem
-
 from pubchem_finder.chemistry import calculate_properties
 from pubchem_finder.chemistry.properties import is_druglike
+from rdkit import Chem
 
 
 def test_calculate_properties_ethanol(ethanol_mol):

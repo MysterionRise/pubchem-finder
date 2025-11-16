@@ -1,7 +1,6 @@
 """Tests for core Molecule data structure."""
 
 import pytest
-
 from pubchem_finder.core import Molecule, MoleculeValidationError
 
 

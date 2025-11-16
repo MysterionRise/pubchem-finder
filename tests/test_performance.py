@@ -4,14 +4,13 @@ import time
 
 import numpy as np
 import pytest
-from rdkit import Chem
-
 from pubchem_finder.chemistry import MoleculeStandardizer, calculate_properties
 from pubchem_finder.fingerprints import (
     MACCSFingerprint,
     MorganFingerprint,
     TanimotoSimilarity,
 )
+from rdkit import Chem
 
 
 class TestPerformance:
@@ -144,7 +143,18 @@ class TestScalability:
     def test_large_batch_processing(self):
         """Test processing 1000 molecules."""
         # Generate simple molecules - valid SMILES strings
-        base_smiles = ["C", "CC", "CCC", "CCCC", "c1ccccc1", "CCO", "CCCO", "CC(C)C", "CCCCC", "CCCCCC"]
+        base_smiles = [
+            "C",
+            "CC",
+            "CCC",
+            "CCCC",
+            "c1ccccc1",
+            "CCO",
+            "CCCO",
+            "CC(C)C",
+            "CCCCC",
+            "CCCCCC",
+        ]
         smiles_list = base_smiles * 100  # 1000 molecules
 
         standardizer = MoleculeStandardizer()

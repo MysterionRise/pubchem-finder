@@ -1,8 +1,7 @@
 """Tests for molecule standardizer."""
 
-from rdkit import Chem
-
 from pubchem_finder.chemistry import MoleculeStandardizer
+from rdkit import Chem
 
 
 def test_standardizer_removes_salts(ethanol_with_salt_smiles):
@@ -77,9 +76,9 @@ def test_standardizer_canonicalization(benzene_smiles):
     """Test that different representations give same canonical form."""
     # Different valid SMILES representations of benzene
     benzene_variants = [
-        "c1ccccc1",      # Aromatic notation
-        "C1=CC=CC=C1",   # Kekulé form
-        "c1cccc2c1ccc2", # Naphthalene has multiple forms too
+        "c1ccccc1",  # Aromatic notation
+        "C1=CC=CC=C1",  # Kekulé form
+        "c1cccc2c1ccc2",  # Naphthalene has multiple forms too
     ]
 
     standardizer = MoleculeStandardizer()

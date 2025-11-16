@@ -1,8 +1,6 @@
 """Integration tests for molecule processing pipeline."""
 
 import pytest
-from rdkit import Chem
-
 from pubchem_finder.chemistry import MoleculeStandardizer, calculate_properties
 from pubchem_finder.core import Molecule
 from pubchem_finder.fingerprints import (
@@ -11,6 +9,7 @@ from pubchem_finder.fingerprints import (
     TanimotoSimilarity,
     fingerprint_registry,
 )
+from rdkit import Chem
 
 
 class TestMoleculeProcessingPipeline:
