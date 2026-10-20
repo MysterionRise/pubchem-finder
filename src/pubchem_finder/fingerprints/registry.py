@@ -9,8 +9,8 @@ class FingerprintRegistry:
     """
     Registry pattern for fingerprint generators.
 
-    This makes it easy to add new fingerprint types without modifying
-    existing code. Future ML-based fingerprints can be registered here.
+    Lets callers pick a fingerprint configuration by short name and lets
+    plugins register new generators without touching existing code.
 
     Example:
         >>> from pubchem_finder.fingerprints import fingerprint_registry

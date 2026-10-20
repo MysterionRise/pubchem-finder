@@ -1,33 +1,22 @@
-"""MACCS keys fingerprint implementation."""
+"""MACCS structural keys."""
 
-import numpy as np
 from rdkit import Chem
-from rdkit.Chem import MACCSkeys
+from rdkit.Chem import rdMolDescriptors
+from rdkit.DataStructs import ExplicitBitVect
 
 from ..core.fingerprint import FingerprintGenerator
+
+MACCS_SIZE = 167  # RDKit numbers the 166 keys from 1; bit 0 is always unset.
 
 
 class MACCSFingerprint(FingerprintGenerator):
     """
-    MACCS structural keys fingerprint.
+    MACCS keys: 166 predefined substructure keys (RDKit emits 167 bits).
 
-    MACCS (Molecular ACCess System) keys are 166 predefined structural keys
-    representing the presence or absence of specific substructures.
-
-    The fingerprint is actually 167 bits (0-166), but bit 0 is not used,
-    so effectively 166 bits.
-
-    MACCS keys are good for:
-    - Diversity analysis
-    - Scaffold hopping
-    - Fast screening
+    Useful for fast screening, diversity analysis and scaffold hopping.
 
     Example:
-        >>> from rdkit import Chem
-        >>> mol = Chem.MolFromSmiles("c1ccccc1")  # benzene
-        >>> gen = MACCSFingerprint()
-        >>> fp = gen.generate(mol)
-        >>> fp.shape
+        >>> MACCSFingerprint().generate_from_smiles("c1ccccc1").shape
         (167,)
     """
 
@@ -37,20 +26,8 @@ class MACCSFingerprint(FingerprintGenerator):
 
     @property
     def size(self) -> int:
-        return 167  # MACCS keys are 167 bits (0-166, but 0 is not used)
+        return MACCS_SIZE
 
-    def generate(self, mol: Chem.Mol) -> np.ndarray:
-        """
-        Generate MACCS fingerprint.
-
-        Args:
-            mol: RDKit Mol object
-
-        Returns:
-            Binary numpy array of length 167
-        """
-        fp = MACCSkeys.GenMACCSKeys(mol)
-        arr = np.zeros((167,), dtype=np.uint8)
-        for i in range(167):
-            arr[i] = fp[i]
-        return arr
+    def generate_bitvect(self, mol: Chem.Mol) -> ExplicitBitVect:
+        bitvect: ExplicitBitVect = rdMolDescriptors.GetMACCSKeysFingerprint(mol)
+        return bitvect

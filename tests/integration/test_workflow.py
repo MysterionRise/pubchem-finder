@@ -1,9 +1,10 @@
 """Integration test for complete molecule processing workflow."""
 
+from rdkit import Chem
+
 from pubchem_finder.chemistry import MoleculeStandardizer, calculate_properties
 from pubchem_finder.core import Molecule
 from pubchem_finder.fingerprints import MorganFingerprint, TanimotoSimilarity
-from rdkit import Chem
 
 
 def test_end_to_end_workflow():
@@ -69,6 +70,6 @@ def test_end_to_end_workflow():
     sim_salicylic = metric.calculate(query_fp, sal_fp)
     sim_caffeine = metric.calculate(query_fp, caf_fp)
 
-    assert (
-        sim_salicylic > sim_caffeine
-    ), "Aspirin should be more similar to salicylic acid than caffeine"
+    assert sim_salicylic > sim_caffeine, (
+        "Aspirin should be more similar to salicylic acid than caffeine"
+    )
