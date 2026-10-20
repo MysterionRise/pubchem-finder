@@ -1,48 +1,50 @@
-[tool.poetry]
-name = "pubchem-finder"
-version = "2.0.0"
-description = "Advanced molecular similarity search platform for PubChem compounds"
-authors = ["PubChem Finder Team"]
-readme = "README.md"
-packages = [{include = "pubchem_finder", from = "src"}]
-license = "MIT"
-
-[tool.poetry.dependencies]
-python = "^3.10"
-rdkit = "^2023.9.1"
-sqlalchemy = "^2.0.0"
-alembic = "^1.13.0"
-pydantic = "^2.5.0"
-pydantic-settings = "^2.1.0"
-click = "^8.1.7"
-loguru = "^0.7.2"
-numpy = "^1.24.0"
-
-[tool.poetry.group.dev.dependencies]
-pytest = "^7.4.0"
-pytest-cov = "^4.1.0"
-pytest-xdist = "^3.5.0"
-black = "^23.11.0"
-ruff = "^0.1.6"
-mypy = "^1.7.0"
-pre-commit = "^3.5.0"
-ipython = "^8.18.0"
-
-[tool.poetry.scripts]
-pubchem-finder = "pubchem_finder.cli.commands:cli"
-
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.black]
-line-length = 88
-target-version = ['py310', 'py311']
-include = '\.pyi?$'
+[project]
+name = "pubchem-finder"
+version = "2.0.0a0"
+description = "Molecular similarity search over PubChem: local index, CLI and MCP server"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "Konstantin Perikov" }]
+keywords = ["cheminformatics", "pubchem", "rdkit", "similarity-search", "mcp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Chemistry",
+]
+dependencies = [
+    "rdkit>=2024.9",
+    "numpy>=2",
+]
+
+[project.urls]
+Homepage = "https://github.com/MysterionRise/pubchem-finder"
+Issues = "https://github.com/MysterionRise/pubchem-finder/issues"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pubchem_finder"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py311"
+src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = [
@@ -53,47 +55,40 @@ select = [
     "B",   # flake8-bugbear
     "C4",  # flake8-comprehensions
     "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
 ]
 ignore = [
-    "E501",  # line too long (handled by black)
-    "B008",  # do not perform function calls in argument defaults
+    "E501",  # line too long (formatter handles it)
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"__init__.py" = ["F401"]  # Allow unused imports in __init__.py
+"__init__.py" = ["F401"]
 
 [tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
+python_version = "3.11"
+strict = true
+warn_unreachable = true
 ignore_missing_imports = true
-plugins = ["pydantic.mypy"]
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = "rdkit.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = [
-    "-v",
-    "--strict-markers",
-    "--cov=src/pubchem_finder",
-    "--cov-report=term-missing",
-    "--cov-report=html",
+addopts = ["--strict-markers"]
+markers = [
+    "slow: long-running tests (deselect with -m 'not slow')",
 ]
 
 [tool.coverage.run]
 source = ["src"]
-omit = ["*/tests/*", "*/test_*.py"]
 
 [tool.coverage.report]
 exclude_lines = [
     "pragma: no cover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
     "@abstractmethod",
 ]
