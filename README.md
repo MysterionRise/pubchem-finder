@@ -9,10 +9,10 @@ as an [MCP](https://modelcontextprotocol.io/) server.
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Status:** v0.1 of the rebuild. PubChem lookups, RDKit descriptors,
-> standardization and fingerprint comparison work from the CLI and from an MCP
-> server. The local similarity index over all of PubChem is the next milestone.
-> See [ROADMAP.md](ROADMAP.md).
+> **Status:** v0.2 of the rebuild. PubChem lookups, RDKit descriptors,
+> standardization, fingerprint comparison and a local similarity index over
+> PubChem (or any SDF files) work from the CLI and from an MCP server.
+> See [ROADMAP.md](ROADMAP.md) for what comes next.
 
 ## Quick start
 
@@ -30,6 +30,46 @@ uvx --from git+https://github.com/MysterionRise/pubchem-finder pubchem-finder co
 ```
 
 Or install once: `uv tool install git+https://github.com/MysterionRise/pubchem-finder`, then use `pubchem-finder ...`.
+
+### Similarity search over a local index
+
+Build an index once, then search it as often as you like, offline and without rate limits.
+The examples assume `pubchem-finder` is installed with `uv tool install` as above.
+
+```bash
+pubchem-finder index build --limit 1        # first PubChem chunk: ~500k compounds, a few minutes
+pubchem-finder search "CC(=O)Oc1ccccc1C(=O)O" --threshold 0.7 --top 20
+pubchem-finder index status
+
+pubchem-finder index build --sdf my_library.sdf.gz   # or index your own SDF files
+```
+
+`index build --limit N` downloads the first N of PubChem's ~350 SDF chunks (about 500,000
+CIDs each) from the NCBI HTTPS mirror, verifies each file's MD5, fingerprints it, deletes the
+download, and merges everything into one searchable index. Re-running is safe: finished chunks
+are skipped, so an interrupted build resumes and a larger `--limit` extends an existing index.
+`--all` indexes all of PubChem. The default fingerprint is ECFP4 (Morgan radius 2, 1024 bits);
+`--radius` and `--fp-size` change it for a new index.
+
+Data lives in the platform data directory (`~/.local/share/pubchem-finder` on Linux,
+`~/Library/Application Support/pubchem-finder` on macOS, `%LOCALAPPDATA%\pubchem-finder` on
+Windows). Override it with `--home DIR` or `PUBCHEM_FINDER_HOME`.
+
+**How big is it?** Measured on a 4-core machine with 100,000 compounds, then extrapolated to
+PubChem's roughly 120 million. The full-PubChem figures are estimates, not measurements.
+
+| | 100k compounds (measured) | All of PubChem (estimated) |
+|---|---|---|
+| Fingerprinting | ~4,300 compounds/s per core | ~1-2 h of CPU on 8 cores |
+| Download | n/a | ~100 GB over HTTPS, streamed and deleted chunk by chunk |
+| RAM for in-memory search | 2 MB | ~17 GB |
+| Free disk while building | small | ~60 GB (chunk files, merged index, sort scratch, metadata) |
+| Query, in memory | 2 ms | ~1-3 s |
+| Query, on disk | 210 ms | minutes; not practical |
+
+The index is searched in memory when it fits comfortably in available RAM and from disk
+otherwise; set `PUBCHEM_FINDER_INDEX_MODE=memory|disk` to force a mode. On a machine without
+~20 GB of free RAM, index a subset with `--limit` rather than all of PubChem.
 
 ### Use it from Claude (MCP)
 
@@ -62,9 +102,16 @@ Tools exposed:
 | `compound_properties(smiles)` | RDKit descriptors and Lipinski check for any SMILES. Offline. |
 | `standardize(smiles)` | Remove salts and counter-ions, neutralize, canonicalize. Offline. |
 | `compare(smiles_a, smiles_b)` | Tanimoto similarity on ECFP4 and MACCS fingerprints. Offline. |
+| `similarity_search(smiles, threshold, top_k, metric)` | Most similar compounds in the local index, with CID, SMILES, IUPAC name, formula, MW and PubChem link. Needs `index build`. |
+| `index_status()` | Whether the local index is built, its size and fingerprint, and how to build it. |
 
-Then ask Claude things like "what is the molecular weight and XLogP of caffeine?" or
-"how similar are aspirin and salicylic acid?".
+Then ask Claude things like "what is the molecular weight and XLogP of caffeine?",
+"how similar are aspirin and salicylic acid?" or, with an index built,
+"find the 10 compounds most similar to ibuprofen".
+
+The server loads the index on the first search, not at startup, so it starts instantly. Point it
+at a non-default data directory by adding `"env": {"PUBCHEM_FINDER_HOME": "/path"}` to the
+Claude Desktop entry, or `--env PUBCHEM_FINDER_HOME=/path` to `claude mcp add`.
 
 ## Library
 
@@ -100,25 +147,26 @@ Requires [uv](https://docs.astral.sh/uv/). Python 3.11, 3.12 and 3.13 are suppor
 uv sync            # create .venv and install everything, including dev tools
 make check         # ruff lint + format check, mypy (strict), pytest with coverage
 make test          # just the tests
-PUBCHEM_LIVE=1 uv run pytest -m live   # the one test that calls the real PubChem API
+PUBCHEM_LIVE=1 uv run pytest -m live   # tests that call the real PubChem services
 ```
 
 Pre-commit hooks (ruff lint and format) can be installed with `uv run pre-commit install`
 after `uv tool install pre-commit`.
 
-## Planned architecture
+## Architecture
 
 ```
-PubChem Compound SDF (HTTPS) --> streaming RDKit parse --> Parquet metadata (CID, SMILES, InChIKey, MW, formula)
-                                                      \-> FPSim2 fingerprint index (ECFP4, 1024 bits)
+PubChem Compound SDF (HTTPS) --> streaming RDKit parse --> chunks/<chunk>.parquet  (CID, SMILES, InChIKey, name, formula, MW)
+                                                      \-> chunks/<chunk>.h5       (FPSim2 fingerprints)
+                                                            \-> merge + popcount sort -> index/pubchem.h5 + manifest.json
 pubchem-finder CLI  ----\
-                         +--> search facade --> FPSim2 (exact Tanimoto, in-memory or on-disk) + DuckDB
-MCP server (stdio) -----/                   \-> PubChem PUG REST for live lookups without an index
+                         +--> service --> FPSim2 (exact similarity, in memory or on disk) + DuckDB over Parquet
+MCP server (stdio) -----/            \-> PubChem PUG REST for live lookups
 ```
 
-The index engine is [FPSim2](https://github.com/chembl/FPSim2), the similarity
-search library behind ChEMBL's interface. A PostgreSQL + RDKit cartridge backend for
-substructure search is an optional later addition behind the same interface.
+The index engine is [FPSim2](https://github.com/chembl/FPSim2), the similarity search
+library behind ChEMBL's web interface. Each SDF chunk is fingerprinted independently, so
+builds run in parallel and resume after interruption.
 
 ## History
 

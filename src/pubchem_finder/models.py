@@ -68,3 +68,51 @@ class Comparison(BaseModel):
     smiles_b: str
     ecfp4_tanimoto: float = Field(description="Tanimoto on Morgan r=2, 2048 bits")
     maccs_tanimoto: float = Field(description="Tanimoto on MACCS keys")
+
+
+class SimilarityHit(BaseModel):
+    """One compound from the local index."""
+
+    cid: int
+    similarity: float = Field(description="Similarity to the query, 0 to 1")
+    smiles: str | None = None
+    inchikey: str | None = None
+    iupac_name: str | None = None
+    molecular_formula: str | None = None
+    molecular_weight: float | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def pubchem_url(self) -> str:
+        return PUBCHEM_COMPOUND_URL.format(cid=self.cid)
+
+
+class SimilarityResults(BaseModel):
+    """Result of a similarity search over the local index."""
+
+    query_smiles: str
+    threshold: float
+    metric: str
+    fingerprint: str = Field(description="Fingerprint the index was built with")
+    n_indexed: int = Field(description="Compounds in the index")
+    hits: list[SimilarityHit]
+
+
+class IndexStatus(BaseModel):
+    """State of the local index."""
+
+    state: str = Field(description="'ready' or 'not_built'")
+    home: str = Field(description="Data directory")
+    n_compounds: int = 0
+    n_failed: int = 0
+    fingerprint: str | None = None
+    built_at: str | None = None
+    size_bytes: int = 0
+    memory_bytes: int = Field(default=0, description="RAM needed to search in memory")
+    chunks_in_index: int = 0
+    chunks_built: int = Field(default=0, description="Chunks on disk, merged or not")
+    loaded: bool = Field(
+        default=False, description="Whether this process has the index in use"
+    )
+    mode: str | None = Field(default=None, description="'memory' or 'disk' once loaded")
+    hint: str | None = None
