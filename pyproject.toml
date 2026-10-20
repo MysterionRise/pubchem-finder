@@ -24,7 +24,15 @@ classifiers = [
 dependencies = [
     "rdkit>=2024.9",
     "numpy>=2",
+    "httpx>=0.28",
+    "pydantic>=2.7",
+    "typer>=0.15",
+    "mcp>=2.3,<3",
+    "platformdirs>=4",
 ]
+
+[project.scripts]
+pubchem-finder = "pubchem_finder.cli:run"
 
 [project.urls]
 Homepage = "https://github.com/MysterionRise/pubchem-finder"
@@ -36,6 +44,7 @@ dev = [
     "pytest-cov>=5",
     "ruff>=0.8",
     "mypy>=1.13",
+    "respx>=0.22",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -81,6 +90,7 @@ testpaths = ["tests"]
 addopts = ["--strict-markers"]
 markers = [
     "slow: long-running tests (deselect with -m 'not slow')",
+    "live: tests that call the real PubChem API (set PUBCHEM_LIVE=1)",
 ]
 
 [tool.coverage.run]

@@ -16,13 +16,14 @@ MCP over stdio, uv + hatchling + ruff, Python 3.11 to 3.13.
 - [x] Vectorized Tanimoto/Dice, cosine, RDKit bulk Tanimoto helper
 - [x] `Molecule` with identity equality and timezone-aware timestamps
 
-## Phase 2: PUG REST + MCP server (v0.1, works with no local index)
+## Phase 2: PUG REST + MCP server (v0.1, works with no local index) (done)
 
-- [ ] `data/pug_rest.py`: PubChem PUG REST client (name / CID / SMILES / InChIKey)
-- [ ] `mcp_server.py` (stdio) with `pubchem_lookup`, `compound_properties`,
-      `standardize`, `index_status`, `similarity_search` (errors until an index exists)
-- [ ] `pubchem-finder lookup | props | standardize | mcp` CLI
-- [ ] README: `claude mcp add` and Claude Desktop configuration
+- [x] `data/pug_rest.py`: PubChem PUG REST client (name / CID / SMILES / InChIKey),
+      throttled to 5 req/s, retries on 429/503, typed errors
+- [x] `mcp_server.py` (stdio) with `pubchem_lookup`, `compound_properties`,
+      `standardize`, `compare`
+- [x] `pubchem-finder lookup | props | standardize | compare | mcp` CLI
+- [x] README: `uvx` quick start, `claude mcp add` and Claude Desktop configuration
 
 ## Phase 3: local index + similarity search (v0.2)
 
@@ -30,6 +31,7 @@ MCP over stdio, uv + hatchling + ruff, Python 3.11 to 3.13.
 - [ ] Streaming SDF parse, per-chunk Parquet metadata + FPSim2 `.h5`, `merge_db_files`
 - [ ] `index build | finalize | status`, `search --smiles ... --threshold ... --top ...`
 - [ ] In-memory vs on-disk FPSim2 engine selection; lazy load in the MCP server
+- [ ] MCP tools `similarity_search` and `index_status` (added only once they work)
 - [ ] Honest sizing in the README (full PubChem is an overnight job, ~20 GB RAM in-memory)
 
 ## Phase 4 (optional): PostgreSQL + RDKit cartridge backend
