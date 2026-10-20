@@ -16,7 +16,14 @@ from mcp.server.mcpserver.exceptions import ToolError
 from . import __version__, service
 from .core.exceptions import PubChemFinderError
 from .data.pug_rest import CompoundNotFound, PubChemUnavailable
-from .models import Comparison, LookupResult, Properties, Standardized
+from .models import (
+    Comparison,
+    IndexStatus,
+    LookupResult,
+    Properties,
+    SimilarityResults,
+    Standardized,
+)
 
 T = TypeVar("T")
 
@@ -26,6 +33,8 @@ Use pubchem_lookup to resolve names, CIDs, SMILES or InChIKeys to PubChem record
 (properties, identifiers, link). Use compound_properties for RDKit descriptors of any
 SMILES, standardize to normalize a structure (salts removed, charges neutralized),
 and compare for fingerprint similarity between two structures.
+similarity_search finds the most similar compounds in the local PubChem index
+(check index_status first; if the index is not built, tell the user how to build it).
 SMILES inputs are case-sensitive; aromatic atoms are lowercase."""
 
 mcp = MCPServer(
@@ -93,6 +102,38 @@ async def compare(smiles_a: str, smiles_b: str) -> Comparison:
     analogue.
     """
     return await _run(service.compare, smiles_a, smiles_b)
+
+
+@mcp.tool()
+async def similarity_search(
+    smiles: str,
+    threshold: float = 0.7,
+    top_k: int = 20,
+    metric: Literal["tanimoto", "dice", "cosine"] = "tanimoto",
+) -> SimilarityResults:
+    """Find the compounds most similar to a structure in the local PubChem index.
+
+    Exact fingerprint similarity (ECFP4/Morgan by default) over every indexed
+    compound, best first, with CID, SMILES, InChIKey, IUPAC name, formula, MW
+    and PubChem link. threshold is the minimum similarity (0-1, 0.7 finds close
+    analogues; lower it to widen the search). Requires a local index built with
+    `pubchem-finder index build`; the first search loads it, which can take a
+    while for a full PubChem index.
+    """
+    return await _run(
+        service.similarity_search,
+        smiles,
+        threshold=threshold,
+        top_k=top_k,
+        metric=metric,
+    )
+
+
+@mcp.tool()
+async def index_status() -> IndexStatus:
+    """Report whether the local PubChem similarity index is built, how many
+    compounds it holds, its fingerprint, size, and how to build it if missing."""
+    return await _run(service.index_status)
 
 
 def main() -> None:

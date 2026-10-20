@@ -29,6 +29,9 @@ dependencies = [
     "typer>=0.15",
     "mcp>=2.3,<3",
     "platformdirs>=4",
+    "fpsim2>=0.7.4",
+    "duckdb>=1.1",
+    "pyarrow>=17",
 ]
 
 [project.scripts]

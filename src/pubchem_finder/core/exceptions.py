@@ -11,3 +11,15 @@ class MoleculeValidationError(PubChemFinderError):
 
 class FingerprintGenerationError(PubChemFinderError):
     """Raised when a fingerprint cannot be generated."""
+
+
+class IndexNotBuilt(PubChemFinderError):
+    """No finalized local similarity index exists at the configured location."""
+
+
+class IndexBuildError(PubChemFinderError):
+    """Building or merging the local similarity index failed."""
+
+
+class DownloadError(PubChemFinderError):
+    """Downloading a PubChem bulk file failed or its checksum did not match."""

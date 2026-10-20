@@ -7,7 +7,14 @@ from pubchem_finder.mcp_server import mcp
 
 pytestmark = pytest.mark.anyio
 
-EXPECTED_TOOLS = {"pubchem_lookup", "compound_properties", "standardize", "compare"}
+EXPECTED_TOOLS = {
+    "pubchem_lookup",
+    "compound_properties",
+    "standardize",
+    "compare",
+    "similarity_search",
+    "index_status",
+}
 
 
 async def test_tools_are_listed_with_schemas():
@@ -63,3 +70,27 @@ async def test_pubchem_lookup(pubchem_api, monkeypatch):
     assert ok.structured_content["compounds"][0]["pubchem_url"].endswith("/2519")
     assert missing.is_error is True
     assert "Check the spelling" in missing.content[0].text
+
+
+async def test_similarity_search_and_status(built_home, monkeypatch):
+    monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(built_home))
+    async with Client(mcp) as client:
+        status = await client.call_tool("index_status", {})
+        result = await client.call_tool(
+            "similarity_search", {"smiles": "CC(=O)Oc1ccccc1C(=O)O", "threshold": 0.3}
+        )
+    assert status.structured_content["state"] == "ready"
+    assert result.is_error is False
+    top = result.structured_content["hits"][0]
+    assert (top["cid"], top["similarity"]) == (2244, 1.0)
+    assert top["pubchem_url"].endswith("/2244")
+
+
+async def test_similarity_search_without_index(tmp_path, monkeypatch):
+    monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(tmp_path))
+    async with Client(mcp) as client:
+        status = await client.call_tool("index_status", {})
+        result = await client.call_tool("similarity_search", {"smiles": "CCO"})
+    assert status.structured_content["state"] == "not_built"
+    assert result.is_error is True
+    assert "pubchem-finder index build" in result.content[0].text
