@@ -32,7 +32,7 @@ from pubchem_finder.fingerprints import MorganFingerprint, TanimotoSimilarity
 std = MoleculeStandardizer()
 print(std.standardize_smiles("CC(=O)[O-].[Na+]"))  # CC(=O)O
 
-gen = MorganFingerprint(radius=2, n_bits=1024)      # ECFP4, 1024 bits
+gen = MorganFingerprint(radius=2, n_bits=1024)  # ECFP4, 1024 bits
 aspirin = gen.generate_from_smiles("CC(=O)Oc1ccccc1C(=O)O")
 salicylic = gen.generate_from_smiles("O=C(O)c1ccccc1O")
 print(TanimotoSimilarity().calculate(aspirin, salicylic))
