@@ -27,4 +27,4 @@ coverage.xml
 *.sdf.gz
 *.h5
 *.parquet
-data/
+/data/
