@@ -1,55 +1,37 @@
-"""Calculate molecular descriptors and properties."""
+"""Molecular descriptors and drug-likeness checks."""
 
 from rdkit import Chem
-from rdkit.Chem import Crippen, Descriptors, Lipinski
+from rdkit.Chem import rdMolDescriptors
 
 
-def calculate_properties(mol: Chem.Mol) -> dict[str, float]:
+def calculate_properties(mol: Chem.Mol) -> dict[str, float | int]:
     """
     Calculate common molecular properties.
 
-    These properties can be used for filtering search results
-    and applying Lipinski's Rule of Five.
-
-    Args:
-        mol: RDKit Mol object
-
-    Returns:
-        Dictionary of molecular properties
+    Keys match the property fields of :class:`pubchem_finder.core.Molecule`,
+    so the result can be splatted into its constructor.
 
     Example:
         >>> mol = Chem.MolFromSmiles("CCO")
-        >>> props = calculate_properties(mol)
-        >>> props['molecular_weight']
+        >>> round(calculate_properties(mol)["molecular_weight"], 2)
         46.07
     """
+    logp, _molar_refractivity = rdMolDescriptors.CalcCrippenDescriptors(mol)
     return {
-        "molecular_weight": Descriptors.MolWt(mol),
-        "logp": Crippen.MolLogP(mol),
-        "num_h_donors": Lipinski.NumHDonors(mol),
-        "num_h_acceptors": Lipinski.NumHAcceptors(mol),
-        "tpsa": Descriptors.TPSA(mol),
-        "num_rotatable_bonds": Lipinski.NumRotatableBonds(mol),
-        "num_aromatic_rings": Lipinski.NumAromaticRings(mol),
-        "num_heavy_atoms": Lipinski.HeavyAtomCount(mol),
+        "molecular_weight": float(rdMolDescriptors._CalcMolWt(mol)),
+        "logp": float(logp),
+        "num_h_donors": int(rdMolDescriptors.CalcNumHBD(mol)),
+        "num_h_acceptors": int(rdMolDescriptors.CalcNumHBA(mol)),
+        "tpsa": float(rdMolDescriptors.CalcTPSA(mol)),
+        "num_rotatable_bonds": int(rdMolDescriptors.CalcNumRotatableBonds(mol)),
+        "num_aromatic_rings": int(rdMolDescriptors.CalcNumAromaticRings(mol)),
+        "num_heavy_atoms": int(mol.GetNumHeavyAtoms()),
     }
 
 
 def is_druglike(mol: Chem.Mol) -> bool:
     """
-    Check if molecule satisfies Lipinski's Rule of Five.
-
-    Rules:
-    - Molecular weight <= 500 Da
-    - LogP <= 5
-    - Number of H-bond donors <= 5
-    - Number of H-bond acceptors <= 10
-
-    Args:
-        mol: RDKit Mol object
-
-    Returns:
-        True if molecule is drug-like
+    Lipinski's Rule of Five: MW <= 500, LogP <= 5, HBD <= 5, HBA <= 10.
     """
     props = calculate_properties(mol)
     return (

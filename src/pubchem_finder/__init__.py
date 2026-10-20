@@ -1,4 +1,10 @@
-"""PubChem Finder - Advanced molecular similarity search platform."""
+"""PubChem Finder: molecular similarity search over PubChem."""
 
-__version__ = "2.0.0"
-__author__ = "PubChem Finder Team"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("pubchem-finder")
+except PackageNotFoundError:  # pragma: no cover - source checkout without install
+    __version__ = "0.0.0"
+
+__all__ = ["__version__"]

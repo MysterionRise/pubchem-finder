@@ -1,6 +1,7 @@
 """Tests for core Molecule data structure."""
 
 import pytest
+
 from pubchem_finder.core import Molecule, MoleculeValidationError
 
 
@@ -72,3 +73,25 @@ def test_molecule_created_at():
     """Test that created_at is set automatically."""
     mol = Molecule(smiles="CCO")
     assert mol.created_at is not None
+
+
+def test_molecule_created_at_is_timezone_aware():
+    mol = Molecule(smiles="CCO")
+    assert mol.created_at is not None
+    assert mol.created_at.tzinfo is not None
+
+
+def test_molecule_equality_is_identity_even_with_numpy_fingerprints():
+    import numpy as np
+
+    a = Molecule(smiles="CCO")
+    b = Molecule(smiles="CCO")
+    a.add_fingerprint("fp", np.array([1, 0, 1]))
+    b.add_fingerprint("fp", np.array([1, 0, 1]))
+    assert a != b
+    assert a == a
+
+
+def test_molecule_repr_shows_zero_molecular_weight():
+    mol = Molecule(smiles="CCO", molecular_weight=0.0)
+    assert "mw=0.00" in repr(mol)

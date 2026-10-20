@@ -1,39 +1,39 @@
-"""Core molecule data structures."""
+"""Core molecule data structure."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from .exceptions import MoleculeValidationError
 
 
-@dataclass
+@dataclass(eq=False)
 class Molecule:
     """
-    Core molecule data structure.
+    Central molecule record used throughout the application.
 
-    This is the central data model used throughout the application.
-    Intentionally simple and focused on essentials.
+    Equality is identity-based (``eq=False``) because ``fingerprints`` holds
+    numpy arrays, whose ``==`` does not reduce to a single boolean.
 
     Attributes:
-        id: Unique identifier (UUID or PubChem CID)
+        id: Unique identifier (for PubChem records, the CID as a string)
         smiles: Original SMILES string
-        canonical_smiles: Canonicalized SMILES string
+        canonical_smiles: Canonical SMILES string
         inchi: InChI string
-        inchi_key: InChI Key (27 characters)
+        inchi_key: InChIKey (27 characters)
         molecular_weight: Molecular weight in Daltons
-        logp: Calculated LogP (octanol-water partition coefficient)
+        logp: Crippen LogP
         num_h_donors: Number of hydrogen bond donors
         num_h_acceptors: Number of hydrogen bond acceptors
         tpsa: Topological polar surface area
         num_rotatable_bonds: Number of rotatable bonds
         num_aromatic_rings: Number of aromatic rings
         num_heavy_atoms: Number of heavy (non-hydrogen) atoms
-        fingerprints: Dictionary of fingerprints {type: vector}
-        source: Data source (e.g., "pubchem", "chembl")
-        metadata: Additional metadata
-        created_at: Creation timestamp
-        updated_at: Last update timestamp
+        fingerprints: Fingerprints keyed by type name
+        source: Data source (e.g. ``"pubchem"``)
+        metadata: Free-form extra data
+        created_at: Creation timestamp (UTC)
+        updated_at: Last update timestamp (UTC)
     """
 
     # Identifiers
@@ -55,7 +55,7 @@ class Molecule:
     num_aromatic_rings: int | None = None
     num_heavy_atoms: int | None = None
 
-    # Fingerprints (stored as dict: {type: vector})
+    # Fingerprints keyed by type name
     fingerprints: dict[str, Any] = field(default_factory=dict)
 
     # Metadata
@@ -65,46 +65,29 @@ class Molecule:
     updated_at: datetime | None = None
 
     def __post_init__(self) -> None:
-        """Validate essential fields."""
         if not self.smiles and not self.canonical_smiles:
             raise MoleculeValidationError(
                 "Either smiles or canonical_smiles must be provided"
             )
-
         if self.created_at is None:
-            self.created_at = datetime.utcnow()
+            self.created_at = datetime.now(UTC)
 
     def add_fingerprint(self, fp_type: str, fingerprint: Any) -> None:
-        """
-        Add a fingerprint to the molecule.
-
-        Args:
-            fp_type: Fingerprint type identifier
-            fingerprint: Fingerprint data (numpy array or other format)
-        """
+        """Store a fingerprint under ``fp_type``."""
         self.fingerprints[fp_type] = fingerprint
 
     def get_fingerprint(self, fp_type: str) -> Any | None:
-        """
-        Get a fingerprint by type.
-
-        Args:
-            fp_type: Fingerprint type identifier
-
-        Returns:
-            Fingerprint data or None if not found
-        """
+        """Return the fingerprint stored under ``fp_type``, or ``None``."""
         return self.fingerprints.get(fp_type)
 
     def has_fingerprint(self, fp_type: str) -> bool:
-        """Check if molecule has a specific fingerprint type."""
+        """Whether a fingerprint of type ``fp_type`` is stored."""
         return fp_type in self.fingerprints
 
     def __repr__(self) -> str:
-        """String representation."""
-        mw_str = f"{self.molecular_weight:.2f}" if self.molecular_weight else "N/A"
+        mw = "N/A" if self.molecular_weight is None else f"{self.molecular_weight:.2f}"
         return (
             f"Molecule(id={self.id}, "
             f"smiles={self.canonical_smiles or self.smiles}, "
-            f"mw={mw_str})"
+            f"mw={mw})"
         )

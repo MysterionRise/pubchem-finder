@@ -5,14 +5,15 @@ from .exceptions import (
     MoleculeValidationError,
     PubChemFinderError,
 )
-from .fingerprint import FingerprintGenerator, SimilarityMetric
+from .fingerprint import BitArray, FingerprintGenerator, SimilarityMetric
 from .molecule import Molecule
 
 __all__ = [
-    "Molecule",
-    "FingerprintGenerator",
-    "SimilarityMetric",
-    "PubChemFinderError",
-    "MoleculeValidationError",
+    "BitArray",
     "FingerprintGenerationError",
+    "FingerprintGenerator",
+    "Molecule",
+    "MoleculeValidationError",
+    "PubChemFinderError",
+    "SimilarityMetric",
 ]

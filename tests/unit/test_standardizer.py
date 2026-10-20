@@ -1,7 +1,8 @@
 """Tests for molecule standardizer."""
 
-from pubchem_finder.chemistry import MoleculeStandardizer
 from rdkit import Chem
+
+from pubchem_finder.chemistry import MoleculeStandardizer
 
 
 def test_standardizer_removes_salts(ethanol_with_salt_smiles):
@@ -90,3 +91,23 @@ def test_standardizer_canonicalization(benzene_smiles):
     assert benzene_aromatic is not None
     assert benzene_kekule is not None
     assert benzene_aromatic == benzene_kekule
+
+
+def test_standardizer_neutralizes_salt_with_charged_parent():
+    """The parent is chosen before neutralization, so the counter-ion cannot
+    keep the carboxylate charged."""
+    standardizer = MoleculeStandardizer()
+    assert standardizer.standardize_smiles("CC(=O)[O-].[Na+]") == "CC(=O)O"
+
+
+def test_standardizer_keeps_charge_of_salt_parent_when_not_neutralizing():
+    standardizer = MoleculeStandardizer(neutralize=False)
+    assert standardizer.standardize_smiles("CC(=O)[O-].[Na+]") == "CC(=O)[O-]"
+
+
+def test_standardizer_prefers_organic_fragment():
+    """A small organic fragment beats a larger inorganic one."""
+    standardizer = MoleculeStandardizer()
+    result = standardizer.standardize_smiles("CCO.O=S(=O)(O)O")
+    assert result is not None
+    assert "S" not in result or result == "CCO"

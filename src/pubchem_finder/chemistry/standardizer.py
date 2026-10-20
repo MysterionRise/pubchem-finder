@@ -1,4 +1,4 @@
-"""Molecule standardization and normalization."""
+"""Molecule standardization."""
 
 import logging
 
@@ -10,109 +10,62 @@ logger = logging.getLogger(__name__)
 
 class MoleculeStandardizer:
     """
-    Standardize molecules to canonical form.
+    Standardize molecules to a canonical form before fingerprinting.
 
-    This is CRITICAL for consistent fingerprints and searches.
-    All molecules should be standardized before fingerprinting.
+    Pipeline (the order matters: the parent fragment is chosen before
+    neutralization so counter-ions never influence the charge balance):
 
-    The standardization process:
-    1. Remove hydrogen atoms
-    2. Normalize functional groups
-    3. Neutralize charges (optional)
-    4. Select largest fragment (remove salts/counterions)
-    5. Canonicalize
+    1. ``rdMolStandardize.Cleanup``: remove explicit hydrogens, normalize
+       functional groups, reionize, sanitize.
+    2. Keep the largest organic fragment (drops salts and counter-ions).
+    3. Neutralize charges (optional, default on).
 
     Example:
-        >>> standardizer = MoleculeStandardizer()
-        >>> mol = Chem.MolFromSmiles("CCO.Cl")  # Ethanol with chloride salt
-        >>> std_mol = standardizer.standardize(mol)
-        >>> Chem.MolToSmiles(std_mol)
-        'CCO'
+        >>> MoleculeStandardizer().standardize_smiles("CC(=O)[O-].[Na+]")
+        'CC(=O)O'
     """
 
-    def __init__(self, neutralize: bool = True):
-        """
-        Initialize standardizer.
-
-        Args:
-            neutralize: Whether to neutralize charges (default: True)
-        """
+    def __init__(self, neutralize: bool = True) -> None:
         self.neutralize = neutralize
-        self.normalizer = rdMolStandardize.Normalizer()
-        self.uncharger = rdMolStandardize.Uncharger()
+        self._fragment_chooser = rdMolStandardize.LargestFragmentChooser(
+            preferOrganic=True
+        )
+        self._uncharger = rdMolStandardize.Uncharger()
 
-    def standardize(self, mol: Chem.Mol) -> Chem.Mol | None:
+    def standardize(self, mol: Chem.Mol | None) -> Chem.Mol | None:
         """
-        Standardize a molecule.
-
-        Args:
-            mol: RDKit Mol object
+        Standardize an RDKit molecule.
 
         Returns:
-            Standardized molecule or None if standardization fails
+            The standardized molecule, or ``None`` if the input is ``None`` or
+            RDKit cannot process it.
         """
         if mol is None:
             return None
-
         try:
-            # Remove explicit hydrogens
-            mol = Chem.RemoveHs(mol)
-
-            # Normalize (standardize functional groups)
-            mol = self.normalizer.normalize(mol)
-
-            # Remove charges (makes similarity more robust)
+            mol = rdMolStandardize.Cleanup(mol)
+            mol = self._fragment_chooser.choose(mol)
             if self.neutralize:
-                mol = self.uncharger.uncharge(mol)
-
-            # Take largest fragment (removes salts, counterions)
-            mol = self._get_largest_fragment(mol)
-
-            # Canonicalize
+                mol = self._uncharger.uncharge(mol)
             Chem.SanitizeMol(mol)
-
-            return mol
-
-        except Exception as e:
-            logger.error(f"Standardization failed: {e}")
+        except Exception:
+            logger.warning("Standardization failed", exc_info=True)
             return None
-
-    def _get_largest_fragment(self, mol: Chem.Mol) -> Chem.Mol:
-        """
-        Select largest fragment from molecule.
-
-        If molecule contains multiple fragments (e.g., salt),
-        returns the fragment with the most heavy atoms.
-
-        Args:
-            mol: RDKit Mol object
-
-        Returns:
-            Largest fragment
-        """
-        frags = Chem.GetMolFrags(mol, asMols=True)
-        if len(frags) == 1:
-            return mol
-        # Return fragment with most heavy atoms
-        return max(frags, key=lambda m: m.GetNumHeavyAtoms())
+        return mol
 
     def standardize_smiles(self, smiles: str) -> str | None:
         """
-        Standardize SMILES string.
-
-        Args:
-            smiles: SMILES string
+        Standardize a SMILES string and return canonical SMILES.
 
         Returns:
-            Standardized SMILES or None if standardization fails
+            Canonical SMILES of the standardized molecule, or ``None`` if the
+            SMILES is invalid or standardization fails.
         """
-        mol = Chem.MolFromSmiles(smiles)
+        mol: Chem.Mol | None = Chem.MolFromSmiles(smiles)
         if mol is None:
-            logger.error(f"Invalid SMILES: {smiles}")
+            logger.warning("Invalid SMILES: %r", smiles)
             return None
-
-        mol = self.standardize(mol)
-        if mol is None:
+        std = self.standardize(mol)
+        if std is None:
             return None
-
-        return Chem.MolToSmiles(mol)
+        return str(Chem.MolToSmiles(std))
