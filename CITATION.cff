@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use PubChem Finder in your work, please cite it as below, and cite PubChem for the data (see the README)."
+title: "PubChem Finder: search PubChem by chemical structure from the command line and from MCP clients"
+type: software
+authors:
+  - family-names: Perikov
+    given-names: Konstantin
+version: 2.0.0
+date-released: "2026-10-22"
+license: MIT
+repository-code: "https://github.com/MysterionRise/pubchem-finder"
+keywords:
+  - cheminformatics
+  - PubChem
+  - RDKit
+  - similarity search
+  - substructure search
+  - Model Context Protocol

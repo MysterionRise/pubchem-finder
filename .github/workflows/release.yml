@@ -1,0 +1,126 @@
+name: Release
+
+# Run from the Actions tab: "Release" -> "Run workflow".
+# With dry_run (the default) it only builds and tests the package. Without it, it
+# publishes to PyPI with trusted publishing, then tags the commit and creates the
+# GitHub Release with the CHANGELOG section as notes.
+#
+# One-time setup on pypi.org (Account -> Publishing -> Add a pending publisher):
+# project pubchem-finder, owner MysterionRise, repository pubchem-finder,
+# workflow release.yml, environment pypi.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without the v (must match pyproject.toml)"
+        required: true
+      dry_run:
+        description: "Build and test only; do not publish"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Check the version and changelog
+        run: |
+          project=$(uv run --no-project python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          if [ "$project" != "$VERSION" ]; then
+            echo "::error::pyproject.toml says $project, not $VERSION"; exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null; then
+            echo "::error::tag v$VERSION already exists"; exit 1
+          fi
+          awk -v v="$VERSION" '
+            index($0, "## [" v "]") == 1 { on = 1; next }
+            on && /^## / { exit }
+            on { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::CHANGELOG.md has no section for $VERSION"; exit 1
+          fi
+
+      - name: Lint, type-check and test
+        run: |
+          uv sync --locked
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy
+          uv run pytest -m "not slow"
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Smoke-test the wheel in a clean environment
+        run: |
+          uv venv .smoke --python 3.12
+          uv pip install --python .smoke dist/*.whl
+          .smoke/bin/python scripts/smoke.py --command .smoke/bin/pubchem-finder
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+
+  publish:
+    needs: build
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pubchem-finder/${{ inputs.version }}/
+    permissions:
+      id-token: write # trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+
+      - name: Tag and create the GitHub Release
+        run: |
+          gh release create "v$VERSION" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "v$VERSION" \
+            --notes-file release-notes.md

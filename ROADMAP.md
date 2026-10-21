@@ -65,7 +65,23 @@ MCP over stdio, uv + hatchling + ruff, Python 3.11 to 3.13.
       batch files)
 - [x] Faster index finalize: popcount bins computed with numpy instead of FPSim2's per-row loop
 
-## Later, optional
+## Phase 6: tested everywhere, released as 2.0.0 (done)
 
-- [ ] ADMET predictions as an optional extra (pulls in PyTorch)
+- [x] Test suite on Linux, macOS and Windows; the built wheel installed and smoke-tested
+      on all three; the real MCP server tested over stdio
+- [x] Live PubChem tests weekly; an on-demand workflow that builds an index from real
+      PubChem files and calls every CLI command and MCP tool
+- [x] Memory detection on macOS and Windows (psutil), readable atom labels in drawings
+- [x] PyPI release through trusted publishing, CHANGELOG, citation file, issue templates,
+      security policy, Dependabot
+
+## Next, driven by feedback
+
+- [ ] List the server in the MCP registry, and ship a one-click Claude Desktop extension
+      (`.mcpb`) with each release
+- [ ] A quick demo index (a few thousand well-known compounds via PUG REST), so the first
+      local search takes seconds instead of a 250 MB download
+- [ ] MCP prompts and resources: a compound dossier prompt, `pubchem://compound/{cid}`
 - [ ] Matched molecular pairs across a hit set (`rdMMPA`)
+- [ ] ADMET predictions as an optional extra (pulls in PyTorch)
+- [ ] Streamable HTTP transport and a Docker image, if a shared server is wanted

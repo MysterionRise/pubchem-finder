@@ -1,0 +1,16 @@
+name: Feature request
+description: Suggest a tool, command or improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The chemistry question or workflow, and where the current tools fall short.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+      description: The tool, command or option you have in mind, with an example input and the result you would expect.
