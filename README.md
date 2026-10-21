@@ -191,23 +191,26 @@ atoms that lower it in pink.*
 
 ## How big is it?
 
-The first column is a real run of `index build --limit 1` on a MacBook Pro. The
-full-PubChem column scales those numbers to PubChem's roughly 120 million compounds and is
-an estimate.
+The first column comes from real runs of `index build --limit 1`: on a MacBook Pro, and
+with `--with-substructure` in the project's
+[real-data workflow](.github/workflows/e2e-real.yml) on a standard GitHub Actions Linux
+runner, which then runs every command and MCP tool against the result. The full-PubChem column
+scales those numbers to PubChem's roughly 120 million compounds and is an estimate.
 
 | | First PubChem chunk (measured) | All of PubChem (estimated) |
 |---|---|---|
 | Compounds indexed | 444,794 (29 skipped by RDKit) | ~120 million |
-| Fingerprinting | 80 s on one core (~5,500 compounds/s) | ~1 h on 8 cores, plus download time |
+| Fingerprinting | 80 s on one MacBook core, 169 s on a GitHub runner | ~1 h on 8 cores, plus download time |
 | Download | one SDF file, deleted after indexing | ~100 GB over HTTPS, streamed chunk by chunk |
 | Similarity index file | 36 MB | ~10 GB |
 | RAM for in-memory similarity search | 64 MB | ~17 GB |
-| Substructure search (optional) | ~2 min more to build, ~120 MB RAM | ~1 h on 8 cores, ~33 GB RAM |
-| Free disk while building | small | ~45 GB, plus ~45 GB with substructure search |
+| Substructure search (optional) | 169 s more to build, 88 MB file, 121 MB RAM | ~1.5 h on 8 cores, ~24 GB file, ~33 GB RAM |
+| Free disk while building | small | ~45 GB, plus ~50 GB with substructure search |
 
-Measured on 100,000 compounds in a 4-core Linux sandbox: a similarity query takes about
-2 ms in memory and 0.2 s on disk; a 50-hit substructure query 20-35 ms in memory and
-0.35 s on disk. Both grow roughly linearly with index size.
+Query times on the first chunk (GitHub runner): a similarity search takes about 3 ms in
+memory and 0.12 s on disk; a 50-hit substructure search 35-50 ms in memory and 0.3 s on
+disk. The first query also loads the index, which takes well under a second at this size.
+Screening time grows roughly linearly with the size of the index.
 
 The index is searched in memory when it fits comfortably in available RAM and from disk
 otherwise; set `PUBCHEM_FINDER_INDEX_MODE=memory|disk` to force a mode. On a laptop, index
