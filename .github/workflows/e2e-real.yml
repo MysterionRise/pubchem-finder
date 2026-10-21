@@ -125,6 +125,16 @@ jobs:
                   print(f"| {name} | {mode} | {first * 1000:,.0f} ms | {per * 1000:,.1f} ms |")
           PY
 
+      - name: Demo animation from the real index
+        run: |
+          command -v ffmpeg || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
+          uv run python scripts/demo_media.py collect --home "$PUBCHEM_FINDER_HOME" \
+            --query "$ASPIRIN" --query-name aspirin \
+            --smarts "[NX3][SX4](=O)(=O)c" --smarts-name "aryl sulfonamide" \
+            -o out/demo-data.json
+          echo "DEMO_DATA $(cat out/demo-data.json)"
+          uv run python scripts/demo_media.py render out/demo-data.json -o out/media
+
       - name: Upload outputs
         if: always()
         uses: actions/upload-artifact@v7
