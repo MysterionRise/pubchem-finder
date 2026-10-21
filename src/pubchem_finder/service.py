@@ -12,6 +12,7 @@ from pathlib import Path
 
 from rdkit import Chem, DataStructs, rdBase
 
+from . import drawing, medchem
 from .chemistry import MoleculeStandardizer, calculate_properties, is_druglike
 from .config import cache_enabled, cache_path, resolve_home
 from .core.exceptions import MoleculeValidationError, PubChemFinderError
@@ -39,6 +40,7 @@ from .models import (
     Description,
     IndexStatus,
     LookupResult,
+    MedchemProfile,
     Properties,
     RemoteHit,
     RemoteSearchResults,
@@ -157,6 +159,7 @@ def similarity_search(
     top_k: int = 20,
     metric: Metric = "tanimoto",
     home: Path | str | None = None,
+    group_by_scaffold: bool = False,
 ) -> SimilarityResults:
     """Most similar compounds in the local index."""
     if not 0.0 < threshold <= 1.0:
@@ -183,6 +186,7 @@ def similarity_search(
         fingerprint=manifest.fingerprint,
         n_indexed=manifest.n_compounds,
         hits=hits,
+        scaffolds=medchem.group_by_scaffold(hits) if group_by_scaffold else None,
     )
 
 
@@ -433,3 +437,34 @@ def cache_clear(home: Path | str | None = None) -> int:
     """Empty the PubChem response cache; returns entries removed."""
     path = cache_path(home)
     return ResponseCache(path).clear() if path.exists() else 0
+
+
+# --------------------------------------------------------------------------- #
+# Assistant features
+# --------------------------------------------------------------------------- #
+
+
+def medchem_profile(smiles: str) -> MedchemProfile:
+    """Drug-likeness, synthesizability and structural-alert triage."""
+    return medchem.profile(parse_smiles(smiles), smiles)
+
+
+def draw(
+    smiles: list[str],
+    legends: list[str] | None = None,
+    highlight: drawing.Highlight = "none",
+    smarts: str | None = None,
+    reference: str | None = None,
+    size: int = 300,
+    per_row: int = 4,
+) -> bytes:
+    """PNG grid of molecules; see :func:`pubchem_finder.drawing.draw_grid`."""
+    return drawing.draw_grid(
+        smiles,
+        legends=legends,
+        highlight=highlight,
+        smarts=smarts,
+        reference=reference,
+        size=size,
+        per_row=per_row,
+    )

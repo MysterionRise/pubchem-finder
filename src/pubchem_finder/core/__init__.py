@@ -2,6 +2,7 @@
 
 from .exceptions import (
     FingerprintGenerationError,
+    InvalidInput,
     MoleculeValidationError,
     PubChemFinderError,
 )
@@ -12,6 +13,7 @@ __all__ = [
     "BitArray",
     "FingerprintGenerationError",
     "FingerprintGenerator",
+    "InvalidInput",
     "Molecule",
     "MoleculeValidationError",
     "PubChemFinderError",

@@ -48,13 +48,18 @@ MCP over stdio, uv + hatchling + ruff, Python 3.11 to 3.13.
 - [x] 7-day on-disk response cache; `cache info | clear`
 - [x] `pubchem-finder pubchem ...` CLI commands
 
-## Phase 4b: assistant features
+## Phase 4b: assistant features (done)
 
-- [ ] `draw_molecules`: RDKit structure grids as inline images, with substructure and
-      "what changed" (MCS) highlighting; `pubchem-finder draw`
-- [ ] `medchem_profile`: QED, synthetic accessibility, Lipinski/Veber, PAINS/Brenk/NIH
-      alerts, Murcko scaffold; scaffold grouping of similarity hits
-- [ ] Batch CSV mode for `props`, `standardize`, `triage` and `search`
+- [x] `draw_molecules`: RDKit structure grids as inline images, with SMARTS, "what changed"
+      (MCS, aligned to the shared core) and similarity-map highlighting; `pubchem-finder draw`
+- [x] `medchem_profile`: QED, synthetic accessibility, Lipinski/Veber, PAINS/Brenk/NIH
+      alerts, Murcko scaffold; scaffold grouping of similarity hits; `pubchem-finder triage`
+- [x] Batch CSV mode for `props`, `standardize`, `triage` and `search`
+
+## Later, optional
+
+- [ ] ADMET predictions as an optional extra (pulls in PyTorch)
+- [ ] Matched molecular pairs across a hit set (`rdMMPA`)
 
 ## Phase 5: local substructure search
 

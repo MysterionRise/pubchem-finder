@@ -10,7 +10,7 @@ from collections.abc import Callable
 from typing import Literal, TypeVar
 
 import anyio
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from . import __version__, service
@@ -30,6 +30,7 @@ from .models import (
     Description,
     IndexStatus,
     LookupResult,
+    MedchemProfile,
     Properties,
     RemoteSearchResults,
     SimilarityResults,
@@ -52,6 +53,9 @@ The pubchem_* tools query PubChem live: structure searches over all of PubChem
 (PubMed, patents, registry IDs), descriptions, curated page sections such as GHS
 safety and pharmacology, and bioassay summaries. Resolve a name to a CID with
 pubchem_lookup first. Cite the sources given in annotation results.
+draw_molecules shows structures as an image (highlight a SMARTS pattern, what changed
+relative to a reference, or a similarity map); medchem_profile triages drug-likeness,
+synthetic accessibility and PAINS/Brenk/NIH structural alerts.
 SMILES inputs are case-sensitive; aromatic atoms are lowercase."""
 
 mcp = MCPServer(
@@ -132,6 +136,7 @@ async def similarity_search(
     threshold: float = 0.7,
     top_k: int = 20,
     metric: Literal["tanimoto", "dice", "cosine"] = "tanimoto",
+    group_by_scaffold: bool = False,
 ) -> SimilarityResults:
     """Find the compounds most similar to a structure in the local PubChem index.
 
@@ -140,7 +145,8 @@ async def similarity_search(
     and PubChem link. threshold is the minimum similarity (0-1, 0.7 finds close
     analogues; lower it to widen the search). Requires a local index built with
     `pubchem-finder index build`; the first search loads it, which can take a
-    while for a full PubChem index.
+    while for a full PubChem index. group_by_scaffold adds the hits grouped by
+    Bemis-Murcko scaffold, to see how many chemical series the hits span.
     """
     return await _run(
         service.similarity_search,
@@ -148,6 +154,7 @@ async def similarity_search(
         threshold=threshold,
         top_k=top_k,
         metric=metric,
+        group_by_scaffold=group_by_scaffold,
     )
 
 
@@ -252,6 +259,45 @@ async def pubchem_bioactivity(cid: int) -> BioactivitySummary:
     outcome counts, the targets with the most active results (UniProt
     accession, NCBI gene ID) and the most potent active measurements (µM)."""
     return await _run(service.pubchem_bioactivity, cid)
+
+
+@mcp.tool()
+async def draw_molecules(
+    smiles: list[str],
+    legends: list[str] | None = None,
+    highlight: Literal["none", "smarts", "diff", "similarity_map"] = "none",
+    smarts: str | None = None,
+    reference_smiles: str | None = None,
+) -> Image:
+    """Draw 1-24 molecules as a PNG grid image the user can see.
+
+    legends: one caption per molecule (names or CIDs). highlight:
+    - "smarts": atoms matching the smarts pattern (e.g. a pharmacophore or an alert),
+    - "diff": what each molecule adds relative to reference_smiles (atoms outside
+      their maximum common substructure), with drawings aligned to the shared core,
+    - "similarity_map": atom contributions to ECFP4 similarity with reference_smiles
+      (green raises similarity, pink lowers it).
+    Use it to show search hits, analogues or alerts instead of describing structures.
+    """
+    png = await _run(
+        service.draw,
+        smiles,
+        legends=legends,
+        highlight=highlight,
+        smarts=smarts,
+        reference=reference_smiles,
+    )
+    return Image(data=png, format="png")
+
+
+@mcp.tool()
+async def medchem_profile(smiles: str) -> MedchemProfile:
+    """Medicinal-chemistry triage of a structure: QED drug-likeness (0-1),
+    synthetic accessibility (1 easy - 10 hard), Lipinski violations, Veber rules,
+    PAINS/Brenk/NIH structural alerts with matched atom indices (pass them to
+    draw_molecules with the alert as SMARTS, or just describe them), and the
+    Bemis-Murcko scaffold."""
+    return await _run(service.medchem_profile, smiles)
 
 
 def main() -> None:

@@ -96,6 +96,9 @@ class SimilarityResults(BaseModel):
     fingerprint: str = Field(description="Fingerprint the index was built with")
     n_indexed: int = Field(description="Compounds in the index")
     hits: list[SimilarityHit]
+    scaffolds: list["ScaffoldGroup"] | None = Field(
+        default=None, description="Hits grouped by Murcko scaffold, when requested"
+    )
 
 
 class IndexStatus(BaseModel):
@@ -242,3 +245,56 @@ class AnnotationSection(BaseModel):
     n_total: int = Field(description="Annotations available before trimming")
     truncated: bool
     sources: list[str] = Field(description="Depositors of the annotations shown")
+
+
+# --------------------------------------------------------------------------- #
+# Assistant features (Phase 4b)
+# --------------------------------------------------------------------------- #
+
+
+class StructuralAlert(BaseModel):
+    """A substructure flagged by a published filter set."""
+
+    catalog: str = Field(description="Filter set, e.g. PAINS_A, Brenk, NIH")
+    name: str = Field(description="Alert name, e.g. ene_rhod_A(235)")
+    atoms: list[int] = Field(
+        description="Indices of the matched atoms in the input SMILES"
+    )
+    reference: str | None = Field(
+        default=None, description="Publication defining the filter"
+    )
+
+
+class MedchemProfile(BaseModel):
+    """Drug-likeness and liability triage for one structure."""
+
+    input_smiles: str
+    canonical_smiles: str
+    qed: float = Field(
+        description="Quantitative estimate of drug-likeness, 0 (poor) to 1"
+    )
+    sa_score: float | None = Field(
+        default=None,
+        description="Synthetic accessibility, 1 (easy) to 10 (very hard); None if unavailable",
+    )
+    molecular_weight: float
+    logp: float
+    num_h_donors: int
+    num_h_acceptors: int
+    tpsa: float
+    num_rotatable_bonds: int
+    lipinski_violations: list[str] = Field(description="Broken Rule-of-Five criteria")
+    veber_ok: bool = Field(description="Rotatable bonds <= 10 and TPSA <= 140")
+    alerts: list[StructuralAlert]
+    pains_free: bool = Field(description="No PAINS alert matched")
+    murcko_scaffold: str = Field(
+        description="Bemis-Murcko scaffold SMILES; empty if acyclic"
+    )
+
+
+class ScaffoldGroup(BaseModel):
+    """Hits that share a Bemis-Murcko scaffold."""
+
+    scaffold: str = Field(description="Scaffold SMILES; empty for acyclic compounds")
+    cids: list[int]
+    best_similarity: float

@@ -22,6 +22,8 @@ EXPECTED_TOOLS = {
     "pubchem_description",
     "pubchem_annotations",
     "pubchem_bioactivity",
+    "draw_molecules",
+    "medchem_profile",
 }
 
 
@@ -32,7 +34,8 @@ async def test_tools_are_listed_with_schemas():
     assert set(tools) == EXPECTED_TOOLS
     for tool in tools.values():
         assert tool.description, tool.name
-        assert tool.output_schema is not None, tool.name
+        if tool.name != "draw_molecules":  # returns image content, not JSON
+            assert tool.output_schema is not None, tool.name
     assert "smiles" in tools["compound_properties"].input_schema["properties"]
     assert tools["pubchem_lookup"].input_schema["properties"]["by"]["enum"] == [
         "name",
@@ -150,3 +153,48 @@ async def test_annotation_and_timeout_errors_are_actionable(pubchem_knowledge_ap
     assert "GHS Classification" in missing.content[0].text  # lists what exists
     assert slow.is_error is True
     assert "more specific query" in slow.content[0].text
+
+
+async def test_draw_molecules_returns_png_image():
+    import base64
+
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "draw_molecules",
+            {
+                "smiles": ["CC(=O)Oc1ccccc1C(=O)O", "COC(=O)c1ccccc1O"],
+                "legends": ["aspirin", "methyl salicylate"],
+                "highlight": "diff",
+                "reference_smiles": "CC(=O)Oc1ccccc1C(=O)O",
+            },
+        )
+        bad = await client.call_tool(
+            "draw_molecules", {"smiles": ["CCO"], "highlight": "diff"}
+        )
+    assert result.is_error is False
+    (content,) = result.content
+    assert content.type == "image"
+    assert content.mime_type == "image/png"
+    assert base64.b64decode(content.data).startswith(b"\x89PNG")
+    assert bad.is_error is True
+    assert "reference" in bad.content[0].text
+
+
+async def test_medchem_profile_and_scaffold_grouping(built_home, monkeypatch):
+    monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(built_home))
+    async with Client(mcp) as client:
+        triage = await client.call_tool(
+            "medchem_profile", {"smiles": "O=C1C(=Cc2ccccc2)SC(=S)N1"}
+        )
+        grouped = await client.call_tool(
+            "similarity_search",
+            {
+                "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+                "threshold": 0.2,
+                "group_by_scaffold": True,
+            },
+        )
+    assert triage.structured_content["pains_free"] is False
+    scaffolds = grouped.structured_content["scaffolds"]
+    assert scaffolds[0]["scaffold"] == "c1ccccc1"
+    assert 2244 in scaffolds[0]["cids"]

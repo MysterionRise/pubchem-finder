@@ -68,6 +68,29 @@ Successful PubChem responses are cached for 7 days in the data directory, so rep
 cost nothing and stay within PubChem's rate limits. `pubchem-finder cache info` and
 `pubchem-finder cache clear` manage it; set `PUBCHEM_FINDER_CACHE=0` to turn it off.
 
+### Pictures, triage and batch files
+
+```bash
+# Draw structures; highlight a SMARTS pattern, what each analogue adds to a reference,
+# or which atoms drive ECFP4 similarity to it (similarity map)
+pubchem-finder draw "CC(=O)Oc1ccccc1C(=O)O" "COC(=O)c1ccccc1O" -l aspirin -l "methyl salicylate" \
+    --highlight diff --reference "CC(=O)Oc1ccccc1C(=O)O" -o analogues.png
+
+# Med-chem triage: QED, synthetic accessibility, Lipinski/Veber, PAINS/Brenk/NIH alerts, scaffold
+pubchem-finder triage "O=C1C(=Cc2ccccc2)SC(=S)N1"
+
+# Whole files: .smi ("SMILES [id]" per line), .csv/.tsv with a smiles column, or - for stdin
+pubchem-finder triage -i library.smi -o triage.csv
+pubchem-finder props -i library.csv -o props.csv
+pubchem-finder standardize -i library.smi -o clean.csv
+pubchem-finder search -i queries.smi -o hits.csv --threshold 0.6 --top 50   # one row per hit
+pubchem-finder search "CC(=O)Oc1ccccc1C(=O)O" --group-by-scaffold
+```
+
+In `diff` mode each drawing is aligned to the core it shares with the reference, and only the
+atoms the analogue adds are highlighted; groups the analogue lacks cannot be drawn on it. Rows
+that fail in batch mode get an `error` column instead of stopping the run.
+
 `index build --limit N` downloads the first N of PubChem's ~350 SDF chunks (about 500,000
 CIDs each) from the NCBI HTTPS mirror, verifies each file's MD5, fingerprints it, deletes the
 download, and merges everything into one searchable index. Re-running is safe: finished chunks
@@ -141,11 +164,16 @@ Tools exposed:
 | `pubchem_description(cid)` | Curated descriptions with sources. |
 | `pubchem_annotations(cid, heading, max_chars)` | One section of the compound page: GHS classification, hazards, pharmacology, mechanism of action, drug information, experimental properties, toxicity, use, food additives. Every item names its source. |
 | `pubchem_bioactivity(cid)` | Bioassay summary: assay count, outcomes, top targets, most potent active results. |
+| `draw_molecules(smiles, legends, highlight, smarts, reference_smiles)` | Structures as an inline image, with SMARTS, "what changed" or similarity-map highlighting. Offline. |
+| `medchem_profile(smiles)` | QED, synthetic accessibility, Lipinski/Veber, PAINS/Brenk/NIH alerts with atoms, Murcko scaffold. Offline. |
+
+`similarity_search` also takes `group_by_scaffold` to show how many chemical series the hits span.
 
 Then ask Claude things like "what is the molecular weight and XLogP of caffeine?",
 "how similar are aspirin and salicylic acid?", "is ibuprofen hazardous, and what does its
-GHS label say?", "what are the main targets of celecoxib in PubChem assays?" or, with an
-index built, "find the 10 compounds most similar to ibuprofen".
+GHS label say?", "what are the main targets of celecoxib in PubChem assays?", "show me the
+closest analogues of aspirin and highlight what changed", "does this compound have any PAINS
+alerts?" or, with an index built, "find the 10 compounds most similar to ibuprofen".
 
 The server loads the index on the first search, not at startup, so it starts instantly. Point it
 at a non-default data directory by adding `"env": {"PUBCHEM_FINDER_HOME": "/path"}` to the
