@@ -9,9 +9,10 @@ as an [MCP](https://modelcontextprotocol.io/) server.
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Status:** v0.2 of the rebuild. PubChem lookups, RDKit descriptors,
-> standardization, fingerprint comparison and a local similarity index over
-> PubChem (or any SDF files) work from the CLI and from an MCP server.
+> **Status:** PubChem lookups and live structure search, synonyms, cross-references,
+> curated safety and pharmacology annotations, bioassay summaries, RDKit descriptors,
+> standardization, fingerprint comparison and a local similarity index over PubChem
+> (or any SDF files) all work from the CLI and from an MCP server.
 > See [ROADMAP.md](ROADMAP.md) for what comes next.
 
 ## Quick start
@@ -43,6 +44,29 @@ pubchem-finder index status
 
 pubchem-finder index build --sdf my_library.sdf.gz   # or index your own SDF files
 ```
+
+### Ask PubChem directly
+
+The `pubchem` commands query PubChem's live services, with no index needed:
+
+```bash
+pubchem-finder pubchem similarity "CC(=O)Oc1ccccc1C(=O)O" --threshold 90   # across all ~120M compounds
+pubchem-finder pubchem substructure "c1ccc2[nH]ccc2c1" --max 50              # everything containing indole
+pubchem-finder pubchem exact "CC(=O)Oc1ccccc1C(=O)O" --identity same_connectivity
+pubchem-finder pubchem synonyms 2244          # names and CAS numbers
+pubchem-finder pubchem xrefs 2244             # registry IDs, PubMed articles, patents
+pubchem-finder pubchem describe 2244          # curated descriptions with sources
+pubchem-finder pubchem annotations 2244 --heading "GHS Classification"   # safety, pharmacology, ...
+pubchem-finder pubchem bioactivity 2244       # assay outcomes, top targets, most potent results
+```
+
+PubChem's similarity search uses its own fingerprint and does not report scores, so each hit is
+also scored here with ECFP4, the same fingerprint as the local index, and sorted by it. Annotations
+name the organisation that deposited them; some carry their own license terms.
+
+Successful PubChem responses are cached for 7 days in the data directory, so repeated questions
+cost nothing and stay within PubChem's rate limits. `pubchem-finder cache info` and
+`pubchem-finder cache clear` manage it; set `PUBCHEM_FINDER_CACHE=0` to turn it off.
 
 `index build --limit N` downloads the first N of PubChem's ~350 SDF chunks (about 500,000
 CIDs each) from the NCBI HTTPS mirror, verifies each file's MD5, fingerprints it, deletes the
@@ -109,10 +133,19 @@ Tools exposed:
 | `compare(smiles_a, smiles_b)` | Tanimoto similarity on ECFP4 and MACCS fingerprints. Offline. |
 | `similarity_search(smiles, threshold, top_k, metric)` | Most similar compounds in the local index, with CID, SMILES, IUPAC name, formula, MW and PubChem link. Needs `index build`. |
 | `index_status()` | Whether the local index is built, its size and fingerprint, and how to build it. |
+| `pubchem_similarity_search(smiles, threshold, max_records)` | Similar compounds across all of PubChem, live, scored with ECFP4 and sorted. |
+| `pubchem_substructure_search(smiles, max_records)` | Compounds across all of PubChem that contain a fragment. |
+| `pubchem_exact_match(smiles, identity_type)` | The PubChem record(s) for exactly this structure, optionally ignoring stereo or isotopes. |
+| `pubchem_synonyms(cid, limit)` | Common, brand and systematic names, plus CAS Registry Numbers. |
+| `pubchem_xrefs(cid)` | Registry IDs (CAS, ChEMBL, DrugBank...), PubMed articles and patents. |
+| `pubchem_description(cid)` | Curated descriptions with sources. |
+| `pubchem_annotations(cid, heading, max_chars)` | One section of the compound page: GHS classification, hazards, pharmacology, mechanism of action, drug information, experimental properties, toxicity, use, food additives. Every item names its source. |
+| `pubchem_bioactivity(cid)` | Bioassay summary: assay count, outcomes, top targets, most potent active results. |
 
 Then ask Claude things like "what is the molecular weight and XLogP of caffeine?",
-"how similar are aspirin and salicylic acid?" or, with an index built,
-"find the 10 compounds most similar to ibuprofen".
+"how similar are aspirin and salicylic acid?", "is ibuprofen hazardous, and what does its
+GHS label say?", "what are the main targets of celecoxib in PubChem assays?" or, with an
+index built, "find the 10 compounds most similar to ibuprofen".
 
 The server loads the index on the first search, not at startup, so it starts instantly. Point it
 at a non-default data directory by adding `"env": {"PUBCHEM_FINDER_HOME": "/path"}` to the
