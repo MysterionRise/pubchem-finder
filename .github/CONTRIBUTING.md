@@ -19,9 +19,25 @@ Python 3.11, 3.12 and 3.13 are supported and tested in CI.
 
 1. Branch from `master`.
 2. Make the change with tests. Unit tests go in `tests/unit/`, end-to-end flows in
-   `tests/integration/`. Tests must run offline; mark anything slow with `@pytest.mark.slow`.
+   `tests/integration/`, and tests that start the real MCP server process in `tests/e2e/`.
+   Tests must run offline; mark anything slow with `@pytest.mark.slow` and anything that
+   calls PubChem with `@pytest.mark.live`.
 3. Run `make check`. CI runs the same commands, so a green local run means a green PR.
 4. Open a pull request. Keep it focused and describe what changed and why.
+
+## What CI checks
+
+- **CI** (every push and pull request): lint, format and `mypy --strict` on Linux; the test
+  suite on Linux (Python 3.11, 3.12, 3.13), macOS and Windows; and a `package` job on all
+  three that builds the wheel, installs it into a clean environment with the newest
+  dependencies from PyPI, and runs `scripts/smoke.py` against the installed command.
+- **Live PubChem** (weekly and on demand): the `live` tests against the real PubChem
+  services. Run them locally with `PUBCHEM_LIVE=1 uv run pytest -m live`.
+- **Real-data end-to-end** (on demand, from the Actions tab): downloads real PubChem SDF
+  chunks, builds an index with substructure search, runs every CLI command and every MCP
+  tool against it and against PubChem, and writes build time, file sizes, memory and query
+  timings to the job summary. Locally: `uv run pubchem-finder index build --limit 1
+  --with-substructure`, then `uv run python scripts/smoke.py --home <data dir> --live`.
 
 ## Code style
 

@@ -12,11 +12,18 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }}, ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.11", "3.12", "3.13"]
+        include:
+          - os: macos-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.12"
 
     steps:
       - uses: actions/checkout@v4
@@ -31,20 +38,57 @@ jobs:
         run: uv sync --locked
 
       - name: Lint
+        if: runner.os == 'Linux'
         run: uv run ruff check .
 
       - name: Format check
+        if: runner.os == 'Linux'
         run: uv run ruff format --check .
 
       - name: Type check
+        if: runner.os == 'Linux'
         run: uv run mypy
 
       - name: Test
         run: uv run pytest -m "not slow" --cov --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage report
-        if: matrix.python-version == '3.12'
+        if: runner.os == 'Linux' && matrix.python-version == '3.12'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-xml
           path: coverage.xml
+
+  # Build the wheel, install it the way a user would (fresh environment, newest
+  # compatible dependencies from PyPI, not the lockfile) and smoke-test the
+  # installed command and MCP server.
+  package:
+    name: package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Install the wheel into a clean environment
+        shell: bash
+        run: |
+          uv venv .smoke --python 3.12
+          uv pip install --python .smoke dist/*.whl
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then bin=.smoke/Scripts; else bin=.smoke/bin; fi
+          "$bin/python" scripts/smoke.py --command "$bin/pubchem-finder"

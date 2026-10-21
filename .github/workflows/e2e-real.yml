@@ -1,0 +1,133 @@
+name: Real-data end-to-end
+
+# Builds a real index from PubChem's own SDF files and exercises every CLI
+# command and MCP tool against it and against the live PubChem services.
+# The job summary records build time, file sizes, memory and query timings.
+
+on:
+  workflow_dispatch:
+    inputs:
+      chunks:
+        description: "PubChem SDF chunks to index (about 500,000 compounds each)"
+        default: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CHUNKS: ${{ inputs.chunks }}
+      PUBCHEM_FINDER_CACHE: "0"
+      ASPIRIN: "CC(=O)Oc1ccccc1C(=O)O"
+      INDOLE: "c1ccc2[nH]ccc2c1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Install project
+        run: uv sync --locked
+
+      - name: Prepare
+        run: |
+          echo "PUBCHEM_FINDER_HOME=$RUNNER_TEMP/pubchem-finder" >> "$GITHUB_ENV"
+          mkdir -p out
+
+      - name: Build the index from PubChem (download, fingerprints, substructure)
+        run: |
+          start=$(date +%s)
+          uv run pubchem-finder index build --limit "$CHUNKS" --with-substructure --workers 2 2>&1 | tee out/build.log
+          echo "BUILD_SECONDS=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
+          uv run pubchem-finder index status --json | tee out/status.json
+          jq -e '.state == "ready" and .substructure' out/status.json
+
+      - name: Local similarity and substructure search
+        run: |
+          uv run pubchem-finder search "$ASPIRIN" --threshold 0.7 --top 20 --json > out/search-aspirin.json
+          jq -e '.hits[0].cid == 2244 and .hits[0].similarity == 1' out/search-aspirin.json
+          uv run pubchem-finder search "$ASPIRIN" --threshold 0.6 --group-by-scaffold | tee out/search-scaffolds.txt
+          uv run pubchem-finder substructure "$INDOLE" --max 24 --json > out/substructure-indole.json
+          jq -e '.hits | length > 0' out/substructure-indole.json
+          uv run pubchem-finder substructure "[NX3][SX4](=O)(=O)c" --smarts --max 24 --json > out/substructure-sulfonamide.json
+          jq -e '.hits | length > 0' out/substructure-sulfonamide.json
+          printf '%s aspirin\nCN1C=NC2=C1C(=O)N(C(=O)N2C)C caffeine\nnot-a-smiles broken\n' "$ASPIRIN" > out/queries.smi
+          uv run pubchem-finder search -i out/queries.smi -o out/batch-hits.csv --threshold 0.7 --top 5
+          grep -q "^aspirin," out/batch-hits.csv
+
+      - name: Live PubChem commands
+        run: |
+          uv run pubchem-finder lookup caffeine --json > out/lookup-caffeine.json
+          jq -e '.compounds[0].cid == 2519' out/lookup-caffeine.json
+          uv run pubchem-finder pubchem synonyms 2244 --json > out/synonyms-2244.json
+          jq -e '.cas_numbers | index("50-78-2")' out/synonyms-2244.json
+          uv run pubchem-finder pubchem annotations 2244 --heading "GHS Classification" --json > out/ghs-2244.json
+          jq -e '.annotations | length > 0' out/ghs-2244.json
+          uv run pubchem-finder pubchem bioactivity 2244 --json > out/bioactivity-2244.json
+          jq -e '.n_assays > 0' out/bioactivity-2244.json
+          uv run pubchem-finder pubchem substructure "$INDOLE" --max 10 --json > out/pubchem-substructure-indole.json
+
+      - name: Pictures and triage
+        run: |
+          uv run pubchem-finder triage "$ASPIRIN" --json > out/triage-aspirin.json
+          uv run pubchem-finder draw $(jq -r '.hits[:8][].smiles' out/search-aspirin.json) \
+            --highlight diff --reference "$ASPIRIN" -o out/aspirin-analogues.png
+          uv run pubchem-finder draw $(jq -r '.hits[:8][].smiles' out/substructure-sulfonamide.json) \
+            --highlight smarts --smarts "[NX3][SX4](=O)(=O)c" -o out/sulfonamides.png
+
+      - name: Every MCP tool over stdio
+        run: uv run python scripts/smoke.py --home "$PUBCHEM_FINDER_HOME" --live
+
+      - name: Measure query timings
+        run: |
+          uv run python - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, os, time
+          from pathlib import Path
+          from pubchem_finder import service
+          from pubchem_finder.index.engine import LocalIndex
+
+          home = Path(os.environ["PUBCHEM_FINDER_HOME"])
+          status = json.loads(Path("out/status.json").read_text())
+          du = lambda p: sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+          mb = lambda n: f"{n / 1e6:,.0f} MB"
+          print("### Real-data index\n")
+          print("| | |\n|---|---|")
+          print(f"| PubChem chunks | {os.environ['CHUNKS']} |")
+          print(f"| Compounds indexed | {status['n_compounds']:,} ({status['n_failed']:,} skipped) |")
+          print(f"| Build (download, fingerprints, substructure, merge) | {int(os.environ['BUILD_SECONDS'])} s on 2 workers |")
+          print(f"| Similarity index file | {mb(status['size_bytes'])} |")
+          print(f"| Substructure index file | {mb(status['substructure_size_bytes'])} |")
+          print(f"| Chunk files (Parquet metadata + per-chunk fingerprints) | {mb(du(home / 'chunks'))} |")
+          print(f"| RAM for in-memory similarity / substructure | {mb(status['memory_bytes'])} / {mb(status['substructure_memory_bytes'])} |")
+          queries = {
+              "similarity, aspirin, top 20 >= 0.7": lambda idx: idx.search(
+                  service.parse_smiles(os.environ["ASPIRIN"]), 0.7, 20),
+              "substructure, indole, 50 hits": lambda idx: idx.substructure(
+                  service.parse_query(os.environ["INDOLE"]), 50, 100_000),
+              "substructure, aryl sulfonamide (SMARTS), 50 hits": lambda idx: idx.substructure(
+                  service.parse_query("[NX3][SX4](=O)(=O)c", "smarts"), 50, 100_000),
+          }
+          print("\n| Query | Mode | First call (loads index) | Then, per query |\n|---|---|---|---|")
+          for mode in ("memory", "disk"):
+              idx = LocalIndex(home, mode=mode)
+              for name, run in queries.items():
+                  t = time.perf_counter(); run(idx); first = time.perf_counter() - t
+                  t = time.perf_counter()
+                  for _ in range(5):
+                      run(idx)
+                  per = (time.perf_counter() - t) / 5
+                  print(f"| {name} | {mode} | {first * 1000:,.0f} ms | {per * 1000:,.1f} ms |")
+          PY
+
+      - name: Upload outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-real-outputs
+          path: out/
