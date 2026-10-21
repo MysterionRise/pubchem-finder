@@ -7,8 +7,12 @@
     <chunk>.h5               FPSim2 fingerprints for one SDF chunk (unsorted)
     <chunk>.parquet          CID, SMILES, InChIKey, IUPAC name, formula, MW
     <chunk>.json             ChunkStats; written last, marks the chunk complete
+    pattern/                 only with substructure search enabled
+      <chunk>.h5             RDKit pattern fingerprints, built from <chunk>.parquet
+      <chunk>.json           PatternChunkStats; written last
   index/
     pubchem.h5               merged, popcount-sorted FPSim2 database
+    pubchem-pattern.h5       merged pattern fingerprints (substructure screening)
     manifest.json            Manifest; written last, marks the index complete
 ```
 """
@@ -36,6 +40,43 @@ class ChunkStats(BaseModel):
     fp_params: dict[str, Any]
 
 
+def fpsim2_memory_bytes(n_compounds: int, fp_bits: int) -> int:
+    """RAM FPSim2 needs to hold ``n_compounds`` fingerprints in memory
+    (id + popcount + the fingerprint, as uint64 words)."""
+    words = (fp_bits + 63) // 64 + 2
+    return n_compounds * words * 8
+
+
+PATTERN_FP_TYPE = "RDKitPattern"
+PATTERN_FP_BITS = 2048  # FPSim2 always builds RDKit pattern fingerprints at 2048 bits
+
+
+class PatternChunkStats(BaseModel):
+    """Result of building pattern fingerprints for one chunk."""
+
+    name: str
+    n_records: int = Field(description="Molecules fingerprinted")
+    n_failed: int = Field(description="Stored SMILES RDKit could not parse")
+    seconds: float
+    rdkit_version: str
+
+
+class SubstructureInfo(BaseModel):
+    """Describes the pattern-fingerprint database used for substructure search."""
+
+    fp_type: str = PATTERN_FP_TYPE
+    n_compounds: int
+    n_failed: int
+    chunks: list[str]
+    built_at: datetime
+    rdkit_version: str = Field(
+        description="Pattern fingerprints can change between RDKit releases"
+    )
+
+    def memory_bytes(self) -> int:
+        return fpsim2_memory_bytes(self.n_compounds, PATTERN_FP_BITS)
+
+
 class Manifest(BaseModel):
     """Describes a finalized index."""
 
@@ -48,6 +89,9 @@ class Manifest(BaseModel):
     pubchem_finder_version: str
     rdkit_version: str
     fpsim2_version: str
+    substructure: SubstructureInfo | None = Field(
+        default=None, description="Present when substructure search is enabled"
+    )
 
     @property
     def fingerprint(self) -> str:
@@ -55,11 +99,10 @@ class Manifest(BaseModel):
         return f"{self.fp_type} {params}".strip()
 
     def memory_bytes(self) -> int:
-        """RAM needed to hold the fingerprints in memory (FPSim2 layout:
-        id + popcount + the fingerprint, as uint64 words)."""
-        fp_bits = int(self.fp_params.get("fpSize", 2048))
-        words = (fp_bits + 63) // 64 + 2
-        return self.n_compounds * words * 8
+        """RAM needed to hold the similarity fingerprints in memory."""
+        return fpsim2_memory_bytes(
+            self.n_compounds, int(self.fp_params.get("fpSize", 2048))
+        )
 
 
 @dataclass(frozen=True)
@@ -85,8 +128,16 @@ class IndexPaths:
         return self.index_dir / "pubchem.h5"
 
     @property
+    def pattern_fingerprints(self) -> Path:
+        return self.index_dir / "pubchem-pattern.h5"
+
+    @property
     def manifest(self) -> Path:
         return self.index_dir / "manifest.json"
+
+    @property
+    def pattern_chunks(self) -> Path:
+        return self.chunks / "pattern"
 
     def chunk_h5(self, name: str) -> Path:
         return self.chunks / f"{name}.h5"
@@ -96,6 +147,12 @@ class IndexPaths:
 
     def chunk_stats(self, name: str) -> Path:
         return self.chunks / f"{name}.json"
+
+    def pattern_h5(self, name: str) -> Path:
+        return self.pattern_chunks / f"{name}.h5"
+
+    def pattern_stats(self, name: str) -> Path:
+        return self.pattern_chunks / f"{name}.json"
 
     def metadata_files(self, names: list[str]) -> list[Path]:
         return [p for p in (self.chunk_parquet(n) for n in names) if p.exists()]
@@ -107,6 +164,15 @@ class IndexPaths:
             ChunkStats.model_validate_json(p.read_text())
             for p in sorted(self.chunks.glob("*.json"))
         ]
+
+    def completed_pattern_chunks(self) -> dict[str, PatternChunkStats]:
+        if not self.pattern_chunks.is_dir():
+            return {}
+        stats = (
+            PatternChunkStats.model_validate_json(p.read_text())
+            for p in sorted(self.pattern_chunks.glob("*.json"))
+        )
+        return {s.name: s for s in stats}
 
     def load_manifest(self) -> Manifest | None:
         if not self.manifest.exists() or not self.fingerprints.exists():

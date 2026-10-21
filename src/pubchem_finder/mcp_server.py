@@ -35,6 +35,7 @@ from .models import (
     RemoteSearchResults,
     SimilarityResults,
     Standardized,
+    SubstructureResults,
     Synonyms,
 )
 
@@ -46,8 +47,10 @@ Use pubchem_lookup to resolve names, CIDs, SMILES or InChIKeys to PubChem record
 (properties, identifiers, link). Use compound_properties for RDKit descriptors of any
 SMILES, standardize to normalize a structure (salts removed, charges neutralized),
 and compare for fingerprint similarity between two structures.
-similarity_search finds the most similar compounds in the local PubChem index
-(check index_status first; if the index is not built, tell the user how to build it).
+similarity_search finds the most similar compounds in the local PubChem index, and
+substructure_search the indexed compounds containing a SMILES or SMARTS fragment
+(check index_status first; if the index or its substructure search is missing, tell the
+user the command it gives).
 The pubchem_* tools query PubChem live: structure searches over all of PubChem
 (similarity, substructure, exact match), synonyms and CAS numbers, cross-references
 (PubMed, patents, registry IDs), descriptions, curated page sections such as GHS
@@ -159,9 +162,33 @@ async def similarity_search(
 
 
 @mcp.tool()
+async def substructure_search(
+    query: str,
+    query_type: Literal["smiles", "smarts"] = "smiles",
+    max_hits: int = 50,
+) -> SubstructureResults:
+    """Find compounds in the local PubChem index that contain a fragment.
+
+    query is a SMILES fragment (e.g. 'c1ccc2[nH]ccc2c1' for indoles) or, with
+    query_type="smarts", a SMARTS pattern (e.g. '[NX3][SX4](=O)(=O)c' for aryl
+    sulfonamides). Offline, exact (every hit is verified atom by atom; stereo is
+    ignored) and not rate-limited, so prefer it over pubchem_substructure_search
+    when index_status shows substructure: true. Hits come lowest CID first, which
+    puts long-known compounds first. n_candidates bounds how many matches exist;
+    exhaustive=false means more matches may exist beyond max_hits (1-1000) or the
+    candidate limit. To show where the fragment sits, pass hits to draw_molecules
+    with highlight="smarts" and the query as smarts.
+    """
+    return await _run(
+        service.substructure_search, query, query_type=query_type, max_hits=max_hits
+    )
+
+
+@mcp.tool()
 async def index_status() -> IndexStatus:
-    """Report whether the local PubChem similarity index is built, how many
-    compounds it holds, its fingerprint, size, and how to build it if missing."""
+    """Report whether the local PubChem index is built, how many compounds it
+    holds, its fingerprint, size, whether substructure search is available, and
+    how to build what is missing."""
     return await _run(service.index_status)
 
 

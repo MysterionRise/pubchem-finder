@@ -70,11 +70,10 @@ class Comparison(BaseModel):
     maccs_tanimoto: float = Field(description="Tanimoto on MACCS keys")
 
 
-class SimilarityHit(BaseModel):
+class IndexedCompound(BaseModel):
     """One compound from the local index."""
 
     cid: int
-    similarity: float = Field(description="Similarity to the query, 0 to 1")
     smiles: str | None = None
     inchikey: str | None = None
     iupac_name: str | None = None
@@ -85,6 +84,12 @@ class SimilarityHit(BaseModel):
     @property
     def pubchem_url(self) -> str:
         return PUBCHEM_COMPOUND_URL.format(cid=self.cid)
+
+
+class SimilarityHit(IndexedCompound):
+    """A compound from a local similarity search."""
+
+    similarity: float = Field(description="Similarity to the query, 0 to 1")
 
 
 class SimilarityResults(BaseModel):
@@ -99,6 +104,23 @@ class SimilarityResults(BaseModel):
     scaffolds: list["ScaffoldGroup"] | None = Field(
         default=None, description="Hits grouped by Murcko scaffold, when requested"
     )
+
+
+class SubstructureResults(BaseModel):
+    """Result of a substructure search over the local index."""
+
+    query: str
+    query_type: str = Field(description="'smiles' or 'smarts'")
+    n_indexed: int = Field(description="Compounds in the substructure index")
+    n_candidates: int = Field(
+        description="Compounds that passed the fingerprint screen: an upper bound on matches"
+    )
+    n_checked: int = Field(description="Candidates verified atom by atom")
+    exhaustive: bool = Field(
+        description="True if every candidate was checked, so the hits are all the matches"
+    )
+    hits: list[IndexedCompound] = Field(description="Matches, lowest CID first")
+    warning: str | None = None
 
 
 class IndexStatus(BaseModel):
@@ -118,6 +140,13 @@ class IndexStatus(BaseModel):
         default=False, description="Whether this process has the index in use"
     )
     mode: str | None = Field(default=None, description="'memory' or 'disk' once loaded")
+    substructure: bool = Field(
+        default=False, description="Whether substructure search is available"
+    )
+    substructure_size_bytes: int = 0
+    substructure_memory_bytes: int = Field(
+        default=0, description="RAM needed to screen substructures in memory"
+    )
     hint: str | None = None
 
 
