@@ -124,6 +124,15 @@ def atom_contributions(reference: Chem.Mol, probe: Chem.Mol) -> list[float]:
 
 
 LEGEND_HEIGHT = 28
+# RDKit shrinks atom labels along with the molecule, down to 6 px by default,
+# which makes drug-sized molecules unreadable in a 300 px panel.
+MIN_FONT_SIZE = 13
+
+
+def _draw_options() -> Draw.MolDrawOptions:
+    options = Draw.MolDrawOptions()
+    options.minFontSize = MIN_FONT_SIZE  # type: ignore[assignment]  # stub says MolDrawOptions
+    return options
 
 
 def _similarity_map_png(
@@ -131,6 +140,7 @@ def _similarity_map_png(
 ) -> bytes:
     map_height = size - LEGEND_HEIGHT if legend else size
     drawer = rdMolDraw2D.MolDraw2DCairo(size, map_height)
+    drawer.drawOptions().minFontSize = MIN_FONT_SIZE  # type: ignore[assignment]
     weights = atom_contributions(reference, probe)
     if any(weights):
         weights, _ = SimilarityMaps.GetStandardizedWeights(weights)  # type: ignore[no-untyped-call]
@@ -235,5 +245,6 @@ def draw_grid(
         highlightAtomLists=atom_lists,
         highlightBondLists=bond_lists,
         returnPNG=True,
+        drawOptions=_draw_options(),
     )
     return bytes(png)

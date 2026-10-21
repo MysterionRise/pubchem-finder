@@ -1,0 +1,55 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or MCP request
+      description: The exact command (or the tool call and arguments), and the SMILES or input that triggers it.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: The full error or output. For the MCP server, include what your client shows and any stderr log.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: pubchem-finder version
+      description: Output of `pubchem-finder --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - uvx / uv tool install (PyPI)
+        - uvx --from git+https://...
+        - pip
+        - from a clone (uv sync)
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and Python
+      placeholder: macOS 15 (Apple Silicon), Python 3.12
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client, if relevant
+      placeholder: Claude Desktop 1.x, Claude Code 2.x, ...

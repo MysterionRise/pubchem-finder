@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pubchem-finder"
-version = "2.0.0a0"
-description = "Molecular similarity search over PubChem: local index, CLI and MCP server"
+version = "2.0.0"
+description = "Search PubChem by chemical structure: a local similarity and substructure index, live PubChem tools, a CLI and an MCP server"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 authors = [{ name = "Konstantin Perikov" }]
-keywords = ["cheminformatics", "pubchem", "rdkit", "similarity-search", "mcp"]
+keywords = ["cheminformatics", "pubchem", "rdkit", "similarity-search", "substructure-search", "mcp", "mcp-server", "claude"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -42,6 +42,7 @@ pubchem-finder = "pubchem_finder.cli:run"
 
 [project.urls]
 Homepage = "https://github.com/MysterionRise/pubchem-finder"
+Changelog = "https://github.com/MysterionRise/pubchem-finder/blob/master/CHANGELOG.md"
 Issues = "https://github.com/MysterionRise/pubchem-finder/issues"
 
 [dependency-groups]
