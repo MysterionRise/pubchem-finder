@@ -4,7 +4,7 @@ import os
 import sys
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 from pydantic import BaseModel
@@ -12,6 +12,8 @@ from pydantic import BaseModel
 from . import __version__, service
 from .config import resolve_home
 from .core.exceptions import PubChemFinderError
+from .data.pug_rest import ANNOTATION_HEADINGS, AnnotationHeading
+from .models import RemoteSearchResults
 
 app = typer.Typer(
     help="Molecular similarity search over PubChem: lookups, descriptors, MCP server.",
@@ -50,6 +52,34 @@ index_app = typer.Typer(
     rich_markup_mode=None,
 )
 app.add_typer(index_app, name="index")
+
+pubchem_app = typer.Typer(
+    help="Query PubChem live: structure searches, synonyms, annotations, bioactivity.",
+    no_args_is_help=True,
+    rich_markup_mode=None,
+)
+app.add_typer(pubchem_app, name="pubchem")
+
+cache_app = typer.Typer(
+    help="Inspect or clear the cache of PubChem responses.",
+    no_args_is_help=True,
+    rich_markup_mode=None,
+)
+app.add_typer(cache_app, name="cache")
+
+
+class Identity(StrEnum):
+    same_stereo_isotope = "same_stereo_isotope"
+    same_stereo = "same_stereo"
+    same_isotope = "same_isotope"
+    same_connectivity = "same_connectivity"
+    same_tautomer = "same_tautomer"
+    nonconflicting_stereo = "nonconflicting_stereo"
+
+
+Heading = StrEnum(  # type: ignore[misc]
+    "Heading", {h.replace(" ", "_").lower(): h for h in ANNOTATION_HEADINGS}
+)
 
 
 def _version(value: bool) -> None:
@@ -288,6 +318,212 @@ def index_build(
 def index_status_cmd(home: HomeOpt = None, as_json: JsonFlag = False) -> None:
     """Show whether the local index is built and what it contains."""
     _emit(service.index_status(home), as_json)
+
+
+def _emit_hits(result: RemoteSearchResults, as_json: bool) -> None:
+    if as_json:
+        typer.echo(result.model_dump_json(indent=2))
+        return
+    more = " (more exist; raise --max)" if result.truncated else ""
+    typer.echo(f"{len(result.hits)} PubChem {result.search} hit(s){more}")
+    for hit in result.hits:
+        sim = "  -  " if hit.ecfp4_similarity is None else f"{hit.ecfp4_similarity:.3f}"
+        typer.echo(f"{sim}  CID {hit.cid:<10} {hit.smiles or ''}  {hit.title or ''}")
+
+
+@pubchem_app.command("similarity")
+def pubchem_similarity(
+    smiles: Annotated[str, typer.Argument(help="Query SMILES.")],
+    threshold: Annotated[
+        int, typer.Option(min=0, max=100, help="PubChem similarity threshold, percent.")
+    ] = 90,
+    max_records: Annotated[
+        int, typer.Option("--max", min=1, max=200, help="Max hits.")
+    ] = 25,
+    as_json: JsonFlag = False,
+) -> None:
+    """Similar compounds across all of PubChem (ranked by ECFP4 Tanimoto)."""
+    try:
+        result = service.pubchem_similarity_search(
+            smiles, threshold=threshold, max_records=max_records
+        )
+    except PubChemFinderError as exc:
+        _fail(exc)
+        return
+    _emit_hits(result, as_json)
+
+
+@pubchem_app.command("substructure")
+def pubchem_substructure(
+    smiles: Annotated[str, typer.Argument(help="Substructure SMILES.")],
+    max_records: Annotated[
+        int, typer.Option("--max", min=1, max=200, help="Max hits.")
+    ] = 25,
+    as_json: JsonFlag = False,
+) -> None:
+    """Compounds across all of PubChem that contain the given structure."""
+    try:
+        result = service.pubchem_substructure_search(smiles, max_records=max_records)
+    except PubChemFinderError as exc:
+        _fail(exc)
+        return
+    _emit_hits(result, as_json)
+
+
+@pubchem_app.command("exact")
+def pubchem_exact(
+    smiles: Annotated[str, typer.Argument(help="Query SMILES.")],
+    identity: Annotated[
+        Identity, typer.Option(help="What counts as identical.")
+    ] = Identity.same_stereo_isotope,
+    as_json: JsonFlag = False,
+) -> None:
+    """The PubChem record(s) for exactly this structure."""
+    try:
+        result = service.pubchem_exact_match(smiles, identity_type=identity.value)
+    except PubChemFinderError as exc:
+        _fail(exc)
+        return
+    _emit_hits(result, as_json)
+
+
+@pubchem_app.command("synonyms")
+def pubchem_synonyms(
+    cid: Annotated[int, typer.Argument(min=1, help="PubChem CID.")],
+    limit: Annotated[int, typer.Option(min=1, max=500, help="Max names.")] = 25,
+    as_json: JsonFlag = False,
+) -> None:
+    """Names and CAS numbers of a compound."""
+    try:
+        result = service.pubchem_synonyms(cid, limit=limit)
+    except PubChemFinderError as exc:
+        _fail(exc)
+        return
+    if as_json:
+        typer.echo(result.model_dump_json(indent=2))
+        return
+    typer.echo(
+        f"CAS: {', '.join(result.cas_numbers) or '-'}  ({result.total} names in PubChem)"
+    )
+    for name in result.synonyms:
+        typer.echo(f"  {name}")
+
+
+@pubchem_app.command("xrefs")
+def pubchem_xrefs(
+    cid: Annotated[int, typer.Argument(min=1, help="PubChem CID.")],
+    as_json: JsonFlag = False,
+) -> None:
+    """Registry IDs, PubMed articles and patents linked to a compound."""
+    try:
+        result = service.pubchem_xrefs(cid)
+    except PubChemFinderError as exc:
+        _fail(exc)
+        return
+    if as_json:
+        typer.echo(result.model_dump_json(indent=2))
+        return
+    for kind, count in result.counts.items():
+        sample = ", ".join(result.samples[kind][:5])
+        typer.echo(f"{kind:<11} {count:>7,}  {sample}")
+
+
+@pubchem_app.command("describe")
+def pubchem_describe(
+    cid: Annotated[int, typer.Argument(min=1, help="PubChem CID.")],
+    as_json: JsonFlag = False,
+) -> None:
+    """Curated descriptions of a compound, with sources."""
+    try:
+        result = service.pubchem_description(cid)
+    except PubChemFinderError as exc:
+        _fail(exc)
+        return
+    if as_json:
+        typer.echo(result.model_dump_json(indent=2))
+        return
+    typer.echo(result.title or f"CID {cid}")
+    for item in result.descriptions:
+        typer.echo(f"\n{item.text}\n  -- {item.source or 'unknown source'}")
+
+
+@pubchem_app.command("annotations")
+def pubchem_annotations(
+    cid: Annotated[int, typer.Argument(min=1, help="PubChem CID.")],
+    heading: Annotated[Heading, typer.Option(help="Page section.")],
+    max_chars: Annotated[
+        int, typer.Option(min=500, max=30000, help="Text budget.")
+    ] = 6000,
+    as_json: JsonFlag = False,
+) -> None:
+    """One curated section of a compound's PubChem page (e.g. GHS safety)."""
+    try:
+        result = service.pubchem_annotations(
+            cid, cast(AnnotationHeading, heading.value), max_chars=max_chars
+        )
+    except PubChemFinderError as exc:
+        _fail(exc)
+        return
+    if as_json:
+        typer.echo(result.model_dump_json(indent=2))
+        return
+    typer.echo(f"{result.title or cid}: {result.heading}")
+    for a in result.annotations:
+        label = f"{a.name}: " if a.name else ""
+        typer.echo(f"- [{a.section}] {label}{a.text}  ({a.source or 'unknown source'})")
+    if result.truncated:
+        typer.echo(
+            f"... {result.n_total - len(result.annotations)} more; raise --max-chars"
+        )
+
+
+@pubchem_app.command("bioactivity")
+def pubchem_bioactivity(
+    cid: Annotated[int, typer.Argument(min=1, help="PubChem CID.")],
+    as_json: JsonFlag = False,
+) -> None:
+    """Summary of PubChem BioAssay results for a compound."""
+    try:
+        result = service.pubchem_bioactivity(cid)
+    except PubChemFinderError as exc:
+        _fail(exc)
+        return
+    if as_json:
+        typer.echo(result.model_dump_json(indent=2))
+        return
+    if not result.tested:
+        typer.echo(f"CID {cid} has no BioAssay results in PubChem.")
+        return
+    outcomes = ", ".join(f"{k} {v:,}" for k, v in result.outcomes.items())
+    typer.echo(f"{result.n_assays:,} assays: {outcomes}")
+    for t in result.top_targets:
+        typer.echo(
+            f"  target {t.target_accession or '-'} (gene {t.target_gene_id or '-'}):"
+            f" active in {t.active_assays} assay(s)"
+        )
+    for p in result.most_potent:
+        typer.echo(
+            f"  {p.value_um:g} µM  AID {p.aid}  {p.activity_name or ''}  {p.assay_name or ''}"
+        )
+    typer.echo(result.pubchem_url)
+
+
+@cache_app.command("info")
+def cache_info(home: HomeOpt = None) -> None:
+    """Show where the PubChem response cache is and how big it is."""
+    stats = service.cache_stats(home)
+    if stats is None:
+        typer.echo("No PubChem response cache yet.")
+        return
+    typer.echo(
+        f"{stats.path}: {stats.entries:,} responses, {stats.size_bytes / 1e6:.1f} MB"
+    )
+
+
+@cache_app.command("clear")
+def cache_clear(home: HomeOpt = None) -> None:
+    """Delete all cached PubChem responses."""
+    typer.echo(f"Removed {service.cache_clear(home):,} cached responses.")
 
 
 @app.command()

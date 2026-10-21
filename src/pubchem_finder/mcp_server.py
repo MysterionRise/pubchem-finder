@@ -15,14 +15,26 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from . import __version__, service
 from .core.exceptions import PubChemFinderError
-from .data.pug_rest import CompoundNotFound, PubChemUnavailable
+from .data.pug_rest import (
+    AnnotationHeading,
+    CompoundNotFound,
+    IdentityType,
+    PubChemTimeout,
+    PubChemUnavailable,
+)
 from .models import (
+    AnnotationSection,
+    BioactivitySummary,
     Comparison,
+    CrossRefs,
+    Description,
     IndexStatus,
     LookupResult,
     Properties,
+    RemoteSearchResults,
     SimilarityResults,
     Standardized,
+    Synonyms,
 )
 
 T = TypeVar("T")
@@ -35,6 +47,11 @@ SMILES, standardize to normalize a structure (salts removed, charges neutralized
 and compare for fingerprint similarity between two structures.
 similarity_search finds the most similar compounds in the local PubChem index
 (check index_status first; if the index is not built, tell the user how to build it).
+The pubchem_* tools query PubChem live: structure searches over all of PubChem
+(similarity, substructure, exact match), synonyms and CAS numbers, cross-references
+(PubMed, patents, registry IDs), descriptions, curated page sections such as GHS
+safety and pharmacology, and bioassay summaries. Resolve a name to a CID with
+pubchem_lookup first. Cite the sources given in annotation results.
 SMILES inputs are case-sensitive; aromatic atoms are lowercase."""
 
 mcp = MCPServer(
@@ -55,6 +72,11 @@ async def _run(fn: Callable[..., T], *args: object, **kwargs: object) -> T:
         ) from exc
     except PubChemUnavailable as exc:
         raise ToolError(f"{exc}. Wait a moment and retry.") from exc
+    except PubChemTimeout as exc:
+        raise ToolError(
+            f"{exc}. Retry in a moment; for structure searches, use a more specific "
+            "query, a higher threshold or fewer max_records."
+        ) from exc
     except PubChemFinderError as exc:
         raise ToolError(str(exc)) from exc
 
@@ -134,6 +156,102 @@ async def index_status() -> IndexStatus:
     """Report whether the local PubChem similarity index is built, how many
     compounds it holds, its fingerprint, size, and how to build it if missing."""
     return await _run(service.index_status)
+
+
+@mcp.tool()
+async def pubchem_similarity_search(
+    smiles: str, threshold: int = 90, max_records: int = 25
+) -> RemoteSearchResults:
+    """Find similar compounds across all of PubChem (~120M), live.
+
+    Uses PubChem's own 2D fingerprint; threshold is a percentage (0-100, 90 finds
+    close analogues). PubChem does not score hits, so each hit gets an ECFP4
+    Tanimoto to the query computed here and hits are sorted by it. Prefer the
+    local similarity_search when an index is built: it is exact, scored and has
+    no rate limits. max_records: 1-200.
+    """
+    return await _run(
+        service.pubchem_similarity_search,
+        smiles,
+        threshold=threshold,
+        max_records=max_records,
+    )
+
+
+@mcp.tool()
+async def pubchem_substructure_search(
+    smiles: str, max_records: int = 25
+) -> RemoteSearchResults:
+    """Find compounds across all of PubChem that contain the given structure.
+
+    The query is a SMILES fragment (e.g. 'c1ccc2[nH]ccc2c1' for indoles). Very
+    generic fragments can time out; make the query more specific if so. Hits are
+    sorted by ECFP4 similarity to the query, closest first. max_records: 1-200.
+    """
+    return await _run(
+        service.pubchem_substructure_search, smiles, max_records=max_records
+    )
+
+
+@mcp.tool()
+async def pubchem_exact_match(
+    smiles: str, identity_type: IdentityType = "same_stereo_isotope"
+) -> RemoteSearchResults:
+    """Find the PubChem record(s) for exactly this structure.
+
+    identity_type controls what counts as identical: same_stereo_isotope
+    (default, strictest), same_stereo, same_isotope, same_connectivity (ignores
+    stereo and isotopes, finds all stereoisomers), same_tautomer,
+    nonconflicting_stereo.
+    """
+    return await _run(service.pubchem_exact_match, smiles, identity_type=identity_type)
+
+
+@mcp.tool()
+async def pubchem_synonyms(cid: int, limit: int = 25) -> Synonyms:
+    """Names a compound is known by (common, brand, systematic), most common
+    first, plus its CAS Registry Numbers. Get the CID from pubchem_lookup."""
+    return await _run(service.pubchem_synonyms, cid, limit=limit)
+
+
+@mcp.tool()
+async def pubchem_xrefs(cid: int) -> CrossRefs:
+    """Counts and examples of external identifiers linked to a compound:
+    registry IDs (e.g. CAS, ChEMBL, DrugBank), PubMed articles (with links) and
+    patents."""
+    return await _run(service.pubchem_xrefs, cid)
+
+
+@mcp.tool()
+async def pubchem_description(cid: int) -> Description:
+    """Short curated descriptions of a compound (what it is, what it is used
+    for), each with its source."""
+    return await _run(service.pubchem_description, cid)
+
+
+@mcp.tool()
+async def pubchem_annotations(
+    cid: int, heading: AnnotationHeading, max_chars: int = 6000
+) -> AnnotationSection:
+    """Curated information from one section of a compound's PubChem page.
+
+    Sections: GHS Classification (pictograms, signal word, hazard statements),
+    Hazards Identification, Pharmacology and Biochemistry, Mechanism of Action,
+    Drug and Medication Information, Experimental Properties (melting point,
+    solubility, measured LogP...), Toxicity, Use and Manufacturing, Food Additives
+    and Ingredients. Each annotation names its source; cite it. Long sections are
+    trimmed to max_chars (500-30000); truncated says when that happened. If the
+    page lacks the section, the error lists the sections it has.
+    """
+    return await _run(service.pubchem_annotations, cid, heading, max_chars=max_chars)
+
+
+@mcp.tool()
+async def pubchem_bioactivity(cid: int) -> BioactivitySummary:
+    """Summary of PubChem BioAssay results for a compound: how many assays,
+    outcome counts, the targets with the most active results (UniProt
+    accession, NCBI gene ID) and the most potent active measurements (µM)."""
+    return await _run(service.pubchem_bioactivity, cid)
 
 
 def main() -> None:

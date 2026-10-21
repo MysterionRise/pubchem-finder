@@ -5,26 +5,50 @@ Every function here takes plain values, returns a Pydantic model and raises
 those into their own output and error formats.
 """
 
+import logging
+import sqlite3
 import threading
 from pathlib import Path
 
 from rdkit import Chem, DataStructs, rdBase
 
 from .chemistry import MoleculeStandardizer, calculate_properties, is_druglike
-from .config import resolve_home
+from .config import cache_enabled, cache_path, resolve_home
 from .core.exceptions import MoleculeValidationError, PubChemFinderError
-from .data.pug_rest import Namespace, PubChemClient
+from .data import parsers
+from .data.cache import CacheStats, ResponseCache
+from .data.pug_rest import (
+    XREF_TYPES,
+    AnnotationHeading,
+    AnnotationNotFound,
+    BadQuery,
+    CompoundNotFound,
+    IdentityType,
+    Namespace,
+    PubChemClient,
+    PubChemError,
+)
 from .fingerprints import MACCSFingerprint, MorganFingerprint
 from .index.engine import Metric, SimilarityIndex
 from .models import (
+    AnnotationSection,
+    BioactivitySummary,
     Comparison,
+    CompoundRecord,
+    CrossRefs,
+    Description,
     IndexStatus,
     LookupResult,
     Properties,
+    RemoteHit,
+    RemoteSearchResults,
     SimilarityHit,
     SimilarityResults,
     Standardized,
+    Synonyms,
 )
+
+logger = logging.getLogger(__name__)
 
 # RDKit writes parse warnings to stderr; keep server output quiet.
 rdBase.DisableLog("rdApp.*")
@@ -39,11 +63,18 @@ _indexes: dict[Path, SimilarityIndex] = {}
 
 
 def get_client() -> PubChemClient:
-    """Process-wide PubChem client, created on first use."""
+    """Process-wide PubChem client, created on first use, with the on-disk
+    response cache unless ``PUBCHEM_FINDER_CACHE=0``."""
     global _client
     with _client_lock:
         if _client is None:
-            _client = PubChemClient()
+            cache = None
+            if cache_enabled():
+                try:
+                    cache = ResponseCache(cache_path())
+                except (OSError, sqlite3.Error) as exc:
+                    logger.warning("PubChem response cache disabled: %s", exc)
+            _client = PubChemClient(cache=cache)
         return _client
 
 
@@ -187,3 +218,218 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
         if index.in_memory is None
         else ("memory" if index.in_memory else "disk"),
     )
+
+
+# --------------------------------------------------------------------------- #
+# PubChem knowledge tools
+# --------------------------------------------------------------------------- #
+
+SIMILARITY_NOTE = (
+    "PubChem selected these compounds with its own 881-bit substructure fingerprint "
+    "(Tanimoto >= {threshold}%), which does not report a score per hit. ecfp4_similarity "
+    "is computed here on ECFP4, the same fingerprint as the local similarity_search; "
+    "hits are sorted by it."
+)
+SUBSTRUCTURE_NOTE = (
+    "Every hit contains the query as a substructure. PubChem returns at most max_records "
+    "hits; they are sorted by ecfp4_similarity to the query, so close analogues come first."
+)
+IDENTITY_NOTE = "Compounds PubChem considers identical to the query under identity_type={identity_type}."
+
+
+def _rank(query: Chem.Mol, records: list[CompoundRecord]) -> list[RemoteHit]:
+    query_fp = _ECFP4.generate_bitvect(query)
+    hits: list[RemoteHit] = []
+    for record in records:
+        similarity = None
+        smiles = record.smiles or record.connectivity_smiles
+        mol = Chem.MolFromSmiles(smiles) if smiles else None
+        if mol is not None:
+            similarity = round(
+                float(
+                    DataStructs.TanimotoSimilarity(
+                        query_fp, _ECFP4.generate_bitvect(mol)
+                    )
+                ),
+                4,
+            )
+        hits.append(
+            RemoteHit(
+                **record.model_dump(exclude={"pubchem_url"}),
+                ecfp4_similarity=similarity,
+            )
+        )
+    hits.sort(
+        key=lambda h: -1.0 if h.ecfp4_similarity is None else h.ecfp4_similarity,
+        reverse=True,
+    )
+    return hits
+
+
+def pubchem_similarity_search(
+    smiles: str, threshold: int = 90, max_records: int = 25
+) -> RemoteSearchResults:
+    """Similar compounds across all of PubChem (PubChem's fast 2D similarity search)."""
+    mol = parse_smiles(smiles)
+    records = get_client().similarity_search(
+        smiles, threshold=threshold, max_records=max_records
+    )
+    return RemoteSearchResults(
+        query_smiles=smiles,
+        search="similarity",
+        threshold=threshold,
+        max_records=max_records,
+        truncated=len(records) >= max_records,
+        hits=_rank(mol, records),
+        note=SIMILARITY_NOTE.format(threshold=threshold),
+    )
+
+
+def pubchem_substructure_search(
+    smiles: str, max_records: int = 25
+) -> RemoteSearchResults:
+    """Compounds across all of PubChem that contain ``smiles``."""
+    mol = parse_smiles(smiles)
+    records = get_client().substructure_search(smiles, max_records=max_records)
+    return RemoteSearchResults(
+        query_smiles=smiles,
+        search="substructure",
+        max_records=max_records,
+        truncated=len(records) >= max_records,
+        hits=_rank(mol, records),
+        note=SUBSTRUCTURE_NOTE,
+    )
+
+
+def pubchem_exact_match(
+    smiles: str, identity_type: IdentityType = "same_stereo_isotope"
+) -> RemoteSearchResults:
+    """PubChem compounds identical to ``smiles``."""
+    mol = parse_smiles(smiles)
+    max_records = 25
+    records = get_client().exact_match(
+        smiles, identity_type=identity_type, max_records=max_records
+    )
+    return RemoteSearchResults(
+        query_smiles=smiles,
+        search="identity",
+        max_records=max_records,
+        truncated=len(records) >= max_records,
+        hits=_rank(mol, records),
+        note=IDENTITY_NOTE.format(identity_type=identity_type),
+    )
+
+
+def pubchem_synonyms(cid: int, limit: int = 25) -> Synonyms:
+    """Names, CAS numbers and other identifiers PubChem lists for a CID."""
+    if not 1 <= limit <= 500:
+        raise BadQuery("limit must be between 1 and 500")
+    payload = get_client().compound_json(cid, "synonyms")
+    try:
+        names = parsers.parse_synonyms(payload)
+    except parsers.PayloadError as exc:
+        raise PubChemError(f"Unexpected synonyms response: {exc}") from exc
+    return Synonyms(
+        cid=cid,
+        synonyms=names[:limit],
+        cas_numbers=[n for n in names if parsers.is_cas_number(n)][:10],
+        total=len(names),
+    )
+
+
+def pubchem_xrefs(cid: int, sample: int = 10) -> CrossRefs:
+    """Registry IDs, PubMed articles and patents linked to a CID."""
+    if not 1 <= sample <= 100:
+        raise BadQuery("sample must be between 1 and 100")
+    try:
+        payload = get_client().compound_json(cid, "xrefs/" + ",".join(XREF_TYPES))
+        refs = parsers.parse_xrefs(payload, XREF_TYPES)
+    except CompoundNotFound:
+        refs = {t: [] for t in XREF_TYPES}
+    except parsers.PayloadError as exc:
+        raise PubChemError(f"Unexpected xrefs response: {exc}") from exc
+    return CrossRefs(
+        cid=cid,
+        counts={t: len(v) for t, v in refs.items()},
+        samples={t: v[:sample] for t, v in refs.items()},
+        pubmed_urls=[
+            f"https://pubmed.ncbi.nlm.nih.gov/{p}/" for p in refs["PubMedID"][:sample]
+        ],
+    )
+
+
+def pubchem_description(cid: int) -> Description:
+    """Short curated descriptions of a compound, with their sources."""
+    payload = get_client().compound_json(cid, "description")
+    try:
+        title, texts = parsers.parse_descriptions(payload)
+    except parsers.PayloadError as exc:
+        raise PubChemError(f"Unexpected description response: {exc}") from exc
+    return Description(cid=cid, title=title, descriptions=texts)
+
+
+def pubchem_bioactivity(cid: int) -> BioactivitySummary:
+    """Summary of PubChem BioAssay results for a CID."""
+    try:
+        payload = get_client().compound_json(cid, "assaysummary")
+    except CompoundNotFound:
+        return BioactivitySummary(
+            cid=cid,
+            tested=False,
+            n_assays=0,
+            outcomes={},
+            top_targets=[],
+            most_potent=[],
+        )
+    try:
+        return parsers.summarize_assays(payload, cid)
+    except parsers.PayloadError as exc:
+        raise PubChemError(f"Unexpected assay summary response: {exc}") from exc
+
+
+def pubchem_annotations(
+    cid: int, heading: AnnotationHeading, max_chars: int = 6000
+) -> AnnotationSection:
+    """Curated annotations from one section of a compound's PubChem page."""
+    if not 500 <= max_chars <= 30000:
+        raise BadQuery("max_chars must be between 500 and 30000")
+    client = get_client()
+    try:
+        payload = client.view_data(cid, heading)
+    except (CompoundNotFound, BadQuery) as exc:
+        try:
+            available = parsers.parse_headings(client.view_index(cid))
+        except (CompoundNotFound, parsers.PayloadError):
+            raise CompoundNotFound(f"No PubChem compound page for CID {cid}") from exc
+        shown = ", ".join(available[:40])
+        raise AnnotationNotFound(
+            f"CID {cid} has no '{heading}' section. Sections on its page include: {shown}",
+            available,
+        ) from exc
+    try:
+        title, annotations = parsers.parse_annotations(payload)
+    except parsers.PayloadError as exc:
+        raise PubChemError(f"Unexpected PUG View response: {exc}") from exc
+    kept, truncated = parsers.trim_annotations(annotations, max_chars)
+    sources = list(dict.fromkeys(a.source for a in kept if a.source))
+    return AnnotationSection(
+        cid=cid,
+        title=title,
+        heading=heading,
+        annotations=kept,
+        n_total=len(annotations),
+        truncated=truncated,
+        sources=sources,
+    )
+
+
+def cache_stats(home: Path | str | None = None) -> CacheStats | None:
+    """Size of the PubChem response cache, or None if it does not exist."""
+    path = cache_path(home)
+    return ResponseCache(path).stats() if path.exists() else None
+
+
+def cache_clear(home: Path | str | None = None) -> int:
+    """Empty the PubChem response cache; returns entries removed."""
+    path = cache_path(home)
+    return ResponseCache(path).clear() if path.exists() else 0

@@ -157,3 +157,104 @@ def test_index_build_reports_errors(tmp_path, monkeypatch):
     result = runner.invoke(app, ["index", "build", "--all", "--home", str(tmp_path)])
     assert result.exit_code == 1
     assert "mirror unreachable" in result.output
+
+
+def test_pubchem_commands(pubchem_knowledge_api):
+    aspirin = "CC(=O)Oc1ccccc1C(=O)O"
+    sim = runner.invoke(app, ["pubchem", "similarity", aspirin, "--threshold", "90"])
+    assert sim.exit_code == 0, sim.output
+    assert "1.000  CID 2244" in sim.output
+    assert "  -    CID 99999" in sim.output
+    as_json = runner.invoke(
+        app, ["pubchem", "similarity", aspirin, "--max", "4", "--json"]
+    )
+    assert json.loads(as_json.output)["truncated"] is True
+    assert (
+        "more exist"
+        in runner.invoke(app, ["pubchem", "similarity", aspirin, "--max", "4"]).output
+    )
+
+    sub = runner.invoke(app, ["pubchem", "substructure", "c1ccccc1O"])
+    assert "2 PubChem substructure hit(s)" in sub.output
+    exact = runner.invoke(
+        app, ["pubchem", "exact", aspirin, "--identity", "same_connectivity"]
+    )
+    assert "CID 2244" in exact.output
+
+    syn = runner.invoke(app, ["pubchem", "synonyms", "2244", "--limit", "2"])
+    assert "CAS: 50-78-2" in syn.output
+    assert "ACETYLSALICYLIC ACID" in syn.output
+
+    xrefs = runner.invoke(app, ["pubchem", "xrefs", "2244"])
+    assert "PubMedID" in xrefs.output and "CHEMBL25" in xrefs.output
+
+    desc = runner.invoke(app, ["pubchem", "describe", "2244"])
+    assert desc.output.startswith("Aspirin")
+    assert "-- ChEBI" in desc.output
+
+    ghs = runner.invoke(
+        app, ["pubchem", "annotations", "2244", "--heading", "GHS Classification"]
+    )
+    assert ghs.exit_code == 0, ghs.output
+    assert "Irritant" in ghs.output and "European Chemicals Agency" in ghs.output
+    short = runner.invoke(
+        app,
+        [
+            "pubchem",
+            "annotations",
+            "2244",
+            "--heading",
+            "GHS Classification",
+            "--max-chars",
+            "500",
+        ],
+    )
+    assert "more; raise --max-chars" in short.output
+
+    bio = runner.invoke(app, ["pubchem", "bioactivity", "2244"])
+    assert (
+        "6 assays" in bio.output and "P23219" in bio.output and "0.5 µM" in bio.output
+    )
+    untested = runner.invoke(app, ["pubchem", "bioactivity", "5"])
+    assert "no BioAssay results" in untested.output
+
+    for args in (
+        ["synonyms", "2244"],
+        ["xrefs", "2244"],
+        ["describe", "2244"],
+        ["bioactivity", "2244"],
+        ["annotations", "2244", "--heading", "GHS Classification"],
+        ["substructure", "c1ccccc1O"],
+        ["exact", aspirin],
+    ):
+        out = runner.invoke(app, ["pubchem", *args, "--json"])
+        assert out.exit_code == 0, (args, out.output)
+        json.loads(out.output)
+
+
+def test_pubchem_command_errors(pubchem_knowledge_api):
+    missing = runner.invoke(
+        app, ["pubchem", "annotations", "2244", "--heading", "Toxicity"]
+    )
+    assert missing.exit_code == 1
+    assert "no 'Toxicity' section" in missing.output
+    bad = runner.invoke(app, ["pubchem", "similarity", "not smiles("])
+    assert bad.exit_code == 1
+    for args in (["synonyms", "5"], ["substructure", "not("], ["exact", "not("]):
+        assert runner.invoke(app, ["pubchem", *args]).exit_code == 1
+    for cmd in ("xrefs", "describe", "bioactivity"):
+        assert (
+            runner.invoke(app, ["pubchem", cmd, "0"]).exit_code == 2
+        )  # CID must be >= 1
+
+
+def test_cache_commands(tmp_path):
+    from pubchem_finder.data.cache import ResponseCache
+
+    empty = runner.invoke(app, ["cache", "info", "--home", str(tmp_path)])
+    assert "No PubChem response cache" in empty.output
+    ResponseCache(tmp_path / "cache" / "pubchem-http.sqlite").put("k", b"v")
+    info = runner.invoke(app, ["cache", "info", "--home", str(tmp_path)])
+    assert "1 responses" in info.output
+    cleared = runner.invoke(app, ["cache", "clear", "--home", str(tmp_path)])
+    assert "Removed 1 cached responses" in cleared.output

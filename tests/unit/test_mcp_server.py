@@ -14,6 +14,14 @@ EXPECTED_TOOLS = {
     "compare",
     "similarity_search",
     "index_status",
+    "pubchem_similarity_search",
+    "pubchem_substructure_search",
+    "pubchem_exact_match",
+    "pubchem_synonyms",
+    "pubchem_xrefs",
+    "pubchem_description",
+    "pubchem_annotations",
+    "pubchem_bioactivity",
 }
 
 
@@ -94,3 +102,51 @@ async def test_similarity_search_without_index(tmp_path, monkeypatch):
     assert status.structured_content["state"] == "not_built"
     assert result.is_error is True
     assert "pubchem-finder index build" in result.content[0].text
+
+
+async def test_pubchem_knowledge_tools(pubchem_knowledge_api):
+    async with Client(mcp) as client:
+        tools = {t.name: t for t in (await client.list_tools()).tools}
+        sim = await client.call_tool(
+            "pubchem_similarity_search", {"smiles": "CC(=O)Oc1ccccc1C(=O)O"}
+        )
+        syn = await client.call_tool("pubchem_synonyms", {"cid": 2244})
+        ghs = await client.call_tool(
+            "pubchem_annotations", {"cid": 2244, "heading": "GHS Classification"}
+        )
+        bio = await client.call_tool("pubchem_bioactivity", {"cid": 2244})
+        xrefs = await client.call_tool("pubchem_xrefs", {"cid": 2244})
+        desc = await client.call_tool("pubchem_description", {"cid": 2244})
+        exact = await client.call_tool(
+            "pubchem_exact_match", {"smiles": "CC(=O)Oc1ccccc1C(=O)O"}
+        )
+        sub = await client.call_tool(
+            "pubchem_substructure_search", {"smiles": "c1ccccc1O"}
+        )
+    headings = tools["pubchem_annotations"].input_schema["properties"]["heading"]
+    assert "GHS Classification" in str(headings)
+    assert sim.structured_content["hits"][0]["cid"] == 2244
+    assert syn.structured_content["cas_numbers"] == ["50-78-2"]
+    assert "European Chemicals Agency (ECHA)" in ghs.structured_content["sources"]
+    assert bio.structured_content["n_assays"] == 6
+    assert xrefs.structured_content["counts"]["PubMedID"] == 2
+    assert desc.structured_content["title"] == "Aspirin"
+    assert exact.structured_content["hits"][0]["cid"] == 2244
+    assert len(sub.structured_content["hits"]) == 2
+
+
+async def test_annotation_and_timeout_errors_are_actionable(pubchem_knowledge_api):
+    import httpx
+
+    pubchem_knowledge_api["substructure"].mock(
+        return_value=httpx.Response(504, text="Gateway Timeout")
+    )
+    async with Client(mcp) as client:
+        missing = await client.call_tool(
+            "pubchem_annotations", {"cid": 2244, "heading": "Toxicity"}
+        )
+        slow = await client.call_tool("pubchem_substructure_search", {"smiles": "C"})
+    assert missing.is_error is True
+    assert "GHS Classification" in missing.content[0].text  # lists what exists
+    assert slow.is_error is True
+    assert "more specific query" in slow.content[0].text

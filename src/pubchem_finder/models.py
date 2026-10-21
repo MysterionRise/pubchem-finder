@@ -116,3 +116,129 @@ class IndexStatus(BaseModel):
     )
     mode: str | None = Field(default=None, description="'memory' or 'disk' once loaded")
     hint: str | None = None
+
+
+# --------------------------------------------------------------------------- #
+# PubChem knowledge tools (Phase 4a)
+# --------------------------------------------------------------------------- #
+
+
+class RemoteHit(CompoundRecord):
+    """A compound found by one of PubChem's structure searches."""
+
+    ecfp4_similarity: float | None = Field(
+        default=None,
+        description=(
+            "Tanimoto similarity to the query on ECFP4 (Morgan radius 2, 2048 bits), "
+            "computed locally; comparable with the local similarity_search"
+        ),
+    )
+
+
+class RemoteSearchResults(BaseModel):
+    """Result of a PubChem structure search over all of PubChem."""
+
+    query_smiles: str
+    search: str = Field(description="'similarity', 'substructure' or 'identity'")
+    threshold: int | None = Field(
+        default=None, description="PubChem similarity threshold, 0-100"
+    )
+    max_records: int
+    truncated: bool = Field(
+        description="PubChem stopped at max_records; more may exist"
+    )
+    hits: list[RemoteHit]
+    note: str
+
+
+class Synonyms(BaseModel):
+    """Names PubChem knows a compound by, most common first."""
+
+    cid: int
+    synonyms: list[str]
+    cas_numbers: list[str] = Field(
+        description="CAS Registry Numbers with a valid check digit"
+    )
+    total: int = Field(description="Synonyms PubChem has before the limit was applied")
+
+
+class CrossRefs(BaseModel):
+    """External identifiers linked to a compound."""
+
+    cid: int
+    counts: dict[str, int] = Field(description="Number of identifiers of each type")
+    samples: dict[str, list[str]] = Field(
+        description="First few identifiers of each type"
+    )
+    pubmed_urls: list[str] = Field(default_factory=list)
+
+
+class SourcedText(BaseModel):
+    text: str
+    source: str | None = None
+    url: str | None = None
+
+
+class Description(BaseModel):
+    """Short curated descriptions of a compound."""
+
+    cid: int
+    title: str | None
+    descriptions: list[SourcedText]
+
+
+class TargetActivity(BaseModel):
+    target_accession: str | None
+    target_gene_id: str | None
+    active_assays: int
+
+
+class PotentResult(BaseModel):
+    aid: int
+    assay_name: str | None
+    activity_name: str | None
+    value_um: float
+    target_accession: str | None
+
+
+class BioactivitySummary(BaseModel):
+    """Aggregate of PubChem's bioassay results for one compound."""
+
+    cid: int
+    tested: bool
+    n_assays: int = Field(description="Distinct BioAssay AIDs")
+    outcomes: dict[str, int] = Field(description="Result counts by outcome")
+    top_targets: list[TargetActivity] = Field(
+        description="Targets with the most active results"
+    )
+    most_potent: list[PotentResult] = Field(
+        description="Active results with the lowest activity values (µM)"
+    )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def pubchem_url(self) -> str:
+        return PUBCHEM_COMPOUND_URL.format(cid=self.cid) + "#section=BioAssay-Results"
+
+
+class Annotation(BaseModel):
+    section: str = Field(
+        description="Section path, e.g. 'Hazards Identification > GHS Classification'"
+    )
+    name: str | None = None
+    text: str
+    source: str | None = None
+    url: str | None = None
+    license: str | None = None
+
+
+class AnnotationSection(BaseModel):
+    """Curated annotations from a PubChem compound page section."""
+
+    cid: int
+    title: str | None
+    heading: str
+    annotations: list[Annotation]
+    n_total: int = Field(description="Annotations available before trimming")
+    truncated: bool
+    sources: list[str] = Field(description="Depositors of the annotations shown")

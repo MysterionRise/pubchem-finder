@@ -271,3 +271,24 @@ def built_home(tmp_path_factory, sample_sdfs):
     build_chunks(paths, sources, workers=1)
     finalize(paths)
     return home
+
+
+def pytest_configure(config):
+    """Keep tests away from the user's real data directory and response cache."""
+    import os
+    import tempfile
+
+    os.environ["PUBCHEM_FINDER_HOME"] = tempfile.mkdtemp(prefix="pubchem-finder-tests-")
+    os.environ["PUBCHEM_FINDER_CACHE"] = "0"
+
+
+@pytest.fixture
+def pubchem_knowledge_api(monkeypatch):
+    """respx mock of the Phase 4a endpoints, with retry/throttle sleeps disabled."""
+    import respx
+
+    from tests.pubchem_fixtures import mock_pubchem
+
+    monkeypatch.setattr("pubchem_finder.data.pug_rest.time.sleep", lambda s: None)
+    with respx.mock(assert_all_called=False) as router:
+        yield mock_pubchem(router)

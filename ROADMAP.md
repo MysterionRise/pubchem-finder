@@ -35,17 +35,28 @@ MCP over stdio, uv + hatchling + ruff, Python 3.11 to 3.13.
 - [x] MCP tools `similarity_search` and `index_status`
 - [x] Measured throughput and sizing in the README
 
-## Phase 4: PubChem extensions (live PUG REST / PUG View, no local data)
+## Phase 4a: PubChem knowledge tools (done)
 
-- [ ] Remote structure search: `pubchem_similarity_search`, `pubchem_substructure_search`,
-      `pubchem_exact_match` (PubChem's fast search over all of PubChem)
-- [ ] `pubchem_synonyms` (names, CAS numbers) and `pubchem_xrefs` (patents, PubMed, registry IDs)
-- [ ] `pubchem_description` and `pubchem_annotations` for curated PUG View sections
-      (GHS classification, pharmacology, drug information, experimental properties, toxicity)
-- [ ] `pubchem_bioactivity` (aggregated assay summary) and `pubchem_structure_image` (PNG)
-- [ ] Matching `pubchem-finder pubchem ...` CLI commands
+- [x] Remote structure search: `pubchem_similarity_search` (re-scored with ECFP4),
+      `pubchem_substructure_search`, `pubchem_exact_match`
+- [x] `pubchem_synonyms` (names, validated CAS numbers) and `pubchem_xrefs`
+      (registry IDs, PubMed, patents)
+- [x] `pubchem_description` and `pubchem_annotations` for curated PUG View sections
+      (GHS classification, pharmacology, drug information, experimental properties,
+      toxicity...), each annotation attributed to its source
+- [x] `pubchem_bioactivity`: assay outcomes, top targets, most potent results
+- [x] 7-day on-disk response cache; `cache info | clear`
+- [x] `pubchem-finder pubchem ...` CLI commands
 
-## Phase 5 (optional): PostgreSQL + RDKit cartridge backend
+## Phase 4b: assistant features
 
-- [ ] `SearchBackend` implementation with substructure search, docker-compose,
-      `substructure_search` MCP tool
+- [ ] `draw_molecules`: RDKit structure grids as inline images, with substructure and
+      "what changed" (MCS) highlighting; `pubchem-finder draw`
+- [ ] `medchem_profile`: QED, synthetic accessibility, Lipinski/Veber, PAINS/Brenk/NIH
+      alerts, Murcko scaffold; scaffold grouping of similarity hits
+- [ ] Batch CSV mode for `props`, `standardize`, `triage` and `search`
+
+## Phase 5: local substructure search
+
+- [ ] Optional FPSim2 `RDKitPattern` index (`index build --with-substructure`), screened by
+      FPSim2 and verified with RDKit; `substructure_search` MCP tool and CLI command
