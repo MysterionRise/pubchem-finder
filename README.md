@@ -11,13 +11,14 @@ Desktop, Claude Code and other MCP clients.
 [![PyPI](https://img.shields.io/pypi/v/pubchem-finder.svg)](https://pypi.org/project/pubchem-finder/)
 [![Python](https://img.shields.io/pypi/pyversions/pubchem-finder.svg)](https://pypi.org/project/pubchem-finder/)
 [![CI](https://github.com/MysterionRise/pubchem-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/MysterionRise/pubchem-finder/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/MysterionRise/pubchem-finder/blob/master/LICENSE)
 
-![Aspirin analogues, with the atoms each one adds to aspirin highlighted](docs/images/analogues-diff.png)
+![A similarity search for aspirin and a SMARTS substructure search over 444,794 PubChem compounds, with the hits appearing and their key atoms highlighted](https://raw.githubusercontent.com/MysterionRise/pubchem-finder/master/docs/media/search-demo.gif)
 
-*Aspirin and seven analogues drawn by `pubchem-finder draw --highlight diff`: each
-structure is aligned to the core it shares with aspirin, and the atoms it adds are
-highlighted.*
+*Real searches over the first 444,794 compounds of PubChem, rendered from the index the
+project's real-data workflow builds: similarity hits for aspirin with the atoms that differ
+from it highlighted, then hits for an aryl sulfonamide SMARTS with the match highlighted.
+[MP4 version](https://raw.githubusercontent.com/MysterionRise/pubchem-finder/master/docs/media/search-demo.mp4).*
 
 ## Why this one
 
@@ -72,7 +73,7 @@ Then ask things like:
 - With a local index: "Find the 20 compounds most similar to ibuprofen" or "Which indexed
   compounds contain an aryl sulfonamide? Draw a few with the group highlighted."
 
-![Sulfonamide drugs with the aryl sulfonamide SMARTS match highlighted](docs/images/sulfonamides-smarts.png)
+![Sulfonamide drugs with the aryl sulfonamide SMARTS match highlighted](https://raw.githubusercontent.com/MysterionRise/pubchem-finder/master/docs/images/sulfonamides-smarts.png)
 
 *`draw_molecules` with `highlight="smarts"`: eight sulfonamide drugs with the match for
 `[NX3][SX4](=O)(=O)c` highlighted, as Claude shows it inline.*
@@ -184,7 +185,12 @@ pubchem-finder substructure -i fragments.smi -o hits.csv
 
 Rows that fail in batch mode get an `error` column instead of stopping the run.
 
-![Similarity maps of four compounds against aspirin](docs/images/similarity-map.png)
+![Aspirin analogues, with the atoms each one adds to aspirin highlighted](https://raw.githubusercontent.com/MysterionRise/pubchem-finder/master/docs/images/analogues-diff.png)
+
+*`--highlight diff`: each analogue is aligned to the core it shares with aspirin, and the
+atoms it adds are highlighted.*
+
+![Similarity maps of four compounds against aspirin](https://raw.githubusercontent.com/MysterionRise/pubchem-finder/master/docs/images/similarity-map.png)
 
 *`--highlight similarity_map`: atoms that raise ECFP4 similarity to aspirin in green,
 atoms that lower it in pink.*
@@ -193,7 +199,7 @@ atoms that lower it in pink.*
 
 The first column comes from real runs of `index build --limit 1`: on a MacBook Pro, and
 with `--with-substructure` in the project's
-[real-data workflow](.github/workflows/e2e-real.yml) on a standard GitHub Actions Linux
+[real-data workflow](https://github.com/MysterionRise/pubchem-finder/blob/master/.github/workflows/e2e-real.yml) on a standard GitHub Actions Linux
 runner, which then runs every command and MCP tool against the result. The full-PubChem column
 scales those numbers to PubChem's roughly 120 million compounds and is an estimate.
 
@@ -272,7 +278,7 @@ PubChem Finder is built on [RDKit](https://www.rdkit.org/),
 [FPSim2](https://github.com/chembl/FPSim2), [DuckDB](https://duckdb.org/),
 [Apache Arrow](https://arrow.apache.org/) and the
 [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk). To cite PubChem
-Finder itself, see [CITATION.cff](CITATION.cff) (GitHub's "Cite this repository" button).
+Finder itself, see [CITATION.cff](https://github.com/MysterionRise/pubchem-finder/blob/master/CITATION.cff) (GitHub's "Cite this repository" button).
 
 ## Development
 
@@ -288,9 +294,13 @@ PUBCHEM_LIVE=1 uv run pytest -m live   # tests that call the real PubChem servic
 uv run python scripts/smoke.py --live  # every MCP tool through the real stdio server
 ```
 
+The animation at the top is drawn from a real index by `scripts/demo_media.py`
+(`collect` runs the searches and times them, `render` writes the GIF and MP4); its
+docstring has the exact commands, and the real-data workflow renders it on every run.
+
 CI runs the tests on Linux, macOS and Windows, smoke-tests the built wheel on all three,
-and runs the live PubChem tests weekly. See [CONTRIBUTING](.github/CONTRIBUTING.md),
-[ROADMAP](ROADMAP.md) and [CHANGELOG](CHANGELOG.md).
+and runs the live PubChem tests weekly. See [CONTRIBUTING](https://github.com/MysterionRise/pubchem-finder/blob/master/.github/CONTRIBUTING.md),
+[ROADMAP](https://github.com/MysterionRise/pubchem-finder/blob/master/ROADMAP.md) and [CHANGELOG](https://github.com/MysterionRise/pubchem-finder/blob/master/CHANGELOG.md).
 
 ```
 PubChem Compound SDF (HTTPS) --> streaming RDKit parse --> chunks/<chunk>.parquet  (CID, SMILES, InChIKey, name, formula, MW)
@@ -308,4 +318,4 @@ that code is in the git history before commit `06619d9`.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/MysterionRise/pubchem-finder/blob/master/LICENSE).
