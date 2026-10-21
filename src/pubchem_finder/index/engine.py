@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 import duckdb
 import numpy as np
+import psutil
 from FPSim2 import FPSim2Engine
 from rdkit import Chem
 
@@ -34,17 +35,11 @@ METADATA_COLUMNS = (
 
 
 def available_memory() -> int | None:
-    """Best-effort bytes of available RAM, or None if unknown."""
+    """Bytes of RAM available without swapping (Linux, macOS, Windows), or None
+    if the platform does not say."""
     try:
-        with open("/proc/meminfo") as fh:
-            for line in fh:
-                if line.startswith("MemAvailable:"):
-                    return int(line.split()[1]) * 1024
-    except OSError:
-        pass
-    try:
-        return os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
-    except (AttributeError, OSError, ValueError):
+        return int(psutil.virtual_memory().available)
+    except (OSError, RuntimeError, AttributeError):
         return None
 
 

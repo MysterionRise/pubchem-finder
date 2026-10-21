@@ -161,7 +161,7 @@ class IndexPaths:
         if not self.chunks.is_dir():
             return []
         return [
-            ChunkStats.model_validate_json(p.read_text())
+            ChunkStats.model_validate_json(p.read_text(encoding="utf-8"))
             for p in sorted(self.chunks.glob("*.json"))
         ]
 
@@ -169,7 +169,7 @@ class IndexPaths:
         if not self.pattern_chunks.is_dir():
             return {}
         stats = (
-            PatternChunkStats.model_validate_json(p.read_text())
+            PatternChunkStats.model_validate_json(p.read_text(encoding="utf-8"))
             for p in sorted(self.pattern_chunks.glob("*.json"))
         )
         return {s.name: s for s in stats}
@@ -177,7 +177,7 @@ class IndexPaths:
     def load_manifest(self) -> Manifest | None:
         if not self.manifest.exists() or not self.fingerprints.exists():
             return None
-        return Manifest.model_validate_json(self.manifest.read_text())
+        return Manifest.model_validate_json(self.manifest.read_text(encoding="utf-8"))
 
 
 def chunk_name(path: Path | str) -> str:
@@ -197,5 +197,5 @@ def write_json_atomic(path: Path, data: BaseModel | dict[str, Any]) -> None:
         else json.dumps(data, indent=2)
     )
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)

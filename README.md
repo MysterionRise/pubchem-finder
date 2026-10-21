@@ -256,7 +256,11 @@ uv sync            # create .venv and install everything, including dev tools
 make check         # ruff lint + format check, mypy (strict), pytest with coverage
 make test          # just the tests
 PUBCHEM_LIVE=1 uv run pytest -m live   # tests that call the real PubChem services
+uv run python scripts/smoke.py --live  # every MCP tool through the real stdio server
 ```
+
+CI runs the tests on Linux, macOS and Windows, smoke-tests the built wheel on all three, and
+runs the live PubChem tests weekly. See [CONTRIBUTING](.github/CONTRIBUTING.md) for details.
 
 Pre-commit hooks (ruff lint and format) can be installed with `uv run pre-commit install`
 after `uv tool install pre-commit`.
