@@ -56,12 +56,16 @@ MCP over stdio, uv + hatchling + ruff, Python 3.11 to 3.13.
       alerts, Murcko scaffold; scaffold grouping of similarity hits; `pubchem-finder triage`
 - [x] Batch CSV mode for `props`, `standardize`, `triage` and `search`
 
+## Phase 5: local substructure search (done)
+
+- [x] Optional RDKit pattern-fingerprint database (`index build --with-substructure`), built
+      from the stored SMILES, so it can be added to an existing index offline
+- [x] FPSim2 screen, then RDKit verification in CID order, with hit and candidate caps
+- [x] `substructure_search` MCP tool and `pubchem-finder substructure` CLI (SMILES or SMARTS,
+      batch files)
+- [x] Faster index finalize: popcount bins computed with numpy instead of FPSim2's per-row loop
+
 ## Later, optional
 
 - [ ] ADMET predictions as an optional extra (pulls in PyTorch)
 - [ ] Matched molecular pairs across a hit set (`rdMMPA`)
-
-## Phase 5: local substructure search
-
-- [ ] Optional FPSim2 `RDKitPattern` index (`index build --with-substructure`), screened by
-      FPSim2 and verified with RDKit; `substructure_search` MCP tool and CLI command

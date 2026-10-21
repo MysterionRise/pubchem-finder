@@ -273,6 +273,20 @@ def built_home(tmp_path_factory, sample_sdfs):
     return home
 
 
+@pytest.fixture(scope="session")
+def substructure_home(tmp_path_factory, sample_sdfs):
+    """Like built_home, with substructure search enabled."""
+    from pubchem_finder.index.builder import SdfSource, build_chunks, finalize
+    from pubchem_finder.index.layout import IndexPaths, chunk_name
+
+    home = tmp_path_factory.mktemp("subhome")
+    paths = IndexPaths(home)
+    sources = [SdfSource(name=chunk_name(p), local_path=p) for p in sample_sdfs]
+    build_chunks(paths, sources, workers=1)
+    finalize(paths, substructure=True)
+    return home
+
+
 def pytest_configure(config):
     """Keep tests away from the user's real data directory and response cache."""
     import os

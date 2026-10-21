@@ -9,7 +9,9 @@ import logging
 import sqlite3
 import threading
 from pathlib import Path
+from typing import Literal
 
+import rdkit
 from rdkit import Chem, DataStructs, rdBase
 
 from . import drawing, medchem
@@ -30,7 +32,7 @@ from .data.pug_rest import (
     PubChemError,
 )
 from .fingerprints import MACCSFingerprint, MorganFingerprint
-from .index.engine import Metric, SimilarityIndex
+from .index.engine import LocalIndex, Metric
 from .models import (
     AnnotationSection,
     BioactivitySummary,
@@ -38,6 +40,7 @@ from .models import (
     CompoundRecord,
     CrossRefs,
     Description,
+    IndexedCompound,
     IndexStatus,
     LookupResult,
     MedchemProfile,
@@ -47,6 +50,7 @@ from .models import (
     SimilarityHit,
     SimilarityResults,
     Standardized,
+    SubstructureResults,
     Synonyms,
 )
 
@@ -59,9 +63,11 @@ _ECFP4 = MorganFingerprint(radius=2, n_bits=2048)
 _MACCS = MACCSFingerprint()
 _STANDARDIZER = MoleculeStandardizer()
 
+QueryType = Literal["smiles", "smarts"]
+
 _client_lock = threading.Lock()
 _client: PubChemClient | None = None
-_indexes: dict[Path, SimilarityIndex] = {}
+_indexes: dict[Path, LocalIndex] = {}
 
 
 def get_client() -> PubChemClient:
@@ -87,6 +93,21 @@ def parse_smiles(smiles: str) -> Chem.Mol:
     )
     if mol is None:
         raise MoleculeValidationError(f"Invalid SMILES: {smiles!r}")
+    return mol
+
+
+def parse_query(query: str, query_type: QueryType = "smiles") -> Chem.Mol:
+    """Parse a substructure query given as SMILES or SMARTS."""
+    if query_type == "smiles":
+        return parse_smiles(query)
+    if query_type != "smarts":
+        raise PubChemFinderError(f"Unknown query_type {query_type!r}")
+    mol: Chem.Mol | None = Chem.MolFromSmarts(query.strip()) if query.strip() else None
+    if mol is None:
+        raise MoleculeValidationError(f"Invalid SMARTS: {query!r}")
+    # Pattern fingerprints need ring information, which SMARTS parsing skips.
+    mol.UpdatePropertyCache(strict=False)
+    Chem.FastFindRings(mol)
     return mol
 
 
@@ -144,12 +165,12 @@ def compare(smiles_a: str, smiles_b: str) -> Comparison:
     )
 
 
-def get_index(home: Path | str | None = None) -> SimilarityIndex:
+def get_index(home: Path | str | None = None) -> LocalIndex:
     """The local index for ``home`` (default: configured data directory), cached."""
     path = resolve_home(home)
     with _client_lock:
         if path not in _indexes:
-            _indexes[path] = SimilarityIndex(path)
+            _indexes[path] = LocalIndex(path)
         return _indexes[path]
 
 
@@ -190,6 +211,42 @@ def similarity_search(
     )
 
 
+def substructure_search(
+    query: str,
+    query_type: QueryType = "smiles",
+    max_hits: int = 50,
+    max_candidates: int = 100_000,
+    home: Path | str | None = None,
+) -> SubstructureResults:
+    """Compounds in the local index that contain ``query``, lowest CID first."""
+    if not 1 <= max_hits <= 1000:
+        raise PubChemFinderError("max_hits must be between 1 and 1000")
+    if max_candidates < 1:
+        raise PubChemFinderError("max_candidates must be at least 1")
+    mol = parse_query(query, query_type)
+    index = get_index(home)
+    found = index.substructure(mol, max_hits=max_hits, max_candidates=max_candidates)
+    sub = index.manifest.substructure
+    warning = None
+    if sub is not None and sub.rdkit_version != rdkit.__version__:
+        warning = (
+            f"The substructure index was built with RDKit {sub.rdkit_version}, but "
+            f"RDKit {rdkit.__version__} is running. Pattern fingerprints can differ "
+            "between releases, so matches may be missing. Rebuild it with "
+            "`pubchem-finder index build --with-substructure`."
+        )
+    return SubstructureResults(
+        query=query,
+        query_type=query_type,
+        n_indexed=sub.n_compounds if sub is not None else 0,
+        n_candidates=found.n_candidates,
+        n_checked=found.n_checked,
+        exhaustive=found.exhaustive,
+        hits=[IndexedCompound.model_validate(row) for row in found.rows],
+        warning=warning,
+    )
+
+
 def index_status(home: Path | str | None = None) -> IndexStatus:
     """Describe the local index without loading it."""
     index = get_index(home)
@@ -206,6 +263,7 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
                 "sample, or `--all` for all of PubChem."
             ),
         )
+    sub = manifest.substructure if paths.pattern_fingerprints.exists() else None
     return IndexStatus(
         state="ready",
         home=str(paths.home),
@@ -221,6 +279,17 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
         mode=None
         if index.in_memory is None
         else ("memory" if index.in_memory else "disk"),
+        substructure=sub is not None,
+        substructure_size_bytes=paths.pattern_fingerprints.stat().st_size
+        if sub is not None
+        else 0,
+        substructure_memory_bytes=sub.memory_bytes() if sub is not None else 0,
+        hint=None
+        if sub is not None
+        else (
+            "Substructure search is off; add it with "
+            "`pubchem-finder index build --with-substructure` (no download)."
+        ),
     )
 
 

@@ -13,6 +13,7 @@ EXPECTED_TOOLS = {
     "standardize",
     "compare",
     "similarity_search",
+    "substructure_search",
     "index_status",
     "pubchem_similarity_search",
     "pubchem_substructure_search",
@@ -105,6 +106,43 @@ async def test_similarity_search_without_index(tmp_path, monkeypatch):
     assert status.structured_content["state"] == "not_built"
     assert result.is_error is True
     assert "pubchem-finder index build" in result.content[0].text
+
+
+async def test_substructure_search_tool(substructure_home, monkeypatch):
+    monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(substructure_home))
+    async with Client(mcp) as client:
+        status = await client.call_tool("index_status", {})
+        smiles = await client.call_tool(
+            "substructure_search", {"query": "c1ccccc1C(=O)O"}
+        )
+        smarts = await client.call_tool(
+            "substructure_search",
+            {"query": "[CX3](=O)[OX2H1]", "query_type": "smarts", "max_hits": 2},
+        )
+        bad = await client.call_tool(
+            "substructure_search", {"query": "[C", "query_type": "smarts"}
+        )
+    assert status.structured_content["substructure"] is True
+    assert smiles.is_error is False
+    assert [h["cid"] for h in smiles.structured_content["hits"]] == [
+        243,
+        338,
+        2244,
+        4133,
+    ]
+    assert smiles.structured_content["exhaustive"] is True
+    assert [h["cid"] for h in smarts.structured_content["hits"]] == [243, 338]
+    assert smarts.structured_content["exhaustive"] is False
+    assert bad.is_error is True
+    assert "Invalid SMARTS" in bad.content[0].text
+
+
+async def test_substructure_search_tool_without_pattern_index(built_home, monkeypatch):
+    monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(built_home))
+    async with Client(mcp) as client:
+        result = await client.call_tool("substructure_search", {"query": "c1ccccc1"})
+    assert result.is_error is True
+    assert "index build --with-substructure" in result.content[0].text
 
 
 async def test_pubchem_knowledge_tools(pubchem_knowledge_api):

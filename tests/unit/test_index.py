@@ -13,7 +13,7 @@ from pubchem_finder.core.exceptions import (
 )
 from pubchem_finder.index import engine as engine_mod
 from pubchem_finder.index.builder import SdfSource, build_chunks, finalize
-from pubchem_finder.index.engine import SimilarityIndex, choose_in_memory
+from pubchem_finder.index.engine import LocalIndex, choose_in_memory
 from pubchem_finder.index.layout import IndexPaths, chunk_name
 from tests.conftest import CHUNK_NAMES, N_GOOD
 
@@ -122,8 +122,8 @@ def test_other_metrics(built_home, metric):
 
 
 def test_disk_mode_matches_memory_mode(built_home):
-    mem = SimilarityIndex(built_home, mode="memory")
-    disk = SimilarityIndex(built_home, mode="disk")
+    mem = LocalIndex(built_home, mode="memory")
+    disk = LocalIndex(built_home, mode="disk")
     from rdkit import Chem
 
     query = Chem.MolFromSmiles(ASPIRIN)
@@ -149,7 +149,7 @@ def test_search_without_index(tmp_path):
 
 
 def test_metadata_of_empty_list(built_home):
-    assert SimilarityIndex(built_home).metadata([]) == {}
+    assert LocalIndex(built_home).metadata([]) == {}
 
 
 def test_status_not_built_and_ready(tmp_path, built_home):
@@ -175,19 +175,19 @@ def test_status_reports_loaded_mode(built_home):
 def test_choose_in_memory(monkeypatch, built_home):
     manifest = IndexPaths(built_home).load_manifest()
     assert manifest is not None
-    assert choose_in_memory(manifest, "memory") is True
-    assert choose_in_memory(manifest, "disk") is False
+    assert choose_in_memory(manifest.memory_bytes(), "memory") is True
+    assert choose_in_memory(manifest.memory_bytes(), "disk") is False
     monkeypatch.setattr(engine_mod, "available_memory", lambda: 10)
-    assert choose_in_memory(manifest, "auto") is False
+    assert choose_in_memory(manifest.memory_bytes(), "auto") is False
     monkeypatch.setattr(engine_mod, "available_memory", lambda: None)
-    assert choose_in_memory(manifest, "auto") is True
+    assert choose_in_memory(manifest.memory_bytes(), "auto") is True
 
 
 def test_mode_from_environment(monkeypatch, built_home):
     monkeypatch.setenv("PUBCHEM_FINDER_INDEX_MODE", "disk")
-    assert SimilarityIndex(built_home).mode == "disk"
+    assert LocalIndex(built_home).mode == "disk"
     monkeypatch.setenv("PUBCHEM_FINDER_INDEX_MODE", "bogus")
-    assert SimilarityIndex(built_home).mode == "auto"
+    assert LocalIndex(built_home).mode == "auto"
 
 
 def test_available_memory_is_positive_or_unknown():
@@ -215,3 +215,46 @@ def test_similarities_are_clean_four_decimal_floats(built_home):
     for hit in result.hits:
         assert hit.similarity == round(hit.similarity, 4)
         assert len(repr(hit.similarity)) <= 6
+
+
+@pytest.mark.parametrize("pattern", [False, True])
+def test_sort_matches_fpsim2(tmp_path, sample_sdfs, pattern):
+    """Our popcount sort writes the same file FPSim2's sort_db_file does."""
+    import shutil
+
+    import tables as tb
+    from FPSim2.io.backends.pytables import sort_db_file
+
+    from pubchem_finder.index.builder import build_pattern_chunk, sort_fpsim2_file
+
+    paths = IndexPaths(tmp_path / "home")
+    build_chunks(paths, sources(sample_sdfs[1:2]), workers=1)
+    name = CHUNK_NAMES[1]
+    src = paths.chunk_h5(name)
+    if pattern:
+        build_pattern_chunk(str(paths.home), name)
+        src = paths.pattern_h5(name)
+    ours, ref = tmp_path / "ours.h5", tmp_path / "ref.h5"
+    sort_fpsim2_file(src, ours)
+    shutil.copyfile(src, ref)
+    sort_db_file(str(ref))
+    with tb.open_file(str(ours)) as a, tb.open_file(str(ref)) as b:
+        assert [a.root.config[i] for i in range(4)] == [
+            b.root.config[i] for i in range(4)
+        ]
+        assert a.root.config[4] == [
+            (int(v), (int(lo), int(hi))) for v, (lo, hi) in b.root.config[4]
+        ]
+        assert (a.root.fps[:] == b.root.fps[:]).all()
+
+
+def test_fpsim2_version_warning_stays_off_stdout(built_home, monkeypatch, capsys):
+    """FPSim2 print()s when RDKit versions differ; stdout is the MCP transport."""
+    import rdkit
+    from rdkit import Chem
+
+    monkeypatch.setattr(rdkit, "__version__", "2000.01.1")
+    LocalIndex(built_home, mode="memory").search(Chem.MolFromSmiles(ASPIRIN), 0.5, 5)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "RDKit version" in captured.err

@@ -367,3 +367,86 @@ def test_search_batch_and_scaffolds(tmp_path, built_home):
     )
     assert "scaffold(s):" in grouped.output
     assert "c1ccccc1" in grouped.output
+
+
+def test_substructure_text_json_and_smarts(substructure_home):
+    home = ["--home", str(substructure_home)]
+    text = runner.invoke(app, ["substructure", "c1ccccc1C(=O)O", *home])
+    assert text.exit_code == 0, text.output
+    assert text.output.startswith("4 hit(s); ")
+    assert "CID 2244" in text.output
+    as_json = runner.invoke(
+        app, ["substructure", "[OX2H]c", "--smarts", "--max", "1", "--json", *home]
+    )
+    data = json.loads(as_json.output)
+    assert data["query_type"] == "smarts"
+    assert [h["cid"] for h in data["hits"]] == [338]
+    assert data["exhaustive"] is False
+    capped = runner.invoke(
+        app, ["substructure", "[#6]", "--smarts", "--max-candidates", "2", *home]
+    )
+    assert "more may exist" in capped.output
+    bad = runner.invoke(app, ["substructure", "C1CC", *home])
+    assert bad.exit_code == 1
+    assert "Invalid SMILES" in bad.output
+
+
+def test_substructure_batch(tmp_path, substructure_home):
+    src = tmp_path / "fragments.smi"
+    src.write_text("c1ccccc1C(=O)O benzoic\nC1CCCCC1 cyclohexane\nC1CC broken\n")
+    out = tmp_path / "hits.csv"
+    result = runner.invoke(
+        app,
+        [
+            "substructure",
+            "-i",
+            str(src),
+            "-o",
+            str(out),
+            "--home",
+            str(substructure_home),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "3 input(s)" in result.output and "1 error(s)" in result.output
+    rows = list(csv.DictReader(out.open()))
+    benzoic = [r for r in rows if r["id"] == "benzoic"]
+    assert [r["cid"] for r in benzoic] == ["243", "338", "2244", "4133"]
+    assert benzoic[0]["rank"] == "1"
+    assert [r["cid"] for r in rows if r["id"] == "cyclohexane"] == [""]
+    assert next(r for r in rows if r["id"] == "broken")["error"]
+
+
+def test_substructure_without_pattern_index(built_home):
+    result = runner.invoke(app, ["substructure", "c1ccccc1", "--home", str(built_home)])
+    assert result.exit_code == 1
+    assert "--with-substructure" in result.output
+
+
+def test_index_build_with_substructure_on_existing_chunks(tmp_path, sample_sdfs):
+    home = ["--home", str(tmp_path / "home"), "--workers", "1"]
+    built = runner.invoke(app, ["index", "build", "--sdf", str(sample_sdfs[0]), *home])
+    assert built.exit_code == 0, built.output
+    status = runner.invoke(app, ["index", "status", "--json", *home[:2]])
+    assert json.loads(status.output)["substructure"] is False
+
+    added = runner.invoke(app, ["index", "build", "--with-substructure", *home])
+    assert added.exit_code == 0, added.output
+    assert "with substructure search" in added.output
+    assert "0 built this run" in added.output
+    status = runner.invoke(app, ["index", "status", *home[:2]])
+    assert "substructure         True" in status.output
+    found = runner.invoke(app, ["substructure", "c1ccccc1", *home[:2]])
+    assert "CID 243" in found.output
+
+    removed = runner.invoke(app, ["index", "build", "--without-substructure", *home])
+    assert removed.exit_code == 0, removed.output
+    assert "substructure search removed" in removed.output
+
+
+def test_index_build_with_substructure_needs_built_chunks(tmp_path):
+    result = runner.invoke(
+        app, ["index", "build", "--with-substructure", "--home", str(tmp_path)]
+    )
+    assert result.exit_code == 1
+    assert "nothing to finalize" in result.output

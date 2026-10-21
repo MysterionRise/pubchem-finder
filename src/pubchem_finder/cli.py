@@ -14,7 +14,7 @@ from . import __version__, batch, service
 from .config import resolve_home
 from .core.exceptions import InvalidInput, PubChemFinderError
 from .data.pug_rest import ANNOTATION_HEADINGS, AnnotationHeading
-from .models import RemoteSearchResults
+from .models import RemoteSearchResults, SubstructureResults
 
 app = typer.Typer(
     help="Molecular similarity search over PubChem: lookups, descriptors, MCP server.",
@@ -78,7 +78,7 @@ HomeOpt = Annotated[
 ]
 
 index_app = typer.Typer(
-    help="Build and inspect the local similarity index.",
+    help="Build and inspect the local index (similarity and substructure search).",
     no_args_is_help=True,
     rich_markup_mode=None,
 )
@@ -308,6 +308,77 @@ def search(
 
 
 @app.command()
+def substructure(
+    query: Annotated[
+        str | None,
+        typer.Argument(
+            help="SMILES (or SMARTS with --smarts) fragment; omit with --input."
+        ),
+    ] = None,
+    smarts: Annotated[
+        bool, typer.Option("--smarts", help="Read the query as SMARTS.")
+    ] = False,
+    max_hits: Annotated[
+        int, typer.Option("--max", min=1, max=1000, help="Max hits.")
+    ] = 50,
+    max_candidates: Annotated[
+        int,
+        typer.Option(min=1, help="Stop after verifying this many screened candidates."),
+    ] = 100_000,
+    home: HomeOpt = None,
+    input_file: InputOpt = None,
+    output: OutputOpt = None,
+    as_json: JsonFlag = False,
+) -> None:
+    """Find indexed compounds that contain a fragment, lowest CID first.
+
+    Needs an index built with --with-substructure.
+    """
+    query_type: service.QueryType = "smarts" if smarts else "smiles"
+
+    def run(text: str) -> SubstructureResults:
+        return service.substructure_search(
+            text,
+            query_type=query_type,
+            max_hits=max_hits,
+            max_candidates=max_candidates,
+            home=home,
+        )
+
+    if _batch_requested(query, input_file):
+
+        def one(row: batch.InputRow) -> list[dict[str, Any]]:
+            return [
+                {"rank": rank, **hit.model_dump()}
+                for rank, hit in enumerate(run(row.smiles).hits, start=1)
+            ]
+
+        _run_batch(input_file, output, SUBSTRUCTURE_COLUMNS, one)
+        return
+    try:
+        result = run(query or "")
+    except PubChemFinderError as exc:
+        _fail(exc)
+        return
+    if as_json:
+        typer.echo(result.model_dump_json(indent=2))
+        return
+    more = (
+        ""
+        if result.exhaustive
+        else " (more may exist; raise --max or --max-candidates)"
+    )
+    typer.echo(
+        f"{len(result.hits)} hit(s){more}; {result.n_candidates:,} of "
+        f"{result.n_indexed:,} compounds passed the screen, {result.n_checked:,} checked"
+    )
+    if result.warning:
+        typer.echo(f"warning: {result.warning}", err=True)
+    for hit in result.hits:
+        typer.echo(f"CID {hit.cid:<10} {hit.smiles or ''}  {hit.iupac_name or ''}")
+
+
+@app.command()
 def triage(
     smiles: SmilesArg = None,
     input_file: InputOpt = None,
@@ -419,6 +490,15 @@ TRIAGE_COLUMNS = [
     "alerts",
     "murcko_scaffold",
 ]
+SUBSTRUCTURE_COLUMNS = [
+    "rank",
+    "cid",
+    "smiles",
+    "iupac_name",
+    "molecular_formula",
+    "molecular_weight",
+    "pubchem_url",
+]
 SEARCH_COLUMNS = [
     "rank",
     "cid",
@@ -496,6 +576,17 @@ def index_build(
     keep_sdf: Annotated[
         bool, typer.Option(help="Keep downloaded SDF files after indexing them.")
     ] = False,
+    with_substructure: Annotated[
+        bool | None,
+        typer.Option(
+            "--with-substructure/--without-substructure",
+            help=(
+                "Add (or remove) substructure search. Once added it is kept up to "
+                "date by later builds. Alone, adds it to the chunks already built."
+            ),
+            show_default=False,
+        ),
+    ] = None,
     home: HomeOpt = None,
 ) -> None:
     """Build (or extend) the local index, then merge it so it is searchable.
@@ -503,13 +594,15 @@ def index_build(
     Re-running is safe: finished chunks are skipped, so an interrupted build
     resumes and a larger --limit adds chunks to an existing index.
     """
-    from .index.builder import SdfSource, build_chunks, finalize
+    from .index.builder import BuildReport, SdfSource, build_chunks, finalize
     from .index.layout import IndexPaths, chunk_name
 
     chosen = sum([limit is not None, all_chunks, bool(sdf)])
-    if chosen != 1:
+    if chosen > 1 or (chosen == 0 and with_substructure is None):
         typer.echo(
-            "error: pass exactly one of --limit N, --all or --sdf FILE", err=True
+            "error: pass exactly one of --limit N, --all or --sdf FILE "
+            "(or only --with-substructure / --without-substructure)",
+            err=True,
         )
         raise typer.Exit(code=2)
 
@@ -520,7 +613,9 @@ def index_build(
         typer.echo(msg, err=True)
 
     try:
-        if sdf:
+        if chosen == 0:
+            report = BuildReport()
+        elif sdf:
             sources = [SdfSource(name=chunk_name(p), local_path=p) for p in sdf]
             report = build_chunks(paths, sources, workers, params, say)
         else:
@@ -548,13 +643,15 @@ def index_build(
                     for n in names
                 ]
                 report = build_chunks(paths, sources, workers, params, say)
-        manifest = finalize(paths, say)
+        manifest = finalize(paths, say, substructure=with_substructure, workers=workers)
     except PubChemFinderError as exc:
         _fail(exc)
         return
+    extra = " with substructure search" if manifest.substructure else ""
     typer.echo(
         f"Index ready: {manifest.n_compounds:,} compounds from "
-        f"{len(manifest.chunks)} chunk(s), {len(report.built)} built this run, in {paths.home}"
+        f"{len(manifest.chunks)} chunk(s){extra}, {len(report.built)} built this run, "
+        f"in {paths.home}"
     )
 
 

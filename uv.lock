@@ -1449,6 +1449,7 @@ dependencies = [
     { name = "pyarrow" },
     { name = "pydantic" },
     { name = "rdkit" },
+    { name = "tables" },
     { name = "typer" },
 ]
 
@@ -1473,6 +1474,7 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=17" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "rdkit", specifier = ">=2024.9" },
+    { name = "tables", specifier = ">=3.10" },
     { name = "typer", specifier = ">=0.15" },
 ]
 

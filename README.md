@@ -11,8 +11,8 @@ as an [MCP](https://modelcontextprotocol.io/) server.
 
 > **Status:** PubChem lookups and live structure search, synonyms, cross-references,
 > curated safety and pharmacology annotations, bioassay summaries, RDKit descriptors,
-> standardization, fingerprint comparison and a local similarity index over PubChem
-> (or any SDF files) all work from the CLI and from an MCP server.
+> standardization, fingerprint comparison and a local similarity and substructure index
+> over PubChem (or any SDF files) all work from the CLI and from an MCP server.
 > See [ROADMAP.md](ROADMAP.md) for what comes next.
 
 ## Quick start
@@ -44,6 +44,28 @@ pubchem-finder index status
 
 pubchem-finder index build --sdf my_library.sdf.gz   # or index your own SDF files
 ```
+
+### Substructure search over the local index
+
+Substructure search is optional because it needs a second fingerprint database. Add it to an
+index you have already built (it reads the stored SMILES, so nothing is downloaded), or pass
+the flag on the first build:
+
+```bash
+pubchem-finder index build --with-substructure               # add to the chunks already built
+pubchem-finder substructure "c1ccc2[nH]ccc2c1"                # everything indexed that contains indole
+pubchem-finder substructure "[NX3][SX4](=O)(=O)c" --smarts    # aryl sulfonamides, as SMARTS
+pubchem-finder substructure "C(=O)[OH]" --max 200 --json
+pubchem-finder substructure -i fragments.smi -o hits.csv      # one row per hit
+```
+
+Each compound's RDKit pattern fingerprint is screened first: a molecule can only contain the
+query if its fingerprint has every bit the query's has. Candidates that pass are then checked
+atom by atom with RDKit, so every hit is a real match (stereo is ignored). Hits come lowest CID
+first, which puts long-known compounds first. The search stops after `--max` hits or after
+checking `--max-candidates` screened compounds (100,000 by default); the output says how many
+passed the screen and whether every candidate was checked. Once added, later `index build` runs
+keep substructure search up to date; `--without-substructure` removes it.
 
 ### Ask PubChem directly
 
@@ -123,6 +145,22 @@ The index is searched in memory when it fits comfortably in available RAM and fr
 otherwise; set `PUBCHEM_FINDER_INDEX_MODE=memory|disk` to force a mode. On a machine without
 ~20 GB of free RAM, index a subset with `--limit` rather than all of PubChem.
 
+**Substructure search costs more.** RDKit pattern fingerprints are 2048 bits, so they need 272
+bytes of RAM per compound, against 144 for the similarity index. Measured on the same
+100,000-compound benchmark in the 4-core sandbox: pattern fingerprints build at ~3,400
+compounds/s per core, and a 50-hit query takes 20-35 ms in memory and ~0.35 s on disk.
+Each candidate that has to be verified costs 0.1-1 ms, which is why candidates are capped.
+
+| | First PubChem chunk (estimated) | All of PubChem (estimated) |
+|---|---|---|
+| Building pattern fingerprints | ~2 min on one core | about an hour on 8 cores |
+| Pattern files on disk | up to ~85 MB per chunk, plus the merged copy | up to ~23 GB, plus the merged copy |
+| RAM for in-memory screening | ~120 MB | ~33 GB |
+| Query time | tens of ms in memory, ~1.5 s on disk | seconds in memory, minutes on disk |
+
+For all of PubChem that means substructure screening runs from disk unless the machine has
+~40 GB of free RAM; indexing a subset with `--limit` keeps it fast.
+
 ### Use it from Claude (MCP)
 
 The same operations are available as an [MCP](https://modelcontextprotocol.io/) server over stdio.
@@ -155,7 +193,8 @@ Tools exposed:
 | `standardize(smiles)` | Remove salts and counter-ions, neutralize, canonicalize. Offline. |
 | `compare(smiles_a, smiles_b)` | Tanimoto similarity on ECFP4 and MACCS fingerprints. Offline. |
 | `similarity_search(smiles, threshold, top_k, metric)` | Most similar compounds in the local index, with CID, SMILES, IUPAC name, formula, MW and PubChem link. Needs `index build`. |
-| `index_status()` | Whether the local index is built, its size and fingerprint, and how to build it. |
+| `substructure_search(query, query_type, max_hits)` | Indexed compounds that contain a SMILES or SMARTS fragment, verified atom by atom, lowest CID first. Needs `index build --with-substructure`. |
+| `index_status()` | Whether the local index is built, its size and fingerprint, whether substructure search is on, and how to build what is missing. |
 | `pubchem_similarity_search(smiles, threshold, max_records)` | Similar compounds across all of PubChem, live, scored with ECFP4 and sorted. |
 | `pubchem_substructure_search(smiles, max_records)` | Compounds across all of PubChem that contain a fragment. |
 | `pubchem_exact_match(smiles, identity_type)` | The PubChem record(s) for exactly this structure, optionally ignoring stereo or isotopes. |
@@ -173,7 +212,8 @@ Then ask Claude things like "what is the molecular weight and XLogP of caffeine?
 "how similar are aspirin and salicylic acid?", "is ibuprofen hazardous, and what does its
 GHS label say?", "what are the main targets of celecoxib in PubChem assays?", "show me the
 closest analogues of aspirin and highlight what changed", "does this compound have any PAINS
-alerts?" or, with an index built, "find the 10 compounds most similar to ibuprofen".
+alerts?" or, with an index built, "find the 10 compounds most similar to ibuprofen" and "which
+indexed compounds contain an aryl sulfonamide? draw a few with the group highlighted".
 
 The server loads the index on the first search, not at startup, so it starts instantly. Point it
 at a non-default data directory by adding `"env": {"PUBCHEM_FINDER_HOME": "/path"}` to the
@@ -227,9 +267,11 @@ after `uv tool install pre-commit`.
 PubChem Compound SDF (HTTPS) --> streaming RDKit parse --> chunks/<chunk>.parquet  (CID, SMILES, InChIKey, name, formula, MW)
                                                       \-> chunks/<chunk>.h5       (FPSim2 fingerprints)
                                                             \-> merge + popcount sort -> index/pubchem.h5 + manifest.json
-pubchem-finder CLI  ----\
-                         +--> service --> FPSim2 (exact similarity, in memory or on disk) + DuckDB over Parquet
-MCP server (stdio) -----/            \-> PubChem PUG REST for live lookups
+chunks/<chunk>.parquet SMILES --> RDKit pattern fingerprints --> chunks/pattern/<chunk>.h5 -> index/pubchem-pattern.h5
+                                                                  (only with --with-substructure)
+pubchem-finder CLI  ----\                 /-> FPSim2 exact similarity (in memory or on disk) + DuckDB over Parquet
+                         +--> service ---+--> FPSim2 pattern screen + RDKit atom match (substructure)
+MCP server (stdio) -----/                 \-> PubChem PUG REST / PUG View for live data
 ```
 
 The index engine is [FPSim2](https://github.com/chembl/FPSim2), the similarity search
