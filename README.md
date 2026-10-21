@@ -55,17 +55,22 @@ Data lives in the platform data directory (`~/.local/share/pubchem-finder` on Li
 `~/Library/Application Support/pubchem-finder` on macOS, `%LOCALAPPDATA%\pubchem-finder` on
 Windows). Override it with `--home DIR` or `PUBCHEM_FINDER_HOME`.
 
-**How big is it?** Measured on a 4-core machine with 100,000 compounds, then extrapolated to
-PubChem's roughly 120 million. The full-PubChem figures are estimates, not measurements.
+**How big is it?** The first column is a real run of `index build --limit 1` on a MacBook Pro.
+The full-PubChem column scales those numbers to PubChem's roughly 120 million compounds and
+is an estimate, not a measurement.
 
-| | 100k compounds (measured) | All of PubChem (estimated) |
+| | First PubChem chunk (measured) | All of PubChem (estimated) |
 |---|---|---|
-| Fingerprinting | ~4,300 compounds/s per core | ~1-2 h of CPU on 8 cores |
-| Download | n/a | ~100 GB over HTTPS, streamed and deleted chunk by chunk |
-| RAM for in-memory search | 2 MB | ~17 GB |
-| Free disk while building | small | ~60 GB (chunk files, merged index, sort scratch, metadata) |
-| Query, in memory | 2 ms | ~1-3 s |
-| Query, on disk | 210 ms | minutes; not practical |
+| Compounds indexed | 444,794 (29 skipped by RDKit) | ~120 million |
+| Fingerprinting | 80 s on one core (~5,500 compounds/s) | ~1 h on 8 cores, plus download time |
+| Download | one SDF file, deleted after indexing | ~100 GB over HTTPS, streamed chunk by chunk |
+| Index file on disk | 36 MB | ~10 GB |
+| RAM for in-memory search | 64 MB | ~17 GB |
+| Free disk while building | small | ~45 GB (chunk files, merged index, sort scratch, metadata) |
+
+Search latency, measured on 100,000 compounds in a 4-core Linux sandbox: about 2 ms per
+query in memory and 210 ms on disk. Both grow roughly linearly with index size, so a
+full-PubChem query takes about 1-3 s in memory and minutes on disk.
 
 The index is searched in memory when it fits comfortably in available RAM and from disk
 otherwise; set `PUBCHEM_FINDER_INDEX_MODE=memory|disk` to force a mode. On a machine without
@@ -141,7 +146,9 @@ print(TanimotoSimilarity().calculate(aspirin, salicylic))
 
 ## Development
 
-Requires [uv](https://docs.astral.sh/uv/). Python 3.11, 3.12 and 3.13 are supported.
+Requires [uv](https://docs.astral.sh/uv/). Python 3.11, 3.12 and 3.13 are supported; the
+repository's `.python-version` makes `uv sync` use 3.12 even if pyenv or conda put an older
+Python first on your PATH.
 
 ```bash
 uv sync            # create .venv and install everything, including dev tools
