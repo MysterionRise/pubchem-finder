@@ -1,5 +1,6 @@
 """Tests for the typer CLI."""
 
+import csv
 import json
 
 from typer.testing import CliRunner
@@ -258,3 +259,111 @@ def test_cache_commands(tmp_path):
     assert "1 responses" in info.output
     cleared = runner.invoke(app, ["cache", "clear", "--home", str(tmp_path)])
     assert "Removed 1 cached responses" in cleared.output
+
+
+def test_triage_single_and_json():
+    text = runner.invoke(app, ["triage", "O=C1C(=Cc2ccccc2)SC(=S)N1"])
+    assert text.exit_code == 0, text.output
+    assert "alert PAINS_A: ene_rhod_A(235)" in text.output
+    clean = runner.invoke(app, ["triage", "CCO"])
+    assert "No PAINS, Brenk or NIH alerts." in clean.output
+    as_json = runner.invoke(app, ["triage", "CCO", "--json"])
+    assert json.loads(as_json.output)["pains_free"] is True
+    assert runner.invoke(app, ["triage", "nope("]).exit_code == 1
+
+
+def test_draw_command(tmp_path):
+    out = tmp_path / "grid.png"
+    result = runner.invoke(
+        app,
+        [
+            "draw",
+            "CC(=O)Oc1ccccc1C(=O)O",
+            "O=C(O)c1ccccc1O",
+            "-l",
+            "aspirin",
+            "-l",
+            "salicylic acid",
+            "--highlight",
+            "smarts",
+            "--smarts",
+            "[OX2H]",
+            "-o",
+            str(out),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert out.read_bytes().startswith(b"\x89PNG")
+    bad = runner.invoke(app, ["draw", "CCO", "--highlight", "diff", "-o", str(out)])
+    assert bad.exit_code == 1
+    assert "reference" in bad.output
+
+
+def test_batch_props_standardize_triage(tmp_path):
+    src = tmp_path / "in.smi"
+    src.write_text("CC(=O)[O-].[Na+] salt\nnope( broken\nCCO\n")
+    for cmd in ("props", "standardize", "triage"):
+        out = tmp_path / f"{cmd}.csv"
+        result = runner.invoke(app, [cmd, "--input", str(src), "--output", str(out)])
+        assert result.exit_code == 0, (cmd, result.output)
+        assert "3 input(s), 3 row(s)" in result.output and "1 error(s)" in result.output
+        rows = list(csv.DictReader(out.open()))
+        assert [r["id"] for r in rows] == ["salt", "broken", "3"]
+        assert rows[1]["error"].startswith("Invalid SMILES")
+    std = list(csv.DictReader((tmp_path / "standardize.csv").open()))
+    assert std[0]["standardized_smiles"] == "CC(=O)O"
+    assert std[0]["changed"] == "True"
+
+
+def test_batch_to_stdout_and_argument_checks(tmp_path):
+    src = tmp_path / "in.csv"
+    src.write_text("id,smiles\nethanol,CCO\n")
+    result = runner.invoke(app, ["props", "-i", str(src)])
+    assert result.exit_code == 0
+    assert "ethanol,CCO,CCO," in result.output
+    both = runner.invoke(app, ["props", "CCO", "-i", str(src)])
+    assert both.exit_code == 2
+    neither = runner.invoke(app, ["props"])
+    assert neither.exit_code == 2
+    no_column = tmp_path / "bad.csv"
+    no_column.write_text("name\nx\n")
+    assert runner.invoke(app, ["props", "-i", str(no_column)]).exit_code == 1
+
+
+def test_search_batch_and_scaffolds(tmp_path, built_home):
+    src = tmp_path / "queries.smi"
+    src.write_text("CC(=O)Oc1ccccc1C(=O)O aspirin\nCCO ethanol\n")
+    out = tmp_path / "hits.csv"
+    result = runner.invoke(
+        app,
+        [
+            "search",
+            "-i",
+            str(src),
+            "-o",
+            str(out),
+            "--home",
+            str(built_home),
+            "--threshold",
+            "0.3",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    rows = list(csv.DictReader(out.open()))
+    aspirin = [r for r in rows if r["id"] == "aspirin"]
+    assert aspirin[0]["rank"] == "1" and aspirin[0]["cid"] == "2244"
+    assert any(r["id"] == "ethanol" for r in rows)
+    grouped = runner.invoke(
+        app,
+        [
+            "search",
+            "CC(=O)Oc1ccccc1C(=O)O",
+            "--home",
+            str(built_home),
+            "--threshold",
+            "0.3",
+            "--group-by-scaffold",
+        ],
+    )
+    assert "scaffold(s):" in grouped.output
+    assert "c1ccccc1" in grouped.output

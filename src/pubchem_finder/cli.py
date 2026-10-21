@@ -2,16 +2,17 @@
 
 import os
 import sys
+from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated, Any, cast
 
 import typer
 from pydantic import BaseModel
 
-from . import __version__, service
+from . import __version__, batch, service
 from .config import resolve_home
-from .core.exceptions import PubChemFinderError
+from .core.exceptions import InvalidInput, PubChemFinderError
 from .data.pug_rest import ANNOTATION_HEADINGS, AnnotationHeading
 from .models import RemoteSearchResults
 
@@ -36,6 +37,36 @@ class Metric(StrEnum):
 
 
 JsonFlag = Annotated[bool, typer.Option("--json", help="Emit JSON instead of text.")]
+SmilesArg = Annotated[
+    str | None, typer.Argument(help="SMILES string (omit when using --input).")
+]
+InputOpt = Annotated[
+    Path | None,
+    typer.Option(
+        "--input",
+        "-i",
+        help="Batch mode: .smi, .csv or .tsv file of structures ('-' for stdin).",
+        show_default=False,
+    ),
+]
+OutputOpt = Annotated[
+    Path | None,
+    typer.Option(
+        "--output",
+        "-o",
+        help="Batch mode: CSV file to write (default: stdout).",
+        show_default=False,
+    ),
+]
+
+
+class HighlightMode(StrEnum):
+    none = "none"
+    smarts = "smarts"
+    diff = "diff"
+    similarity_map = "similarity_map"
+
+
 HomeOpt = Annotated[
     Path | None,
     typer.Option(
@@ -145,24 +176,46 @@ def lookup(
 
 @app.command()
 def props(
-    smiles: Annotated[str, typer.Argument(help="SMILES string.")],
+    smiles: SmilesArg = None,
+    input_file: InputOpt = None,
+    output: OutputOpt = None,
     as_json: JsonFlag = False,
 ) -> None:
-    """RDKit descriptors and Lipinski check for a structure."""
+    """RDKit descriptors and Lipinski check for a structure (or a file of them)."""
+    if _batch_requested(smiles, input_file):
+        _run_batch(
+            input_file,
+            output,
+            PROPS_COLUMNS,
+            lambda row: [
+                service.properties(row.smiles).model_dump(exclude={"input_smiles"})
+            ],
+        )
+        return
     try:
-        _emit(service.properties(smiles), as_json)
+        _emit(service.properties(smiles or ""), as_json)
     except PubChemFinderError as exc:
         _fail(exc)
 
 
 @app.command()
 def standardize(
-    smiles: Annotated[str, typer.Argument(help="SMILES string.")],
+    smiles: SmilesArg = None,
+    input_file: InputOpt = None,
+    output: OutputOpt = None,
     as_json: JsonFlag = False,
 ) -> None:
     """Standardize a structure (remove salts, neutralize, canonicalize)."""
+    if _batch_requested(smiles, input_file):
+
+        def one(row: batch.InputRow) -> list[dict[str, Any]]:
+            result = service.standardize(row.smiles)
+            return [{"standardized_smiles": result.smiles, "changed": result.changed}]
+
+        _run_batch(input_file, output, ["standardized_smiles", "changed"], one)
+        return
     try:
-        result = service.standardize(smiles)
+        result = service.standardize(smiles or "")
     except PubChemFinderError as exc:
         _fail(exc)
         return
@@ -187,7 +240,7 @@ def compare(
 
 @app.command()
 def search(
-    smiles: Annotated[str, typer.Argument(help="Query SMILES.")],
+    smiles: SmilesArg = None,
     threshold: Annotated[
         float, typer.Option(min=0.01, max=1.0, help="Minimum similarity (0-1).")
     ] = 0.7,
@@ -195,13 +248,40 @@ def search(
     metric: Annotated[
         Metric, typer.Option(help="Similarity metric.")
     ] = Metric.tanimoto,
+    group_by_scaffold: Annotated[
+        bool, typer.Option(help="Also group the hits by Murcko scaffold.")
+    ] = False,
     home: HomeOpt = None,
+    input_file: InputOpt = None,
+    output: OutputOpt = None,
     as_json: JsonFlag = False,
 ) -> None:
-    """Find the most similar compounds in the local index."""
+    """Find the most similar compounds in the local index (one query or a file)."""
+    if _batch_requested(smiles, input_file):
+
+        def one(row: batch.InputRow) -> list[dict[str, Any]]:
+            found = service.similarity_search(
+                row.smiles,
+                threshold=threshold,
+                top_k=top,
+                metric=metric.value,
+                home=home,
+            )
+            return [
+                {"rank": rank, **hit.model_dump()}
+                for rank, hit in enumerate(found.hits, start=1)
+            ]
+
+        _run_batch(input_file, output, SEARCH_COLUMNS, one)
+        return
     try:
         result = service.similarity_search(
-            smiles, threshold=threshold, top_k=top, metric=metric.value, home=home
+            smiles or "",
+            threshold=threshold,
+            top_k=top,
+            metric=metric.value,
+            home=home,
+            group_by_scaffold=group_by_scaffold,
         )
     except PubChemFinderError as exc:
         _fail(exc)
@@ -218,6 +298,170 @@ def search(
         typer.echo(
             f"{hit.similarity:.3f}  CID {hit.cid:<10} {hit.smiles or ''}  {name}"
         )
+    if result.scaffolds is not None:
+        typer.echo(f"\n{len(result.scaffolds)} scaffold(s):")
+        for group in result.scaffolds:
+            cids = ", ".join(str(c) for c in group.cids)
+            typer.echo(
+                f"  best {group.best_similarity:.3f}  {group.scaffold or '(acyclic)'}  CIDs {cids}"
+            )
+
+
+@app.command()
+def triage(
+    smiles: SmilesArg = None,
+    input_file: InputOpt = None,
+    output: OutputOpt = None,
+    as_json: JsonFlag = False,
+) -> None:
+    """Med-chem triage: QED, synthetic accessibility, Lipinski/Veber, structural alerts."""
+    if _batch_requested(smiles, input_file):
+
+        def one(row: batch.InputRow) -> list[dict[str, Any]]:
+            profile = service.medchem_profile(row.smiles)
+            data = profile.model_dump(exclude={"input_smiles", "alerts"})
+            data["n_alerts"] = len(profile.alerts)
+            data["alerts"] = [f"{a.catalog}:{a.name}" for a in profile.alerts]
+            return [data]
+
+        _run_batch(input_file, output, TRIAGE_COLUMNS, one)
+        return
+    try:
+        result = service.medchem_profile(smiles or "")
+    except PubChemFinderError as exc:
+        _fail(exc)
+        return
+    if as_json:
+        typer.echo(result.model_dump_json(indent=2))
+        return
+    sa = "-" if result.sa_score is None else f"{result.sa_score:.2f}"
+    typer.echo(f"{result.canonical_smiles}")
+    typer.echo(
+        f"QED {result.qed:.2f}  SA score {sa}  scaffold {result.murcko_scaffold or '(acyclic)'}"
+    )
+    lipinski = ", ".join(result.lipinski_violations) or "none"
+    typer.echo(
+        f"Lipinski violations: {lipinski}   Veber: {'ok' if result.veber_ok else 'fails'}"
+    )
+    if not result.alerts:
+        typer.echo("No PAINS, Brenk or NIH alerts.")
+    for alert in result.alerts:
+        typer.echo(f"  alert {alert.catalog}: {alert.name}  (atoms {alert.atoms})")
+
+
+@app.command()
+def draw(
+    smiles: Annotated[list[str], typer.Argument(help="One or more SMILES (up to 24).")],
+    output: Annotated[Path, typer.Option("--output", "-o", help="PNG file to write.")],
+    legend: Annotated[
+        list[str] | None,
+        typer.Option("--legend", "-l", help="Caption per molecule (repeat, in order)."),
+    ] = None,
+    highlight: Annotated[
+        HighlightMode, typer.Option(help="What to highlight.")
+    ] = HighlightMode.none,
+    smarts: Annotated[
+        str | None, typer.Option(help="SMARTS pattern for --highlight smarts.")
+    ] = None,
+    reference: Annotated[
+        str | None,
+        typer.Option(help="Reference SMILES for --highlight diff / similarity_map."),
+    ] = None,
+    size: Annotated[
+        int, typer.Option(min=150, max=600, help="Panel size in pixels.")
+    ] = 300,
+    per_row: Annotated[int, typer.Option(min=1, max=8, help="Panels per row.")] = 4,
+) -> None:
+    """Draw molecules to a PNG grid, optionally highlighting a pattern or changes."""
+    try:
+        png = service.draw(
+            smiles,
+            legends=legend,
+            highlight=highlight.value,
+            smarts=smarts,
+            reference=reference,
+            size=size,
+            per_row=per_row,
+        )
+    except PubChemFinderError as exc:
+        _fail(exc)
+        return
+    output.write_bytes(png)
+    typer.echo(f"Wrote {output} ({len(smiles)} molecule(s), {len(png) / 1024:.0f} KB)")
+
+
+PROPS_COLUMNS = [
+    "canonical_smiles",
+    "molecular_weight",
+    "logp",
+    "num_h_donors",
+    "num_h_acceptors",
+    "tpsa",
+    "num_rotatable_bonds",
+    "num_aromatic_rings",
+    "num_heavy_atoms",
+    "lipinski_ok",
+]
+TRIAGE_COLUMNS = [
+    "canonical_smiles",
+    "qed",
+    "sa_score",
+    "molecular_weight",
+    "logp",
+    "num_h_donors",
+    "num_h_acceptors",
+    "tpsa",
+    "num_rotatable_bonds",
+    "lipinski_violations",
+    "veber_ok",
+    "pains_free",
+    "n_alerts",
+    "alerts",
+    "murcko_scaffold",
+]
+SEARCH_COLUMNS = [
+    "rank",
+    "cid",
+    "similarity",
+    "smiles",
+    "iupac_name",
+    "molecular_formula",
+    "molecular_weight",
+    "pubchem_url",
+]
+
+
+def _batch_requested(smiles: str | None, input_file: Path | None) -> bool:
+    if (smiles is None) == (input_file is None):
+        typer.echo("error: give either a SMILES argument or --input FILE", err=True)
+        raise typer.Exit(code=2)
+    return input_file is not None
+
+
+def _run_batch(
+    input_file: Path | None,
+    output: Path | None,
+    columns: list[str],
+    fn: Callable[[batch.InputRow], list[dict[str, Any]]],
+) -> None:
+    assert input_file is not None
+    try:
+        rows = batch.read_inputs(input_file)
+        if output is None or str(output) == "-":
+            report = batch.run(rows, sys.stdout, columns, fn)
+            where = "stdout"
+        else:
+            with output.open("w", newline="", encoding="utf-8") as fh:
+                report = batch.run(rows, fh, columns, fn)
+            where = str(output)
+    except (InvalidInput, OSError) as exc:
+        _fail(exc)
+        return
+    typer.echo(
+        f"{report.rows_in} input(s), {report.rows_out} row(s) written to {where}, "
+        f"{report.errors} error(s)",
+        err=True,
+    )
 
 
 def _default_workers() -> int:

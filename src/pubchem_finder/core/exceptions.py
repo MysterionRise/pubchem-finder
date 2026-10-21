@@ -23,3 +23,7 @@ class IndexBuildError(PubChemFinderError):
 
 class DownloadError(PubChemFinderError):
     """Downloading a PubChem bulk file failed or its checksum did not match."""
+
+
+class InvalidInput(PubChemFinderError):
+    """An argument is out of range or inconsistent with the others."""
