@@ -152,7 +152,11 @@ class LocalIndex:
             hits = engine.on_disk_top_k(
                 query, k=top_k, threshold=threshold, metric=metric, n_workers=1
             )
-        return [(int(h["mol_id"]), round(float(h["coeff"]), 4)) for h in hits]
+        pairs = [(int(h["mol_id"]), round(float(h["coeff"]), 4)) for h in hits]
+        # FPSim2 returns equal scores in whatever order its threads finish. Break
+        # ties by CID so results are stable and long-known compounds come first
+        # (e.g. aspirin, CID 2244, before its 11C-labelled twin, CID 450661).
+        return sorted(pairs, key=lambda pair: (-pair[1], pair[0]))
 
     def _ensure_pattern_loaded(self) -> Any:
         with self._lock:

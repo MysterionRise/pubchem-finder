@@ -258,3 +258,29 @@ def test_fpsim2_version_warning_stays_off_stdout(built_home, monkeypatch, capsys
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "RDKit version" in captured.err
+
+
+def test_search_breaks_ties_by_cid(built_home, monkeypatch):
+    """FPSim2 returns equal scores in thread order; ties must come lowest CID first."""
+    import numpy as np
+    from rdkit import Chem
+
+    hits = np.array(
+        [(450661, 1.0), (2244, 1.0), (4133, 0.7), (338, 0.7), (3672, 0.9)],
+        dtype=[("mol_id", "<u4"), ("coeff", "<f4")],
+    )
+
+    class StubEngine:
+        def top_k(self, *args, **kwargs):
+            return hits
+
+    index = LocalIndex(built_home, mode="memory")
+    monkeypatch.setattr(index, "_ensure_loaded", StubEngine)
+    index._in_memory = True
+    assert index.search(Chem.MolFromSmiles(ASPIRIN), 0.5, 5) == [
+        (2244, 1.0),
+        (450661, 1.0),
+        (3672, 0.9),
+        (338, 0.7),
+        (4133, 0.7),
+    ]
