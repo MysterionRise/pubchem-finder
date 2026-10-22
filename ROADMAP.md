@@ -79,7 +79,7 @@ MCP over stdio, uv + hatchling + ruff, Python 3.11 to 3.13.
 
 - [ ] Tested setups for MCP clients beyond Claude (Cursor, VS Code, Windsurf, Zed,
       JetBrains, Antigravity / Gemini CLI, Codex CLI, Cline, LM Studio) in
-      [docs/clients.md](docs/clients.md)
+      [docs/clients.md](docs/clients.md): #23, one good first issue per client
 - [ ] List the server in the MCP registry, and ship a one-click Claude Desktop extension
       (`.mcpb`) with each release
 - [ ] A quick demo index (a few thousand well-known compounds via PUG REST), so the first
@@ -87,4 +87,4 @@ MCP over stdio, uv + hatchling + ruff, Python 3.11 to 3.13.
 - [ ] MCP prompts and resources: a compound dossier prompt, `pubchem://compound/{cid}`
 - [ ] Matched molecular pairs across a hit set (`rdMMPA`)
 - [ ] ADMET predictions as an optional extra (pulls in PyTorch)
-- [ ] Streamable HTTP transport and a Docker image, if a shared server is wanted
+- [ ] Streamable HTTP transport (#33) and a Docker image, if a shared server is wanted

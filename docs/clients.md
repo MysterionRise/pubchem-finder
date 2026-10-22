@@ -63,20 +63,21 @@ settings. The sections below give the exact config for each client someone has t
 |---|---|---|
 | Claude Code | Documented | [README](https://github.com/MysterionRise/pubchem-finder#use-it-from-claude) |
 | Claude Desktop | Documented | [README](https://github.com/MysterionRise/pubchem-finder#use-it-from-claude) |
-| Cursor | Not tried yet | Help wanted |
-| VS Code (GitHub Copilot agent mode) | Not tried yet | Help wanted |
-| Windsurf | Not tried yet | Help wanted |
-| Zed | Not tried yet | Help wanted |
-| JetBrains IDEs (AI Assistant) | Not tried yet | Help wanted |
-| Google Antigravity / Gemini CLI | Not tried yet | Help wanted |
-| OpenAI Codex CLI | Not tried yet | Help wanted |
-| Cline | Not tried yet | Help wanted |
-| LM Studio (local models) | Not tried yet | Help wanted |
+| Cursor | Not tried yet | Help wanted: [#24](https://github.com/MysterionRise/pubchem-finder/issues/24) |
+| VS Code (GitHub Copilot agent mode) | Not tried yet | Help wanted: [#25](https://github.com/MysterionRise/pubchem-finder/issues/25) |
+| Windsurf | Not tried yet | Help wanted: [#26](https://github.com/MysterionRise/pubchem-finder/issues/26) |
+| Zed | Not tried yet | Help wanted: [#27](https://github.com/MysterionRise/pubchem-finder/issues/27) |
+| JetBrains IDEs (AI Assistant) | Not tried yet | Help wanted: [#28](https://github.com/MysterionRise/pubchem-finder/issues/28) |
+| Google Antigravity / Gemini CLI | Not tried yet | Help wanted: [#29](https://github.com/MysterionRise/pubchem-finder/issues/29) |
+| OpenAI Codex CLI | Not tried yet | Help wanted: [#30](https://github.com/MysterionRise/pubchem-finder/issues/30) |
+| Cline | Not tried yet | Help wanted: [#31](https://github.com/MysterionRise/pubchem-finder/issues/31) |
+| LM Studio (local models) | Not tried yet | Help wanted: [#32](https://github.com/MysterionRise/pubchem-finder/issues/32) |
 
 Using a client that isn't listed? Open an issue or a pull request in the same format.
 
 Web-based clients that only connect to remote servers (for example ChatGPT connectors)
-need an HTTP transport, which pubchem-finder doesn't offer yet.
+need an HTTP transport, which pubchem-finder doesn't offer yet ([#33](https://github.com/MysterionRise/pubchem-finder/issues/33)).
+All of this is tracked in [#23](https://github.com/MysterionRise/pubchem-finder/issues/23).
 
 ## Add your client
 
