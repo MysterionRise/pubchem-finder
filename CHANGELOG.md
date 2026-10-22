@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.0.1] - 2026-10-22
+
+Documentation release: the package's code and behaviour are unchanged.
+
+### Added
+
+- An animated walkthrough at the top of the README: a similarity search for aspirin and a
+  SMARTS substructure search, rendered from real results on PubChem's first 444,794
+  compounds. `scripts/demo_media.py` collects the results from an index and renders the
+  GIF and MP4 (`docs/media/`); the real-data workflow renders it on every run.
+- `docs/clients.md`: how to run the MCP server in clients other than Claude (Cursor,
+  VS Code, Windsurf, Zed, JetBrains, Codex, LM Studio...), with a quick check and a
+  status table. Tested setups are welcome, see
+  [#23](https://github.com/MysterionRise/pubchem-finder/issues/23).
+
+### Fixed
+
+- Images and links in the README now use absolute URLs, so they show on PyPI too.
+- A download test that failed in 1 run in 256.
+
 ## [2.0.0] - 2026-10-22
 
 A complete rewrite. PubChem Finder is now a command-line tool, a Python library and an
@@ -52,4 +72,5 @@ with a local index you can build on a laptop.
 An Indigo + Elasticsearch indexer for PubChem SDF dumps. It was never released as a
 package.
 
+[2.0.1]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.0.1
 [2.0.0]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.0.0
