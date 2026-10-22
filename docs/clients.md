@@ -64,7 +64,7 @@ settings. The sections below give the exact config for each client someone has t
 | Claude Code | Documented | [README](https://github.com/MysterionRise/pubchem-finder#use-it-from-claude) |
 | Claude Desktop | Documented | [README](https://github.com/MysterionRise/pubchem-finder#use-it-from-claude) |
 | Cursor | Not tried yet | Help wanted: [#24](https://github.com/MysterionRise/pubchem-finder/issues/24) |
-| VS Code (GitHub Copilot agent mode) | Not tried yet | Help wanted: [#25](https://github.com/MysterionRise/pubchem-finder/issues/25) |
+| VS Code (GitHub Copilot agent mode) | Tested (VS Code 1.142.0, Windows 11) | [docs/clients.md](#vs-code-github-copilot)  |
 | Windsurf | Not tried yet | Help wanted: [#26](https://github.com/MysterionRise/pubchem-finder/issues/26) |
 | Zed | Not tried yet | Help wanted: [#27](https://github.com/MysterionRise/pubchem-finder/issues/27) |
 | JetBrains IDEs (AI Assistant) | Not tried yet | Help wanted: [#28](https://github.com/MysterionRise/pubchem-finder/issues/28) |
@@ -107,3 +107,26 @@ All of this is tracked in [#23](https://github.com/MysterionRise/pubchem-finder/
 
 The checks in CI don't cover client setups, so a short, exact section from someone who has
 run it is what helps the next person most.
+
+### VS Code (GitHub Copilot)
+
+Tested with VS Code 1.142.0 and GitHub Copilot Chat 0.41 on Windows 11 26H2, pubchem-finder 2.0.1.
+
+Config file: `.vscode/mcp.json` in the workspace (created by the **MCP: Add Server** command, or by hand).
+
+```json
+{
+  "servers": {
+    "pubchem-finder": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["pubchem-finder", "mcp"]
+    }
+  }
+}
+```
+
+Pictures from `draw_molecules`: not shown. The model replied "[Generated image shown above]", but no image appeared in the chat.
+
+Notes:
+- Starting the server from `mcp.json` right after creating it failed with "Cannot start an MCP server before the session runtime has been created. Send a message first." Sending any message in an agent-mode chat first fixed it.
