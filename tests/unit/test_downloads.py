@@ -67,7 +67,10 @@ def test_download_verifies_checksum(api, mirror, tmp_path):
 
 
 def test_checksum_mismatch(api, mirror, tmp_path):
-    api.get(URL + NAME).respond(200, content=PAYLOAD[:-1] + b"x")
+    # Flip the last byte: replacing it with a fixed byte is a no-op whenever the
+    # random payload already ends in that byte.
+    corrupt = PAYLOAD[:-1] + bytes([PAYLOAD[-1] ^ 0xFF])
+    api.get(URL + NAME).respond(200, content=corrupt)
     with pytest.raises(DownloadError, match="Checksum mismatch"):
         mirror.download(NAME, tmp_path)
     assert list(tmp_path.iterdir()) == []
