@@ -213,9 +213,9 @@ scales those numbers to PubChem's roughly 120 million compounds and is an estima
 | Substructure search (optional) | 169 s more to build, 88 MB file, 121 MB RAM | ~1.5 h on 8 cores, ~24 GB file, ~33 GB RAM |
 | Free disk while building | small | ~45 GB, plus ~50 GB with substructure search |
 
-Query times on the first chunk (GitHub runner): a similarity search takes about 3 ms in
-memory and 0.12 s on disk; a 50-hit substructure search 35-50 ms in memory and 0.3 s on
-disk. The first query also loads the index, which takes well under a second at this size.
+Query times on the first chunk (GitHub runner): the similarity scan takes about 3 ms in
+memory and 0.12 s on disk, and fetching names and SMILES for 40 hits brings a full call to
+about 60 ms; a 50-hit substructure search takes 35-50 ms in memory and 0.3 s on disk. The first query also loads the index, which takes well under a second at this size.
 Screening time grows roughly linearly with the size of the index.
 
 The index is searched in memory when it fits comfortably in available RAM and from disk
@@ -297,6 +297,9 @@ uv run python scripts/smoke.py --live  # every MCP tool through the real stdio s
 The animation at the top is drawn from a real index by `scripts/demo_media.py`
 (`collect` runs the searches and times them, `render` writes the GIF and MP4); its
 docstring has the exact commands, and the real-data workflow renders it on every run.
+`docs/media/demo-data.json` holds the results behind the current animation, so
+`uv run python scripts/demo_media.py render docs/media/demo-data.json -o docs/media`
+redraws it without an index.
 
 CI runs the tests on Linux, macOS and Windows, smoke-tests the built wheel on all three,
 and runs the live PubChem tests weekly. See [CONTRIBUTING](https://github.com/MysterionRise/pubchem-finder/blob/master/.github/CONTRIBUTING.md),

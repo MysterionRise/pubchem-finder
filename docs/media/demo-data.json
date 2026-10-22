@@ -1,0 +1,644 @@
+{
+ "query_name": "aspirin",
+ "smarts_name": "aryl sulfonamide",
+ "similarity": {
+  "query_smiles": "CC(=O)Oc1ccccc1C(=O)O",
+  "threshold": 0.6,
+  "metric": "tanimoto",
+  "fingerprint": "Morgan fpSize=1024 radius=2",
+  "n_indexed": 444794,
+  "hits": [
+   {
+    "cid": 2244,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)O",
+    "inchikey": "BSYNRYMUTXBXSQ-UHFFFAOYSA-N",
+    "iupac_name": "2-acetyloxybenzoic acid",
+    "molecular_formula": "C9H8O4",
+    "molecular_weight": 180.16,
+    "similarity": 1.0,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/2244"
+   },
+   {
+    "cid": 450661,
+    "smiles": "CC(=O)OC1=CC=CC=C1[11C](=O)O",
+    "inchikey": "BSYNRYMUTXBXSQ-RVRFMXCPSA-N",
+    "iupac_name": "2-acetyloxy(11C)benzoic acid",
+    "molecular_formula": "C9H8O4",
+    "molecular_weight": 179.16,
+    "similarity": 1.0,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/450661"
+   },
+   {
+    "cid": 171511,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)O.[O-2].[Mg+2]",
+    "inchikey": "QHPPXJQZHUIPHE-UHFFFAOYSA-N",
+    "iupac_name": "magnesium;2-acetyloxybenzoic acid;oxygen(2-)",
+    "molecular_formula": "C9H8MgO5",
+    "molecular_weight": 220.46,
+    "similarity": 0.9231,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/171511"
+   },
+   {
+    "cid": 162666,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)O.C(=O)(N)N",
+    "inchikey": "NZZLTKHBCHMMOJ-UHFFFAOYSA-N",
+    "iupac_name": "2-acetyloxybenzoic acid;urea",
+    "molecular_formula": "C10H12N2O5",
+    "molecular_weight": 240.21,
+    "similarity": 0.8889,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/162666"
+   },
+   {
+    "cid": 10745,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)OC2=CC=CC=C2C(=O)O",
+    "inchikey": "DDSFKIFGAPZBSR-UHFFFAOYSA-N",
+    "iupac_name": "2-(2-acetyloxybenzoyl)oxybenzoic acid",
+    "molecular_formula": "C16H12O6",
+    "molecular_weight": 300.26,
+    "similarity": 0.8571,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/10745"
+   },
+   {
+    "cid": 16716,
+    "smiles": "CC(=O)C1=CC=CC=C1OC(=O)C",
+    "inchikey": "WWEDAIJJBDFOOK-UHFFFAOYSA-N",
+    "iupac_name": "(2-acetylphenyl) acetate",
+    "molecular_formula": "C10H10O3",
+    "molecular_weight": 178.18,
+    "similarity": 0.7407,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/16716"
+   },
+   {
+    "cid": 68093,
+    "smiles": "CC(=O)OC1=CC=CC(=C1OC(=O)C)C(=O)O",
+    "inchikey": "NYIZXMGNIUSNKL-UHFFFAOYSA-N",
+    "iupac_name": "2,3-diacetyloxybenzoic acid",
+    "molecular_formula": "C11H10O6",
+    "molecular_weight": 238.19,
+    "similarity": 0.7,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/68093"
+   },
+   {
+    "cid": 198203,
+    "smiles": "CC(=C)C(=O)OC1=CC=CC=C1C(=O)O",
+    "inchikey": "QFPKSTNFHFEHJL-UHFFFAOYSA-N",
+    "iupac_name": "2-(2-methylprop-2-enoyloxy)benzoic acid",
+    "molecular_formula": "C11H10O4",
+    "molecular_weight": 206.19,
+    "similarity": 0.7,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/198203"
+   },
+   {
+    "cid": 15110,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)OC(=O)C2=CC=CC=C2OC(=O)C",
+    "inchikey": "OAWXYINGQXLWOE-UHFFFAOYSA-N",
+    "iupac_name": "(2-acetyloxybenzoyl) 2-acetyloxybenzoate",
+    "molecular_formula": "C18H14O7",
+    "molecular_weight": 342.3,
+    "similarity": 0.6897,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/15110"
+   },
+   {
+    "cid": 79668,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)Cl",
+    "inchikey": "DSGKWFGEUBCEIE-UHFFFAOYSA-N",
+    "iupac_name": "(2-carbonochloridoylphenyl) acetate",
+    "molecular_formula": "C9H7ClO3",
+    "molecular_weight": 198.6,
+    "similarity": 0.6897,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/79668"
+   },
+   {
+    "cid": 79747,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)N",
+    "inchikey": "KGHXFBVYXDFJGG-UHFFFAOYSA-N",
+    "iupac_name": "(2-carbamoylphenyl) acetate",
+    "molecular_formula": "C9H9NO3",
+    "molecular_weight": 179.17,
+    "similarity": 0.6897,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/79747"
+   },
+   {
+    "cid": 83966,
+    "smiles": "CC(=O)NC1=CC=C(C=C1)O.CC(=O)OC1=CC=CC=C1C(=O)O",
+    "inchikey": "ZDPCIXZONVNODH-UHFFFAOYSA-N",
+    "iupac_name": "2-acetyloxybenzoic acid;N-(4-hydroxyphenyl)acetamide",
+    "molecular_formula": "C17H17NO6",
+    "molecular_weight": 331.32,
+    "similarity": 0.6857,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/83966"
+   },
+   {
+    "cid": 12479,
+    "smiles": "CC(=O)OC1=CC=CC=C1OC(=O)C",
+    "inchikey": "FBSAITBEAPNWJG-UHFFFAOYSA-N",
+    "iupac_name": "(2-acetyloxyphenyl) acetate",
+    "molecular_formula": "C10H10O4",
+    "molecular_weight": 194.18,
+    "similarity": 0.68,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/12479"
+   },
+   {
+    "cid": 67256,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)OC2=CC=CC=C2",
+    "inchikey": "PSBAIJVSCTZDDB-UHFFFAOYSA-N",
+    "iupac_name": "phenyl 2-acetyloxybenzoate",
+    "molecular_formula": "C15H12O4",
+    "molecular_weight": 256.25,
+    "similarity": 0.6774,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/67256"
+   },
+   {
+    "cid": 458212,
+    "smiles": "CC(=O)OC1=CC=CC2=C1C=CC=C2C(=O)O",
+    "inchikey": "WDCVVRPXMOAZLY-UHFFFAOYSA-N",
+    "iupac_name": "5-acetyloxynaphthalene-1-carboxylic acid",
+    "molecular_formula": "C13H10O4",
+    "molecular_weight": 230.22,
+    "similarity": 0.6774,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/458212"
+   },
+   {
+    "cid": 6247,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)[O-].CC(=O)OC1=CC=CC=C1C(=O)[O-].[Ca+2]",
+    "inchikey": "KRALOLGXHLZTCW-UHFFFAOYSA-L",
+    "iupac_name": "calcium bis(2-acetyloxybenzoate)",
+    "molecular_formula": "C18H14CaO8",
+    "molecular_weight": 398.4,
+    "similarity": 0.6667,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/6247"
+   },
+   {
+    "cid": 8591,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)[O-].CC(=O)OC1=CC=CC=C1C(=O)[O-].[Mg+2]",
+    "inchikey": "RBLKLJDYAHZCFW-UHFFFAOYSA-L",
+    "iupac_name": "magnesium bis(2-acetyloxybenzoate)",
+    "molecular_formula": "C18H14MgO8",
+    "molecular_weight": 382.6,
+    "similarity": 0.6667,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/8591"
+   },
+   {
+    "cid": 26579,
+    "smiles": "COC(=O)OC1=CC=CC=C1C(=O)O",
+    "inchikey": "IIHSMXMTENPGDE-UHFFFAOYSA-N",
+    "iupac_name": "2-methoxycarbonyloxybenzoic acid",
+    "molecular_formula": "C9H8O5",
+    "molecular_weight": 196.16,
+    "similarity": 0.6667,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/26579"
+   },
+   {
+    "cid": 31869,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)[O-].CC(=O)OC1=CC=CC=C1C(=O)[O-].[Cu+2]",
+    "inchikey": "CMDYHTIDHSNRGW-UHFFFAOYSA-L",
+    "iupac_name": "copper bis(2-acetyloxybenzoate)",
+    "molecular_formula": "C18H14CuO8",
+    "molecular_weight": 421.8,
+    "similarity": 0.6667,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/31869"
+   },
+   {
+    "cid": 31895,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)[O-].[Al+3]",
+    "inchikey": "QKGAGWLXMWCWGF-UHFFFAOYSA-M",
+    "iupac_name": "aluminum 2-acetyloxybenzoate",
+    "molecular_formula": "C9H7AlO4+2",
+    "molecular_weight": 206.13,
+    "similarity": 0.6667,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/31895"
+   },
+   {
+    "cid": 68484,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)OC",
+    "inchikey": "ONWPLBKWMAUFGZ-UHFFFAOYSA-N",
+    "iupac_name": "methyl 2-acetyloxybenzoate",
+    "molecular_formula": "C10H10O4",
+    "molecular_weight": 194.18,
+    "similarity": 0.6667,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/68484"
+   },
+   {
+    "cid": 92244,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)[O-].CC(=O)OC1=CC=CC=C1C(=O)[O-].CC(=O)OC1=CC=CC=C1C(=O)[O-].CC(=O)OC1=CC=CC=C1C(=O)[O-].[Cu+2].[Cu+2]",
+    "inchikey": "BXBJCCCIFADZBU-UHFFFAOYSA-J",
+    "iupac_name": "dicopper;tetrakis(2-acetyloxybenzoate)",
+    "molecular_formula": "C36H28Cu2O16",
+    "molecular_weight": 843.7,
+    "similarity": 0.6667,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/92244"
+   },
+   {
+    "cid": 155576,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)[O-].CC(=O)OC1=CC=CC=C1C(=O)[O-].[Zn+2]",
+    "inchikey": "QERFJLRDDKQIKF-UHFFFAOYSA-L",
+    "iupac_name": "zinc bis(2-acetyloxybenzoate)",
+    "molecular_formula": "C18H14O8Zn",
+    "molecular_weight": 423.7,
+    "similarity": 0.6667,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/155576"
+   },
+   {
+    "cid": 162733,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)O.C(C(=O)[O-])N.C(=O)([O-])[O-].[OH-].[OH-].[Mg+2].[Al+3]",
+    "inchikey": "BRJPWEPTDCKYHE-UHFFFAOYSA-I",
+    "iupac_name": "aluminum;magnesium;2-acetyloxybenzoic acid;2-aminoacetate;carbonate;dihydroxide",
+    "molecular_formula": "C12H14AlMgNO11",
+    "molecular_weight": 399.53,
+    "similarity": 0.6667,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/162733"
+   },
+   {
+    "cid": 301958,
+    "smiles": "CC(=CC(=O)OC1=CC=CC=C1C(=O)O)C",
+    "inchikey": "SRLLSDWMSFOSGY-UHFFFAOYSA-N",
+    "iupac_name": "2-(3-methylbut-2-enoyloxy)benzoic acid",
+    "molecular_formula": "C12H12O4",
+    "molecular_weight": 220.22,
+    "similarity": 0.6562,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/301958"
+   },
+   {
+    "cid": 236699,
+    "smiles": "C1=CC=C(C(=C1)C(=O)O)OC(=O)N",
+    "inchikey": "MPWFZAIENRGAOK-UHFFFAOYSA-N",
+    "iupac_name": "2-carbamoyloxybenzoic acid",
+    "molecular_formula": "C8H7NO4",
+    "molecular_weight": 181.15,
+    "similarity": 0.6552,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/236699"
+   },
+   {
+    "cid": 95938,
+    "smiles": "CCC(=O)OC1=CC=CC=C1C(=O)O",
+    "inchikey": "MDLKHAVFIDFTBO-UHFFFAOYSA-N",
+    "iupac_name": "2-propanoyloxybenzoic acid",
+    "molecular_formula": "C10H10O4",
+    "molecular_weight": 194.18,
+    "similarity": 0.6452,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/95938"
+   },
+   {
+    "cid": 351615,
+    "smiles": "CC(=O)OC1=CC=CC=C1C(=O)NC",
+    "inchikey": "HMNLBQZCXMPNEW-UHFFFAOYSA-N",
+    "iupac_name": "[2-(methylcarbamoyl)phenyl] acetate",
+    "molecular_formula": "C10H11NO3",
+    "molecular_weight": 193.2,
+    "similarity": 0.6452,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/351615"
+   },
+   {
+    "cid": 11370,
+    "smiles": "COC1=CC=CC=C1C(=O)O",
+    "inchikey": "ILUJQPXNXACGAN-UHFFFAOYSA-N",
+    "iupac_name": "2-methoxybenzoic acid",
+    "molecular_formula": "C8H8O3",
+    "molecular_weight": 152.15,
+    "similarity": 0.6429,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/11370"
+   },
+   {
+    "cid": 450655,
+    "smiles": "COC1=CC=CC=C1[11C](=O)O",
+    "inchikey": "ILUJQPXNXACGAN-COJKEBBMSA-N",
+    "iupac_name": "2-methoxy(11C)benzoic acid",
+    "molecular_formula": "C8H8O3",
+    "molecular_weight": 151.15,
+    "similarity": 0.6429,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/450655"
+   },
+   {
+    "cid": 241580,
+    "smiles": "CC(=O)OC1=C(C=C(C=C1)C2=CC=CC=C2)C(=O)O",
+    "inchikey": "MDDJDQPZGOGYRZ-UHFFFAOYSA-N",
+    "iupac_name": "2-acetyloxy-5-phenylbenzoic acid",
+    "molecular_formula": "C15H12O4",
+    "molecular_weight": 256.25,
+    "similarity": 0.6364,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/241580"
+   },
+   {
+    "cid": 65042,
+    "smiles": "C1=CC=C(C(=C1)C(=O)O)OC(=O)CCC(=O)OC2=CC=CC=C2C(=O)O",
+    "inchikey": "PREOBXYMXLETCA-UHFFFAOYSA-N",
+    "iupac_name": "2-[4-(2-carboxyphenoxy)-4-oxobutanoyl]oxybenzoic acid",
+    "molecular_formula": "C18H14O8",
+    "molecular_weight": 358.3,
+    "similarity": 0.6333,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/65042"
+   },
+   {
+    "cid": 78331,
+    "smiles": "C1=CC=C(C=C1)C(=O)OC2=CC=CC=C2C(=O)O",
+    "inchikey": "QSOVSKMNRYAVJR-UHFFFAOYSA-N",
+    "iupac_name": "2-benzoyloxybenzoic acid",
+    "molecular_formula": "C14H10O4",
+    "molecular_weight": 242.23,
+    "similarity": 0.6333,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/78331"
+   },
+   {
+    "cid": 423920,
+    "smiles": "C1=CC=C(C(=C1)C(=O)O)OC2=CC=CC=C2C(=O)O",
+    "inchikey": "UOFDVLCOMURSTA-UHFFFAOYSA-N",
+    "iupac_name": "2-(2-carboxyphenoxy)benzoic acid",
+    "molecular_formula": "C14H10O5",
+    "molecular_weight": 258.23,
+    "similarity": 0.6296,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/423920"
+   },
+   {
+    "cid": 232038,
+    "smiles": "CC(=O)OC1=CC2=CC=CC=C2C=C1C(=O)O",
+    "inchikey": "DXBBERBOYNPPLM-UHFFFAOYSA-N",
+    "iupac_name": "3-acetyloxynaphthalene-2-carboxylic acid",
+    "molecular_formula": "C13H10O4",
+    "molecular_weight": 230.22,
+    "similarity": 0.625,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/232038"
+   },
+   {
+    "cid": 214692,
+    "smiles": "CC(=O)OC1=CC=CC=CC1=O",
+    "inchikey": "RCRHNSUOQUMQQV-UHFFFAOYSA-N",
+    "iupac_name": "(7-oxocyclohepta-1,3,5-trien-1-yl) acetate",
+    "molecular_formula": "C9H8O3",
+    "molecular_weight": 164.16,
+    "similarity": 0.6207,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/214692"
+   },
+   {
+    "cid": 425754,
+    "smiles": "COC1=CC=CC=C1C(=O)O.COC1=CC=CC=C1C(=O)O.[Ni]",
+    "inchikey": "QRCAALZWUFKRIE-UHFFFAOYSA-N",
+    "iupac_name": "bis(2-methoxybenzoic acid);nickel",
+    "molecular_formula": "C16H16NiO6",
+    "molecular_weight": 362.99,
+    "similarity": 0.6207,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/425754"
+   },
+   {
+    "cid": 5161,
+    "smiles": "C1=CC=C(C(=C1)C(=O)OC2=CC=CC=C2C(=O)O)O",
+    "inchikey": "WVYADZUPLLSGPU-UHFFFAOYSA-N",
+    "iupac_name": "2-(2-hydroxybenzoyl)oxybenzoic acid",
+    "molecular_formula": "C14H10O5",
+    "molecular_weight": 258.23,
+    "similarity": 0.6129,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/5161"
+   },
+   {
+    "cid": 73922,
+    "smiles": "CC(=O)OC1=C(C=C(C=C1)Br)C(=O)O",
+    "inchikey": "VRJBEVQGJOSGOX-UHFFFAOYSA-N",
+    "iupac_name": "2-acetyloxy-5-bromobenzoic acid",
+    "molecular_formula": "C9H7BrO4",
+    "molecular_weight": 259.05,
+    "similarity": 0.6129,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/73922"
+   },
+   {
+    "cid": 223348,
+    "smiles": "CC(=O)OC1=CC(=C(C=C1)C(=O)O)OC(=O)C",
+    "inchikey": "GZVIEFAFWBQDLQ-UHFFFAOYSA-N",
+    "iupac_name": "2,4-diacetyloxybenzoic acid",
+    "molecular_formula": "C11H10O6",
+    "molecular_weight": 238.19,
+    "similarity": 0.6129,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/223348"
+   }
+  ],
+  "scaffolds": null,
+  "top_k": 40
+ },
+ "substructure": {
+  "query": "[NX3][SX4](=O)(=O)c",
+  "query_type": "smarts",
+  "n_indexed": 444793,
+  "n_candidates": 29102,
+  "n_checked": 43,
+  "exhaustive": false,
+  "hits": [
+   {
+    "cid": 1199,
+    "smiles": "CC1=CC=C(C=C1)S(=O)(=O)N(CC(=O)O)C2=CC(=CC=C2)Cl",
+    "inchikey": "JLTQNQSARCUPGB-UHFFFAOYSA-N",
+    "iupac_name": "2-(3-chloro-N-(4-methylphenyl)sulfonylanilino)acetic acid",
+    "molecular_formula": "C15H14ClNO4S",
+    "molecular_weight": 339.8,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1199"
+   },
+   {
+    "cid": 1259,
+    "smiles": "CC(C)CCN(CC(C1CC2=CC=C(C=C2)OCCCCCC(=O)NC(C(=O)N1)C(C)C)O)S(=O)(=O)C3=CC=C(C=C3)N",
+    "inchikey": "FBNSKSOTNMECSA-UHFFFAOYSA-N",
+    "iupac_name": "4-amino-N-[2-(8,11-dioxo-10-propan-2-yl-2-oxa-9,12-diazabicyclo[13.2.2]nonadeca-1(17),15,18-trien-13-yl)-2-hydroxyethyl]-N-(3-methylbutyl)benzenesulfonamide",
+    "molecular_formula": "C32H48N4O6S",
+    "molecular_weight": 616.8,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1259"
+   },
+   {
+    "cid": 1260,
+    "smiles": "CCCCOC1=CC=C(C=C1)S(=O)(=O)N2CC(CC2C(=O)NO)NS(=O)(=O)C",
+    "inchikey": "ULDXUWXTVRRUND-UHFFFAOYSA-N",
+    "iupac_name": "1-(4-butoxyphenyl)sulfonyl-N-hydroxy-4-(methanesulfonamido)pyrrolidine-2-carboxamide",
+    "molecular_formula": "C16H25N3O7S2",
+    "molecular_weight": 435.5,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1260"
+   },
+   {
+    "cid": 1272,
+    "smiles": "CCC(C=O)C(CNS(=O)(=O)C1=CC=C(C=C1)C)C(=O)O",
+    "inchikey": "IDDWUPNJUMHKFQ-UHFFFAOYSA-N",
+    "iupac_name": "3-formyl-2-[[(4-methylphenyl)sulfonylamino]methyl]pentanoic acid",
+    "molecular_formula": "C14H19NO5S",
+    "molecular_weight": 313.37,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1272"
+   },
+   {
+    "cid": 1273,
+    "smiles": "CCC(C=O)C(CNS(=O)(=O)C1=CC=C(C=C1)[N+](=O)[O-])C(=O)O",
+    "inchikey": "JPQYVEFTAZEPOD-UHFFFAOYSA-N",
+    "iupac_name": "3-formyl-2-[[(4-nitrophenyl)sulfonylamino]methyl]pentanoic acid",
+    "molecular_formula": "C13H16N2O7S",
+    "molecular_weight": 344.34,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1273"
+   },
+   {
+    "cid": 1276,
+    "smiles": "CCC1C(N(C1=O)S(=O)(=O)C2=CC=C(C=C2)C)C(=O)O",
+    "inchikey": "QWRJBKGTEVHFRI-UHFFFAOYSA-N",
+    "iupac_name": "3-ethyl-1-(4-methylphenyl)sulfonyl-4-oxoazetidine-2-carboxylic acid",
+    "molecular_formula": "C13H15NO5S",
+    "molecular_weight": 297.33,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1276"
+   },
+   {
+    "cid": 1280,
+    "smiles": "CC1CC(C2=C(S1(=O)=O)SC(=C2)S(=O)(=O)N)NC",
+    "inchikey": "PYXFWOIZPYXNRU-UHFFFAOYSA-N",
+    "iupac_name": "6-methyl-4-(methylamino)-7,7-dioxo-5,6-dihydro-4H-thieno[2,3-b]thiopyran-2-sulfonamide",
+    "molecular_formula": "C9H14N2O4S3",
+    "molecular_weight": 310.4,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1280"
+   },
+   {
+    "cid": 1291,
+    "smiles": "CCNC1CN(S(=O)(=O)C2=C1C=C(S2)S(=O)(=O)N)CCOC",
+    "inchikey": "XACIEZJJSXJZMD-UHFFFAOYSA-N",
+    "iupac_name": "4-(ethylamino)-2-(2-methoxyethyl)-1,1-dioxo-3,4-dihydrothieno[3,2-e]thiazine-6-sulfonamide",
+    "molecular_formula": "C11H19N3O5S3",
+    "molecular_weight": 369.5,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1291"
+   },
+   {
+    "cid": 1296,
+    "smiles": "CNC1CN(S(=O)(=O)C2=C1C=C(S2)S(=O)(=O)N)C3=CC(=CC=C3)OC",
+    "inchikey": "RMOXCYSVWCHXII-UHFFFAOYSA-N",
+    "iupac_name": "2-(3-methoxyphenyl)-4-(methylamino)-1,1-dioxo-3,4-dihydrothieno[3,2-e]thiazine-6-sulfonamide",
+    "molecular_formula": "C14H17N3O5S3",
+    "molecular_weight": 403.5,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1296"
+   },
+   {
+    "cid": 1352,
+    "smiles": "CC1CN(CCN1)S(=O)(=O)C2=CC=CC3=C2C=CN=C3",
+    "inchikey": "QGSCXAWTTISKLF-UHFFFAOYSA-N",
+    "iupac_name": "5-(3-methylpiperazin-1-yl)sulfonylisoquinoline",
+    "molecular_formula": "C14H17N3O2S",
+    "molecular_weight": 291.37,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1352"
+   },
+   {
+    "cid": 1357,
+    "smiles": "CC(C)CC(C1=CC=CC(=C1)C2=CC=CC=C2)C(=O)NCC(CNS(=O)(=O)C3=CC=CC=N3)O",
+    "inchikey": "YCDHZDINQZLSRR-UHFFFAOYSA-N",
+    "iupac_name": "N-[2-hydroxy-3-(pyridin-2-ylsulfonylamino)propyl]-4-methyl-2-(3-phenylphenyl)pentanamide",
+    "molecular_formula": "C26H31N3O4S",
+    "molecular_weight": 481.6,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1357"
+   },
+   {
+    "cid": 1361,
+    "smiles": "CC(C)CC(C(=O)NCC(CNS(=O)(=O)C1=CC=C(C=C1)OC2=CC=CC=C2)O)NC(=O)C3=CC=NC=C3",
+    "inchikey": "RNXGMLBGKGGGPZ-UHFFFAOYSA-N",
+    "iupac_name": "N-[1-[[2-hydroxy-3-[(4-phenoxyphenyl)sulfonylamino]propyl]amino]-4-methyl-1-oxopentan-2-yl]pyridine-4-carboxamide",
+    "molecular_formula": "C27H32N4O6S",
+    "molecular_weight": 540.6,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1361"
+   },
+   {
+    "cid": 1371,
+    "smiles": "COC1=CC=C(C=C1)S(=O)(=O)N2CN(C(=O)CC2C(=O)NO)CC3=CC=CC=C3",
+    "inchikey": "SUSMVCKSLVPRCL-UHFFFAOYSA-N",
+    "iupac_name": "1-benzyl-N-hydroxy-3-(4-methoxyphenyl)sulfonyl-6-oxo-1,3-diazinane-4-carboxamide",
+    "molecular_formula": "C19H21N3O6S",
+    "molecular_weight": 419.5,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1371"
+   },
+   {
+    "cid": 1387,
+    "smiles": "CN1C2=C(C=C(C=C2)S(=O)(=O)N)C(=O)S1",
+    "inchikey": "DFPYCCVFXMWMJM-UHFFFAOYSA-N",
+    "iupac_name": "1-methyl-3-oxo-2,1-benzothiazole-5-sulfonamide",
+    "molecular_formula": "C8H8N2O3S2",
+    "molecular_weight": 244.3,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1387"
+   },
+   {
+    "cid": 1389,
+    "smiles": "CN1C2=C(C=C(C=C2)S(=O)(=O)N3CCCC3COC4=CC=CC=C4)C(=O)C1=O",
+    "inchikey": "PFAYCUAUBOGVDX-UHFFFAOYSA-N",
+    "iupac_name": "1-methyl-5-[2-(phenoxymethyl)pyrrolidin-1-yl]sulfonylindole-2,3-dione",
+    "molecular_formula": "C20H20N2O5S",
+    "molecular_weight": 400.4,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1389"
+   },
+   {
+    "cid": 1396,
+    "smiles": "C1=CC(=CC=C1C2=CC(=NN2C3=CC=C(C=C3)S(=O)(=O)N)C(F)(F)F)Br",
+    "inchikey": "OYZKFVIVPRQRQQ-UHFFFAOYSA-N",
+    "iupac_name": "4-[5-(4-bromophenyl)-3-(trifluoromethyl)pyrazol-1-yl]benzenesulfonamide",
+    "molecular_formula": "C16H11BrF3N3O2S",
+    "molecular_weight": 446.2,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1396"
+   },
+   {
+    "cid": 1475,
+    "smiles": "B(C1=CC(=CC=C1)NS(=O)(=O)C2=CC(=CS2)S(=O)(=O)C3=CC=CC=C3)(O)O",
+    "inchikey": "YZOKHYPIQNIFRQ-UHFFFAOYSA-N",
+    "iupac_name": "[3-[[4-(benzenesulfonyl)thiophen-2-yl]sulfonylamino]phenyl]boronic acid",
+    "molecular_formula": "C16H14BNO6S3",
+    "molecular_weight": 423.3,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1475"
+   },
+   {
+    "cid": 1492,
+    "smiles": "COC1=CC=C(C=C1)S(=O)(=O)NC2=C(C=CC(=C2)[N+](=O)[O-])OC",
+    "inchikey": "KFMJDJOTJHGYCD-UHFFFAOYSA-N",
+    "iupac_name": "4-methoxy-N-(2-methoxy-5-nitrophenyl)benzenesulfonamide",
+    "molecular_formula": "C14H14N2O6S",
+    "molecular_weight": 338.34,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1492"
+   },
+   {
+    "cid": 1514,
+    "smiles": "COC1=CC=CC(=C1)N2C=CC3=C(S2(=O)=O)SC(=C3)S(=O)(=O)N",
+    "inchikey": "FBBLOSCXOZYUSS-UHFFFAOYSA-N",
+    "iupac_name": "2-(3-methoxyphenyl)-1,1-dioxothieno[3,2-e]thiazine-6-sulfonamide",
+    "molecular_formula": "C13H12N2O5S3",
+    "molecular_weight": 372.4,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1514"
+   },
+   {
+    "cid": 1538,
+    "smiles": "CC1(OCCO1)CN(C)S(=O)(=O)C2=CC=CC=C2N",
+    "inchikey": "BOKFQBCWYCCRIG-UHFFFAOYSA-N",
+    "iupac_name": "2-amino-N-methyl-N-[(2-methyl-1,3-dioxolan-2-yl)methyl]benzenesulfonamide",
+    "molecular_formula": "C12H18N2O4S",
+    "molecular_weight": 286.35,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1538"
+   },
+   {
+    "cid": 1559,
+    "smiles": "CCOC(=O)CN(C1=CC=CC=C1C(=O)OC)S(=O)(=O)C2=CC=C(C=C2)C",
+    "inchikey": "BQRYIDLLMHALEC-UHFFFAOYSA-N",
+    "iupac_name": "methyl 2-[(2-ethoxy-2-oxoethyl)-(4-methylphenyl)sulfonylamino]benzoate",
+    "molecular_formula": "C19H21NO6S",
+    "molecular_weight": 391.4,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1559"
+   },
+   {
+    "cid": 1604,
+    "smiles": "COC1=CC=CC(=C1)N2CCC3=C(S2(=O)=O)SC(=C3)S(=O)(=O)N",
+    "inchikey": "ICIXQGGQPKFQRL-UHFFFAOYSA-N",
+    "iupac_name": "2-(3-methoxyphenyl)-1,1-dioxo-3,4-dihydrothieno[3,2-e]thiazine-6-sulfonamide",
+    "molecular_formula": "C13H14N2O5S3",
+    "molecular_weight": 374.5,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1604"
+   },
+   {
+    "cid": 1611,
+    "smiles": "C1C(C2=C(SC(=C2)S(=O)(=O)N)S(=O)(=O)N1CC3=CC=CS3)O",
+    "inchikey": "HHPUQNGRNUOYCD-UHFFFAOYSA-N",
+    "iupac_name": "4-hydroxy-1,1-dioxo-2-(thiophen-2-ylmethyl)-3,4-dihydrothieno[3,2-e]thiazine-6-sulfonamide",
+    "molecular_formula": "C11H12N2O5S4",
+    "molecular_weight": 380.5,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1611"
+   },
+   {
+    "cid": 1612,
+    "smiles": "COC1=CC=C(C=C1)N2CC(C3=C(S2(=O)=O)SC(=C3)S(=O)(=O)N)O",
+    "inchikey": "ZWTSOJQGEWPWGO-UHFFFAOYSA-N",
+    "iupac_name": "4-hydroxy-2-(4-methoxyphenyl)-1,1-dioxo-3,4-dihydrothieno[3,2-e]thiazine-6-sulfonamide",
+    "molecular_formula": "C13H14N2O6S3",
+    "molecular_weight": 390.5,
+    "pubchem_url": "https://pubchem.ncbi.nlm.nih.gov/compound/1612"
+   }
+  ],
+  "warning": null
+ },
+ "similarity_ms": 59.6,
+ "substructure_ms": 27.0
+}
