@@ -77,6 +77,9 @@ MCP over stdio, uv + hatchling + ruff, Python 3.11 to 3.13.
 
 ## Next, driven by feedback
 
+- [ ] Tested setups for MCP clients beyond Claude (Cursor, VS Code, Windsurf, Zed,
+      JetBrains, Antigravity / Gemini CLI, Codex CLI, Cline, LM Studio) in
+      [docs/clients.md](docs/clients.md)
 - [ ] List the server in the MCP registry, and ship a one-click Claude Desktop extension
       (`.mcpb`) with each release
 - [ ] A quick demo index (a few thousand well-known compounds via PUG REST), so the first

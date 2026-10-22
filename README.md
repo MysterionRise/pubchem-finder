@@ -83,6 +83,13 @@ server picks it up. To use a non-default data directory, add
 `"env": {"PUBCHEM_FINDER_HOME": "/path"}` to the Claude Desktop entry, or
 `--env PUBCHEM_FINDER_HOME=/path` to `claude mcp add`.
 
+**Other MCP clients:** the server speaks standard MCP over stdio, so any client that runs
+local MCP servers (Cursor, VS Code, Windsurf, Zed, JetBrains IDEs, Codex CLI, LM Studio...)
+can start it with the same command and arguments.
+[docs/clients.md](https://github.com/MysterionRise/pubchem-finder/blob/master/docs/clients.md)
+has the settings, a quick check, and setups people have tested; if you use one of those
+clients, adding yours there is a good first contribution.
+
 ### Tools
 
 | Tool | What it does |
