@@ -25,6 +25,16 @@ Python 3.11, 3.12 and 3.13 are supported and tested in CI.
 3. Run `make check`. CI runs the same commands, so a green local run means a green PR.
 4. Open a pull request. Keep it focused and describe what changed and why.
 
+## Good first contributions
+
+- **Set it up in your MCP client and write down what worked.** The server runs in any
+  client that launches local MCP servers, but only Claude's setup is documented.
+  [docs/clients.md](../docs/clients.md) has the settings, four questions that check the
+  setup, and the format for a new section; no Python changes needed.
+- Issues labelled
+  [good first issue](https://github.com/MysterionRise/pubchem-finder/labels/good%20first%20issue)
+  are scoped to be done in an evening.
+
 ## What CI checks
 
 - **CI** (every push and pull request): lint, format and `mypy --strict` on Linux; the test
