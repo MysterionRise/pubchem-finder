@@ -3,7 +3,7 @@
     "pubchem-finder": {
       "command": "uvx",
       "args": [
-        "pubchem-finder",
+        "pubchem-finder==2.1.0",
         "mcp"
       ]
     }

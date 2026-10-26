@@ -62,6 +62,7 @@ jobs:
               **{f"server.json packages[{i}]": p["version"] for i, p in enumerate(server["packages"])},
               "plugin.json": json.load(open("plugins/pubchem-finder/.claude-plugin/plugin.json"))["version"],
               "marketplace.json": json.load(open(".claude-plugin/marketplace.json"))["plugins"][0]["version"],
+              "plugin .mcp.json": json.load(open("plugins/pubchem-finder/.mcp.json"))["mcpServers"]["pubchem-finder"]["args"][0].removeprefix("pubchem-finder=="),
           }
           if wrong := {k: v for k, v in found.items() if v != version}:
               print(f"::error::not at {version}: {wrong}"); sys.exit(1)
