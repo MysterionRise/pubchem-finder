@@ -1,7 +1,7 @@
 # Roadmap
 
 Decisions: FPSim2 + DuckDB/Parquet as the search backend (no server required),
-MCP over stdio, uv + hatchling + ruff, Python 3.11 to 3.13.
+MCP over stdio (streamable HTTP optional), uv + hatchling + ruff, Python 3.11 to 3.13.
 
 ## Phase 0: repo hygiene (done)
 
@@ -87,4 +87,5 @@ MCP over stdio, uv + hatchling + ruff, Python 3.11 to 3.13.
 - [ ] MCP prompts and resources: a compound dossier prompt, `pubchem://compound/{cid}`
 - [ ] Matched molecular pairs across a hit set (`rdMMPA`)
 - [ ] ADMET predictions as an optional extra (pulls in PyTorch)
-- [ ] Streamable HTTP transport (#33) and a Docker image, if a shared server is wanted
+- [x] Streamable HTTP transport (#33): `pubchem-finder mcp --transport http`
+- [ ] A Docker image, and `--allowed-host` for the HTTP transport, if a shared server is wanted

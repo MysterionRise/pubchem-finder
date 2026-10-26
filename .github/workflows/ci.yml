@@ -92,3 +92,14 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then bin=.smoke/Scripts; else bin=.smoke/bin; fi
           "$bin/python" scripts/smoke.py --command "$bin/pubchem-finder"
+
+      # tests/e2e/test_http.py covers the HTTP transport from the source tree; this
+      # runs the same checks against the installed wheel with the newest dependencies.
+      - name: Smoke test over HTTP
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          .smoke/bin/pubchem-finder mcp --transport http --port 8765 2> http-server.log &
+          trap 'kill $! 2> /dev/null; echo "--- server log ---"; cat http-server.log' EXIT
+          for _ in $(seq 1 90); do curl -fs http://127.0.0.1:8765/health > /dev/null && break; sleep 1; done
+          .smoke/bin/python scripts/smoke.py --url http://127.0.0.1:8765/mcp

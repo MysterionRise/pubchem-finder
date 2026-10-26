@@ -2,6 +2,11 @@
 
     python scripts/smoke.py                          # python -m pubchem_finder, offline checks
     python scripts/smoke.py --command .venv/bin/pubchem-finder --home DIR --live
+    python scripts/smoke.py --url http://127.0.0.1:8000/mcp   # a running HTTP server
+
+With ``--url`` the MCP checks go to that server over streamable HTTP and the CLI
+checks run only if ``--command`` is given too; ``--home`` then just says that the
+server has an index.
 
 Offline checks always run. ``--home`` adds the local-index tools (substructure
 search too, if the index has it); ``--live`` adds the tools that call PubChem.
@@ -26,6 +31,7 @@ from typing import Any
 import anyio
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.streamable_http import streamable_http_client
 
 N_TOOLS = 17
 ASPIRIN = "CC(=O)Oc1ccccc1C(=O)O"
@@ -97,13 +103,22 @@ Verify = Callable[[Any], str]
 
 
 async def run_mcp(
-    smoke: Smoke, command: list[str], env: dict[str, str], home: bool, live: bool
+    smoke: Smoke,
+    command: list[str],
+    env: dict[str, str],
+    home: bool,
+    live: bool,
+    url: str | None = None,
 ) -> None:
-    params = StdioServerParameters(
-        command=command[0], args=[*command[1:], "mcp"], env=env
-    )
+    if url:
+        transport = streamable_http_client(url)
+    else:
+        params = StdioServerParameters(
+            command=command[0], args=[*command[1:], "mcp"], env=env
+        )
+        transport = stdio_client(params)
     async with (
-        stdio_client(params) as (read, write),
+        transport as (read, write),
         ClientSession(read, write) as session,
     ):
 
@@ -297,6 +312,11 @@ def main() -> int:
     parser.add_argument(
         "--live", action="store_true", help="also call the PubChem tools"
     )
+    parser.add_argument(
+        "--url",
+        help="MCP URL of a running `pubchem-finder mcp --transport http` server; "
+        "the MCP checks go there instead of starting a stdio server",
+    )
     args = parser.parse_args()
 
     command = (
@@ -309,8 +329,9 @@ def main() -> int:
         env["PUBCHEM_FINDER_HOME"] = tempfile.mkdtemp(prefix="pubchem-finder-smoke-")
 
     smoke = Smoke()
-    run_cli(smoke, command, env)
-    anyio.run(run_mcp, smoke, command, env, args.home is not None, args.live)
+    if args.command or not args.url:
+        run_cli(smoke, command, env)
+    anyio.run(run_mcp, smoke, command, env, args.home is not None, args.live, args.url)
 
     table = smoke.table()
     print(

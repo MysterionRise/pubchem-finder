@@ -90,6 +90,14 @@ can start it with the same command and arguments.
 has the settings, a quick check, and setups people have tested; if you use one of those
 clients, adding yours there is a good first contribution.
 
+**Over HTTP:** `pubchem-finder mcp --transport http` serves the same tools at
+`http://127.0.0.1:8000/mcp` (MCP streamable HTTP) for clients that connect to a URL
+rather than start a process, and for one shared index on a team machine. For example,
+`claude mcp add --transport http pubchem-finder http://127.0.0.1:8000/mcp`. The server has
+no authentication or TLS of its own: read
+[Over HTTP](https://github.com/MysterionRise/pubchem-finder/blob/master/docs/clients.md#over-http)
+before binding it to anything but `127.0.0.1`.
+
 ### Tools
 
 | Tool | What it does |
@@ -299,6 +307,7 @@ make check         # ruff lint + format check, mypy (strict), pytest with covera
 make test          # just the tests
 PUBCHEM_LIVE=1 uv run pytest -m live   # tests that call the real PubChem services
 uv run python scripts/smoke.py --live  # every MCP tool through the real stdio server
+uv run python scripts/smoke.py --url http://127.0.0.1:8000/mcp  # same, against a running HTTP server
 ```
 
 The animation at the top is drawn from a real index by `scripts/demo_media.py`
@@ -320,7 +329,7 @@ chunks/<chunk>.parquet SMILES --> RDKit pattern fingerprints --> chunks/pattern/
                                                                   (only with --with-substructure)
 pubchem-finder CLI  ----\                 /-> FPSim2 exact similarity (in memory or on disk) + DuckDB over Parquet
                          +--> service ---+--> FPSim2 pattern screen + RDKit atom match (substructure)
-MCP server (stdio) -----/                 \-> PubChem PUG REST / PUG View for live data
+MCP server (stdio|HTTP) /                 \-> PubChem PUG REST / PUG View for live data
 ```
 
 This repository started in 2020 as an Indigo + Elasticsearch indexer for PubChem dumps;

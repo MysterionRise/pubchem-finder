@@ -2,8 +2,10 @@
 
 `pubchem-finder mcp` is a standard [Model Context Protocol](https://modelcontextprotocol.io)
 server over stdio: the client starts it as a local process and talks to it through stdin and
-stdout. Any client that can launch a local (stdio) MCP server can use it, not just Claude. CI
-checks the server with the official MCP Python client on Linux, macOS and Windows.
+stdout. Any client that can launch a local (stdio) MCP server can use it, not just Claude.
+For clients that connect to a URL instead, `pubchem-finder mcp --transport http` serves the
+same tools over streamable HTTP ([Over HTTP](#over-http)). CI checks both transports with
+the official MCP Python client on Linux, macOS and Windows.
 
 This page collects tested setups. Claude Code and Claude Desktop are in the
 [README](https://github.com/MysterionRise/pubchem-finder#use-it-from-claude); for the
@@ -13,7 +15,7 @@ others, [help is welcome](#add-your-client).
 
 | Setting | Value |
 |---|---|
-| Transport | stdio (a local command) |
+| Transport | stdio (a local command); or streamable HTTP, see [Over HTTP](#over-http) |
 | Command | `uvx` (install [uv](https://docs.astral.sh/uv/getting-started/installation/) first) |
 | Arguments | `pubchem-finder`, `mcp` |
 | Environment (optional) | `PUBCHEM_FINDER_HOME=/path` to keep the local index somewhere other than the default data directory |
@@ -75,9 +77,71 @@ settings. The sections below give the exact config for each client someone has t
 
 Using a client that isn't listed? Open an issue or a pull request in the same format.
 
-Web-based clients that only connect to remote servers (for example ChatGPT connectors)
-need an HTTP transport, which pubchem-finder doesn't offer yet ([#33](https://github.com/MysterionRise/pubchem-finder/issues/33)).
-All of this is tracked in [#23](https://github.com/MysterionRise/pubchem-finder/issues/23).
+Clients that only connect to remote servers (web-based chat apps and their connectors)
+need a URL: see [Over HTTP](#over-http). All of this is tracked in
+[#23](https://github.com/MysterionRise/pubchem-finder/issues/23).
+
+## Over HTTP
+
+`pubchem-finder mcp --transport http` serves the same 17 tools over
+[streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http)
+instead of stdio:
+
+```bash
+pubchem-finder mcp --transport http                  # http://127.0.0.1:8000/mcp
+pubchem-finder mcp --transport http --port 8765 --home /data/pubchem-finder
+```
+
+It prints the URL to stderr and answers `GET /health` with its version. The MCP endpoint
+is `/mcp`. Use it when:
+
+- the client connects to a URL rather than starting a process (web-based chat apps,
+  agents running elsewhere);
+- one machine holds the index for a team: everyone points their client at that URL and
+  shares one copy of the index instead of building their own.
+
+Any client that supports streamable HTTP can connect, for example Claude Code with
+`claude mcp add --transport http pubchem-finder http://127.0.0.1:8000/mcp`.
+
+**Check that it works:**
+
+```bash
+curl -s http://127.0.0.1:8000/health
+# {"status":"ok","name":"pubchem-finder","version":"..."}
+uv run python scripts/smoke.py --url http://127.0.0.1:8000/mcp   # every tool, from the repo
+```
+
+**Beyond your own machine.** The server binds to `127.0.0.1` by default and has no
+authentication or TLS of its own. To share it, keep that default and put an HTTPS reverse
+proxy with authentication in front of it (Caddy, nginx, a Cloudflare Tunnel...), then bind
+to the interface the proxy reaches with `--host`. With Caddy, `/etc/caddy/Caddyfile`:
+
+```
+pubchem.example.com {
+    basic_auth {
+        alice <hash from `caddy hash-password`>
+    }
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+Binding to anything but `127.0.0.1` prints a warning. For loopback binds the server
+also rejects requests whose `Host` header is not local (DNS-rebinding protection); for
+other binds it accepts any `Host`, so the proxy is the trust boundary. A Docker image and
+an `--allowed-host` option are on the roadmap if shared servers see use.
+
+**What a shared server shares:**
+
+- **PubChem's rate limit.** Every user's `pubchem_*` request leaves from the server's IP,
+  so they share PubChem's limit of 5 requests per second, and one response cache. The
+  local-index tools (`similarity_search`, `substructure_search`) have no such limit, so a
+  team server is most useful with a large index.
+- **One index in memory.** The first search loads the index; later sessions reuse it.
+  A full-PubChem index takes tens of seconds to load (and about 17 GB of RAM), so expect
+  the first query after a restart to be slow.
+
+Out of scope for now: built-in OAuth, and a Docker image
+([#33](https://github.com/MysterionRise/pubchem-finder/issues/33)).
 
 ## Add your client
 

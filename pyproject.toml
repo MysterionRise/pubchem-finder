@@ -35,6 +35,7 @@ dependencies = [
     "pyarrow>=17",
     "pillow>=10",
     "psutil>=5.9",
+    "starlette>=1",
 ]
 
 [project.scripts]

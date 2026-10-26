@@ -2,7 +2,9 @@
 
 import csv
 import json
+import os
 
+import pytest
 from typer.testing import CliRunner
 
 from pubchem_finder import __version__
@@ -450,3 +452,46 @@ def test_index_build_with_substructure_needs_built_chunks(tmp_path):
     )
     assert result.exit_code == 1
     assert "nothing to finalize" in result.output
+
+
+def test_mcp_command_defaults_to_stdio(monkeypatch):
+    calls: list[dict] = []
+    monkeypatch.setattr("pubchem_finder.mcp_server.main", lambda **kw: calls.append(kw))
+    result = runner.invoke(app, ["mcp"])
+    assert result.exit_code == 0, result.output
+    assert calls == [{"transport": "stdio", "host": "127.0.0.1", "port": 8000}]
+
+
+def test_mcp_command_http_options(monkeypatch, tmp_path):
+    calls: list[dict] = []
+    monkeypatch.setattr("pubchem_finder.mcp_server.main", lambda **kw: calls.append(kw))
+    monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(tmp_path / "unused"))
+    result = runner.invoke(
+        app,
+        [
+            "mcp",
+            "--transport",
+            "http",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "9000",
+            "--home",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert calls == [{"transport": "http", "host": "0.0.0.0", "port": 9000}]
+    assert os.environ["PUBCHEM_FINDER_HOME"] == str(tmp_path.resolve())
+
+
+@pytest.mark.parametrize(
+    "args", [["--transport", "sse"], ["--port", "0"], ["--port", "70000"]]
+)
+def test_mcp_command_rejects_bad_options(monkeypatch, args):
+    monkeypatch.setattr(
+        "pubchem_finder.mcp_server.main",
+        lambda **kw: pytest.fail("the server must not start"),
+    )
+    result = runner.invoke(app, ["mcp", *args])
+    assert result.exit_code == 2

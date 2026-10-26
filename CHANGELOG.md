@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **MCP over streamable HTTP:** `pubchem-finder mcp --transport http [--host 127.0.0.1]
+  [--port 8000]` serves the same 17 tools at `http://HOST:PORT/mcp` for clients that
+  connect to a URL and for one shared index on a team machine. stdio stays the default.
+  `GET /health` reports the version. The server has no authentication or TLS of its own;
+  docs/clients.md, "Over HTTP", explains the reverse-proxy setup and the shared PubChem
+  rate limit ([#33](https://github.com/MysterionRise/pubchem-finder/issues/33)).
+- `pubchem-finder mcp --home DIR`, like the other commands.
+- `scripts/smoke.py --url` runs the MCP checks against a running HTTP server; CI does so
+  with the installed wheel, and an end-to-end test starts the HTTP server on Linux, macOS
+  and Windows.
+
 ### Changed
 
 - PubChem's similarity and substructure hits are now re-scored with the local index's
