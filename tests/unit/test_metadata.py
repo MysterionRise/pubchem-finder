@@ -47,7 +47,7 @@ def _release_tuple(version: str) -> tuple[int, ...]:
 def test_plugin_runs_one_released_version_from_its_lockfile():
     """Anthropic's plugin directory wants the server run from a lockfile with exact
     versions, registry sources and hashes. The plugin pins one released version in
-    four places (scripts/plugin_release.py moves them together); it may lag the
+    five places (scripts/plugin_release.py moves them together); it may lag the
     package between a release and that bump, but never run ahead of it."""
     pyproject = (PLUGIN / "pyproject.toml").read_text(encoding="utf-8")
     pins = re.findall(r'"pubchem-finder==([^"]+)"', pyproject)
@@ -74,15 +74,10 @@ def test_plugin_runs_one_released_version_from_its_lockfile():
     assert _release_tuple(pinned) <= _release_tuple(__version__)
 
 
-def test_plugin_command_runs_from_the_lockfile():
+def test_plugin_command_runs_the_pinned_release():
+    """The directory can pin and verify exactly `uvx <package>==<version>`: no other
+    options, no environment."""
+    pyproject = (PLUGIN / "pyproject.toml").read_text(encoding="utf-8")
+    (pinned,) = re.findall(r'"pubchem-finder==([^"]+)"', pyproject)
     server = _json("plugins/pubchem-finder/.mcp.json")["mcpServers"]["pubchem-finder"]
-    assert server["command"] == "uv"
-    assert server["args"] == [
-        "run",
-        "--locked",
-        "--project",
-        "${CLAUDE_PLUGIN_ROOT}",
-        "pubchem-finder",
-        "mcp",
-    ]
-    assert server["env"] == {"UV_PROJECT_ENVIRONMENT": "${CLAUDE_PLUGIN_DATA}/venv"}
+    assert server == {"command": "uvx", "args": [f"pubchem-finder=={pinned}", "mcp"]}
