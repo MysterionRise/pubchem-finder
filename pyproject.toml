@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pubchem-finder"
-version = "2.0.1"
+version = "2.1.0"
 description = "Search PubChem by chemical structure: a local similarity and substructure index, live PubChem tools, a CLI and an MCP server"
 readme = "README.md"
 license = "MIT"
