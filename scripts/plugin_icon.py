@@ -33,12 +33,12 @@ def render(out: Path = DEFAULT_OUT) -> Path:
     options.setBackgroundColour(BLUE)
     options.useBWAtomPalette()
     options.updateAtomPalette({-1: (1.0, 1.0, 1.0)})
-    options.padding = 0.16
-    options.bondLineWidth = 7
-    options.scaleBondWidth = False
-    options.fixedFontSize = 110
-    options.additionalAtomLabelPadding = 0.12
-    options.multipleBondOffset = 0.18
+    options.padding = 0.16  # type: ignore[assignment]  # stub says MolDrawOptions
+    options.bondLineWidth = 7  # type: ignore[assignment]  # stub says MolDrawOptions
+    options.scaleBondWidth = False  # type: ignore[assignment]  # stub says MolDrawOptions
+    options.fixedFontSize = 110  # type: ignore[assignment]  # stub says MolDrawOptions
+    options.additionalAtomLabelPadding = 0.12  # type: ignore[assignment]  # stub says MolDrawOptions
+    options.multipleBondOffset = 0.18  # type: ignore[assignment]  # stub says MolDrawOptions
     drawer.DrawMolecule(mol)
     drawer.FinishDrawing()
 
