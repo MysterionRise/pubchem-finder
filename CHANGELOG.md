@@ -22,6 +22,10 @@ All notable changes to this project are documented here. The format follows
 - Python 3.14 is tested in CI and listed in the classifiers.
 - `examples/mcp_client.py`: the MCP tools from plain Python with the official client, the
   starting point for agent-framework examples ([#34](https://github.com/MysterionRise/pubchem-finder/issues/34)).
+- Reviewing client-setup contributions: the pull request template asks for the tool
+  calls as the client showed them, docs/clients.md says what reviewers check, and a
+  repository skill (`.claude/skills/review-client-setup`) reproduces the reported
+  answers with the project before the maintainer posts a review.
 - `scripts/smoke.py --url` runs the MCP checks against a running HTTP server; CI does so
   with the installed wheel, and an end-to-end test starts the HTTP server on Linux, macOS
   and Windows.

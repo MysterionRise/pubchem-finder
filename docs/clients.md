@@ -166,8 +166,14 @@ Out of scope for now: built-in OAuth, and a Docker image
 
 3. In the table, set the status to "Tested" with the version and OS, and link your
    section.
-4. Open a pull request, and mention the issue it closes. A screenshot of a tool call is
-   welcome.
+4. Open a pull request and fill in its "Client setup PRs" part, and mention the issue it
+   closes. A screenshot of a tool call is welcome.
 
 The checks in CI don't cover client setups, so a short, exact section from someone who has
 run it is what helps the next person most.
+
+**What reviewers check:** that the config matches the client's current docs, that the
+versions exist, and that the answers in the PR are the tool's: the caffeine lookup is
+CID 2519 at 194.19 g/mol, and the aspirin search lists CID 2244 first. Models sometimes
+answer from memory without calling a tool; if yours did, watch the client's tool-call
+panel, ask again, and say so in Notes. That is useful information for the next person.
