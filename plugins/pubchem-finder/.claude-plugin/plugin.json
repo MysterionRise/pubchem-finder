@@ -10,6 +10,9 @@
   "homepage": "https://github.com/MysterionRise/pubchem-finder",
   "repository": "https://github.com/MysterionRise/pubchem-finder",
   "license": "MIT",
+  "icon": "./.claude-plugin/icon.png",
+  "documentationUrl": "https://github.com/MysterionRise/pubchem-finder#readme",
+  "supportUrl": "https://github.com/MysterionRise/pubchem-finder/issues",
   "keywords": [
     "chemistry",
     "cheminformatics",

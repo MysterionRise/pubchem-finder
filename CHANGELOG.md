@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- The Claude plugin pins the package it runs (`uvx pubchem-finder==2.1.0 mcp`) and has an
+  icon and documentation and support links, as Anthropic's plugin directory requires. A
+  test and the release check keep the pin at the package version.
+
 ## [2.1.0] - 2026-10-26
 
 ### Added
@@ -114,6 +122,7 @@ with a local index you can build on a laptop.
 An Indigo + Elasticsearch indexer for PubChem SDF dumps. It was never released as a
 package.
 
+[Unreleased]: https://github.com/MysterionRise/pubchem-finder/compare/v2.1.0...HEAD
 [2.1.0]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.1.0
 [2.0.1]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.0.1
 [2.0.0]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.0.0

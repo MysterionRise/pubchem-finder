@@ -40,3 +40,11 @@ def test_registry_name_marker_is_in_the_readme():
     name = _json("server.json")["name"]
     lines = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
     assert f"<!-- mcp-name: {name} -->" in lines
+
+
+def test_plugin_runs_the_released_package():
+    """Anthropic's plugin directory requires the command to pin an exact version, so the
+    plugin runs the package version it was published with."""
+    server = _json("plugins/pubchem-finder/.mcp.json")["mcpServers"]["pubchem-finder"]
+    assert server["command"] == "uvx"
+    assert server["args"] == [f"pubchem-finder=={__version__}", "mcp"]
