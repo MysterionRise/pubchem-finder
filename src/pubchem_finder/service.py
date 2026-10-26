@@ -32,6 +32,7 @@ from .data.pug_rest import (
     PubChemError,
 )
 from .fingerprints import MACCSFingerprint, MorganFingerprint
+from .index.builder import DEFAULT_FP_PARAMS
 from .index.engine import LocalIndex, Metric
 from .models import (
     AnnotationSection,
@@ -60,6 +61,9 @@ logger = logging.getLogger(__name__)
 rdBase.DisableLog("rdApp.*")
 
 _ECFP4 = MorganFingerprint(radius=2, n_bits=2048)
+# PubChem's hits are re-scored with the local index's default fingerprint, so
+# their scores are comparable with similarity_search; compare() keeps 2048 bits.
+_ECFP4_INDEX = MorganFingerprint(radius=2, n_bits=int(DEFAULT_FP_PARAMS["fpSize"]))
 _MACCS = MACCSFingerprint()
 _STANDARDIZER = MoleculeStandardizer()
 
@@ -146,7 +150,8 @@ def standardize(smiles: str) -> Standardized:
 
 
 def compare(smiles_a: str, smiles_b: str) -> Comparison:
-    """Tanimoto similarity between two structures on ECFP4 and MACCS."""
+    """Tanimoto similarity between two structures on ECFP4 (Morgan radius 2,
+    2048 bits) and on MACCS keys."""
     mol_a = parse_smiles(smiles_a)
     mol_b = parse_smiles(smiles_b)
     return Comparison(
@@ -300,8 +305,8 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
 SIMILARITY_NOTE = (
     "PubChem selected these compounds with its own 881-bit substructure fingerprint "
     "(Tanimoto >= {threshold}%), which does not report a score per hit. ecfp4_similarity "
-    "is computed here on ECFP4, the same fingerprint as the local similarity_search; "
-    "hits are sorted by it."
+    "is computed here on ECFP4 (Morgan radius 2, 1024 bits, the local index default), "
+    "so it is comparable with similarity_search; hits are sorted by it."
 )
 SUBSTRUCTURE_NOTE = (
     "Every hit contains the query as a substructure. PubChem returns at most max_records "
@@ -311,7 +316,7 @@ IDENTITY_NOTE = "Compounds PubChem considers identical to the query under identi
 
 
 def _rank(query: Chem.Mol, records: list[CompoundRecord]) -> list[RemoteHit]:
-    query_fp = _ECFP4.generate_bitvect(query)
+    query_fp = _ECFP4_INDEX.generate_bitvect(query)
     hits: list[RemoteHit] = []
     for record in records:
         similarity = None
@@ -321,7 +326,7 @@ def _rank(query: Chem.Mol, records: list[CompoundRecord]) -> list[RemoteHit]:
             similarity = round(
                 float(
                     DataStructs.TanimotoSimilarity(
-                        query_fp, _ECFP4.generate_bitvect(mol)
+                        query_fp, _ECFP4_INDEX.generate_bitvect(mol)
                     )
                 ),
                 4,

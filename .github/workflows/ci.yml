@@ -10,15 +10,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: test (${{ matrix.os }}, ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
         include:
           - os: macos-latest
             python-version: "3.12"
@@ -50,7 +54,7 @@ jobs:
         run: uv run mypy
 
       - name: Test
-        run: uv run pytest -m "not slow" --cov --cov-report=term-missing --cov-report=xml
+        run: uv run pytest --cov --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage report
         if: runner.os == 'Linux' && matrix.python-version == '3.12'
@@ -65,6 +69,7 @@ jobs:
   package:
     name: package (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -92,3 +97,15 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then bin=.smoke/Scripts; else bin=.smoke/bin; fi
           "$bin/python" scripts/smoke.py --command "$bin/pubchem-finder"
+          PUBCHEM_FINDER_COMMAND="$bin/pubchem-finder" "$bin/python" examples/mcp_client.py
+
+      # tests/e2e/test_http.py covers the HTTP transport from the source tree; this
+      # runs the same checks against the installed wheel with the newest dependencies.
+      - name: Smoke test over HTTP
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          .smoke/bin/pubchem-finder mcp --transport http --port 8765 2> http-server.log &
+          trap 'kill $! 2> /dev/null; echo "--- server log ---"; cat http-server.log' EXIT
+          for _ in $(seq 1 90); do curl -fs http://127.0.0.1:8765/health > /dev/null && break; sleep 1; done
+          .smoke/bin/python scripts/smoke.py --url http://127.0.0.1:8765/mcp

@@ -51,6 +51,32 @@ def test_similarity_search_request_and_ranking(pubchem_knowledge_api):
     assert result.hits[0].pubchem_url.endswith("/2244")
 
 
+def test_remote_scores_match_the_local_index(built_home, aspirin_smiles):
+    """PubChem hits are re-scored with the index's default fingerprint, so the
+    numbers are comparable with similarity_search."""
+    from rdkit import Chem
+
+    from pubchem_finder.models import CompoundRecord
+    from tests.conftest import CHUNK_A, CHUNK_B
+
+    local = {
+        hit.cid: hit.similarity
+        for hit in service.similarity_search(
+            aspirin_smiles, threshold=0.01, top_k=50, home=built_home
+        ).hits
+    }
+    records = [
+        CompoundRecord(cid=cid, smiles=smi) for cid, smi, *_ in CHUNK_A + CHUNK_B
+    ]
+    remote = {
+        hit.cid: hit.ecfp4_similarity
+        for hit in service._rank(Chem.MolFromSmiles(aspirin_smiles), records)
+    }
+    assert len(local) > 3
+    for cid, score in local.items():
+        assert remote[cid] == pytest.approx(score, abs=1e-4)
+
+
 def test_truncated_when_max_records_reached(pubchem_knowledge_api):
     result = service.pubchem_similarity_search(ASPIRIN, max_records=4)
     assert result.truncated is True

@@ -7,6 +7,7 @@ Successful responses can be cached on disk (see :mod:`.cache`).
 
 import json
 import logging
+import threading
 import time
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, get_args
@@ -153,6 +154,9 @@ class PubChemClient:
             headers={"User-Agent": f"pubchem-finder/{__version__}"},
         )
         self._last_request: float | None = None
+        # MCP tools run on worker threads and share one client, so the throttle
+        # must serialize them; the wait happens inside the lock on purpose.
+        self._throttle_lock = threading.Lock()
 
     def close(self) -> None:
         if self._owns_client:
@@ -358,12 +362,13 @@ class PubChemClient:
         raise AssertionError("unreachable")  # pragma: no cover
 
     def _throttle(self) -> None:
-        now = time.monotonic()
-        if self._last_request is not None:
-            wait = self.min_interval - (now - self._last_request)
-            if wait > 0:
-                time.sleep(wait)
-        self._last_request = time.monotonic()
+        with self._throttle_lock:
+            now = time.monotonic()
+            if self._last_request is not None:
+                wait = self.min_interval - (now - self._last_request)
+                if wait > 0:
+                    time.sleep(wait)
+            self._last_request = time.monotonic()
 
     @staticmethod
     def _handle(response: httpx.Response) -> dict[str, Any]:

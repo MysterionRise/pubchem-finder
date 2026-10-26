@@ -1478,6 +1478,7 @@ dependencies = [
     { name = "pyarrow" },
     { name = "pydantic" },
     { name = "rdkit" },
+    { name = "starlette" },
     { name = "tables" },
     { name = "typer" },
 ]
@@ -1504,6 +1505,7 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=17" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "rdkit", specifier = ">=2024.9" },
+    { name = "starlette", specifier = ">=1" },
     { name = "tables", specifier = ">=3.10" },
     { name = "typer", specifier = ">=0.15" },
 ]
@@ -2063,7 +2065,7 @@ resolution-markers = [
     "python_full_version < '3.12'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" } },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7a/97/5a3609c4f8d58b039179648e62dd220f89864f56f7357f5d4f45c29eb2cc/scipy-1.17.1.tar.gz", hash = "sha256:95d8e012d8cb8816c226aef832200b1d45109ed4464303e997c5b13122b297c0", size = 30573822, upload-time = "2026-02-23T00:26:24.851Z" }
 wheels = [
@@ -2139,7 +2141,7 @@ resolution-markers = [
     "python_full_version >= '3.12' and python_full_version < '3.14'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" } },
+    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7e/74/66de6258867beb2ef08f35f9f2ac017a52cacd5081714d239ff1a442d458/scipy-1.18.1.tar.gz", hash = "sha256:52c4b7422442aba924d03ad4019852b08a92e64ea187b933135687bfe2747307", size = 30781235, upload-time = "2026-08-21T23:28:50.599Z" }
 wheels = [

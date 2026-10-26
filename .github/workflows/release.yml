@@ -53,6 +53,26 @@ jobs:
           if [ ! -s release-notes.md ]; then
             echo "::error::CHANGELOG.md has no section for $VERSION"; exit 1
           fi
+          uv run --no-project python - "$VERSION" <<'PY'
+          import json, sys
+          version = sys.argv[1]
+          server = json.load(open("server.json"))
+          found = {
+              "server.json": server["version"],
+              **{f"server.json packages[{i}]": p["version"] for i, p in enumerate(server["packages"])},
+              "plugin.json": json.load(open("plugins/pubchem-finder/.claude-plugin/plugin.json"))["version"],
+              "marketplace.json": json.load(open(".claude-plugin/marketplace.json"))["plugins"][0]["version"],
+          }
+          if wrong := {k: v for k, v in found.items() if v != version}:
+              print(f"::error::not at {version}: {wrong}"); sys.exit(1)
+          PY
+          cff=$(sed -n 's/^version: *//p' CITATION.cff)
+          if [ "$cff" != "$VERSION" ]; then
+            echo "::error::CITATION.cff says $cff, not $VERSION"; exit 1
+          fi
+          if ! grep -q '^date-released: "20' CITATION.cff; then
+            echo "::error::CITATION.cff has no date-released"; exit 1
+          fi
 
       - name: Lint, type-check and test
         run: |
@@ -60,7 +80,7 @@ jobs:
           uv run ruff check .
           uv run ruff format --check .
           uv run mypy
-          uv run pytest -m "not slow"
+          uv run pytest
 
       - name: Build sdist and wheel
         run: uv build
@@ -124,3 +144,54 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "v$VERSION" \
             --notes-file release-notes.md
+
+  # The MCP registry (registry.modelcontextprotocol.io) lists the server from
+  # server.json. It checks that the PyPI release exists and that the package
+  # description (the README) carries the "mcp-name" marker, so this runs last,
+  # after PyPI serves the release; a failure here leaves PyPI, the tag and the
+  # GitHub Release intact and the job can be re-run on its own.
+  mcp-registry:
+    needs: github-release
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # proves ownership of io.github.MysterionRise/* through GitHub OIDC
+      contents: read
+    env:
+      VERSION: ${{ inputs.version }}
+      MCP_PUBLISHER_VERSION: v1.8.5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Wait until PyPI serves the release with the registry marker
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -fs "https://pypi.org/pypi/pubchem-finder/$VERSION/json" \
+                | grep -q "mcp-name: io.github.MysterionRise/pubchem-finder"; then
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::PyPI does not serve pubchem-finder $VERSION with the mcp-name marker yet"
+          exit 1
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Download and verify mcp-publisher
+        run: |
+          set -euo pipefail
+          archive="mcp-publisher_linux_amd64.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/$MCP_PUBLISHER_VERSION"
+          curl --fail --location --silent --show-error --output "$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/$MCP_PUBLISHER_VERSION" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$archive"
+          tar xzf "$archive" mcp-publisher
+
+      - name: Publish to the MCP registry
+        run: |
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish

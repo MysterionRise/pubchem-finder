@@ -11,7 +11,7 @@ import typer
 from pydantic import BaseModel
 
 from . import __version__, batch, service
-from .config import resolve_home
+from .config import HOME_ENV, resolve_home
 from .core.exceptions import InvalidInput, PubChemFinderError
 from .data.pug_rest import ANNOTATION_HEADINGS, AnnotationHeading
 from .models import RemoteSearchResults, SubstructureResults
@@ -34,6 +34,11 @@ class Metric(StrEnum):
     tanimoto = "tanimoto"
     dice = "dice"
     cosine = "cosine"
+
+
+class Transport(StrEnum):
+    stdio = "stdio"
+    http = "http"
 
 
 JsonFlag = Annotated[bool, typer.Option("--json", help="Emit JSON instead of text.")]
@@ -868,11 +873,38 @@ def cache_clear(home: HomeOpt = None) -> None:
 
 
 @app.command()
-def mcp() -> None:
-    """Run the MCP server over stdio (for Claude Desktop, Claude Code, etc.)."""
+def mcp(
+    transport: Annotated[
+        Transport,
+        typer.Option(
+            "--transport",
+            help="stdio: the client starts this process (default). "
+            "http: serve MCP over streamable HTTP at http://HOST:PORT/mcp.",
+        ),
+    ] = Transport.stdio,
+    host: Annotated[
+        str,
+        typer.Option(
+            "--host",
+            help="Interface to bind with --transport http; 127.0.0.1 keeps the server "
+            "private to this machine.",
+        ),
+    ] = "127.0.0.1",
+    port: Annotated[
+        int,
+        typer.Option(
+            "--port", min=1, max=65535, help="TCP port with --transport http."
+        ),
+    ] = 8000,
+    home: HomeOpt = None,
+) -> None:
+    """Run the MCP server over stdio (default, for Claude Desktop, Claude Code and
+    other clients that start a local process) or over streamable HTTP."""
+    if home is not None:
+        os.environ[HOME_ENV] = str(resolve_home(home))
     from .mcp_server import main
 
-    main()
+    main(transport=transport.value, host=host, port=port)
 
 
 def run() -> None:  # pragma: no cover - console script entry

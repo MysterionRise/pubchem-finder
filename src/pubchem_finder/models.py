@@ -151,7 +151,7 @@ class IndexStatus(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# PubChem knowledge tools (Phase 4a)
+# PubChem knowledge tools
 # --------------------------------------------------------------------------- #
 
 
@@ -161,8 +161,9 @@ class RemoteHit(CompoundRecord):
     ecfp4_similarity: float | None = Field(
         default=None,
         description=(
-            "Tanimoto similarity to the query on ECFP4 (Morgan radius 2, 2048 bits), "
-            "computed locally; comparable with the local similarity_search"
+            "Tanimoto similarity to the query on ECFP4 (Morgan radius 2, 1024 bits, "
+            "the local index default), computed locally; comparable with the local "
+            "similarity_search"
         ),
     )
 
@@ -277,7 +278,7 @@ class AnnotationSection(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# Assistant features (Phase 4b)
+# Assistant features
 # --------------------------------------------------------------------------- #
 
 

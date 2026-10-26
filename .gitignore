@@ -10,6 +10,13 @@ dist/
 venv/
 .env
 
+# Workflow and tooling outputs
+.smoke/
+out/
+release-notes.md
+.benchmarks/
+.DS_Store
+
 # Tooling caches
 .pytest_cache/
 .mypy_cache/
