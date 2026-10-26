@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- PubChem's similarity and substructure hits are now re-scored with the local index's
+  default fingerprint (ECFP4, 1024 bits) instead of 2048 bits, so `ecfp4_similarity` is
+  comparable with `similarity_search` as the docs said. `compare` keeps 2048 bits and says so.
+
+### Fixed
+
+- Concurrent MCP tool calls could exceed PubChem's limit of 5 requests per second: the
+  shared client's throttle now holds a lock across its wait.
+
 ## [2.0.1] - 2026-10-22
 
 Documentation release: the package's code and behaviour are unchanged.
@@ -72,5 +85,6 @@ with a local index you can build on a laptop.
 An Indigo + Elasticsearch indexer for PubChem SDF dumps. It was never released as a
 package.
 
+[Unreleased]: https://github.com/MysterionRise/pubchem-finder/compare/v2.0.1...HEAD
 [2.0.1]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.0.1
 [2.0.0]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.0.0
