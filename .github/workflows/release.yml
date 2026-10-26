@@ -5,6 +5,9 @@ name: Release
 # publishes to PyPI with trusted publishing, then tags the commit and creates the
 # GitHub Release with the CHANGELOG section as notes.
 #
+# Afterwards, point the Claude plugin at the new version and open a PR:
+#   make plugin-lock VERSION=x.y.z
+#
 # One-time setup on pypi.org (Account -> Publishing -> Add a pending publisher):
 # project pubchem-finder, owner MysterionRise, repository pubchem-finder,
 # workflow release.yml, environment pypi.
@@ -57,12 +60,11 @@ jobs:
           import json, sys
           version = sys.argv[1]
           server = json.load(open("server.json"))
+          # The Claude plugin (plugins/pubchem-finder) pins the previous release until
+          # `make plugin-lock VERSION=...` re-locks it after this one; its tests keep it consistent.
           found = {
               "server.json": server["version"],
               **{f"server.json packages[{i}]": p["version"] for i, p in enumerate(server["packages"])},
-              "plugin.json": json.load(open("plugins/pubchem-finder/.claude-plugin/plugin.json"))["version"],
-              "marketplace.json": json.load(open(".claude-plugin/marketplace.json"))["plugins"][0]["version"],
-              "plugin .mcp.json": json.load(open("plugins/pubchem-finder/.mcp.json"))["mcpServers"]["pubchem-finder"]["args"][0].removeprefix("pubchem-finder=="),
           }
           if wrong := {k: v for k, v in found.items() if v != version}:
               print(f"::error::not at {version}: {wrong}"); sys.exit(1)

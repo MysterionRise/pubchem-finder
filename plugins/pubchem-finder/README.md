@@ -24,9 +24,11 @@ In Claude Code (2.1.275 or later; older versions take the two-step form below):
 
 ## Use it
 
-Requires [uv](https://docs.astral.sh/uv/getting-started/installation/); the first start
-downloads the package and its dependencies (RDKit, PyArrow, DuckDB) and takes about a
-minute. Then ask things like:
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). The plugin runs
+the released package from its own lockfile, so the first start installs pinned,
+hash-checked dependencies (RDKit, PyArrow, DuckDB) and takes about a minute; later starts
+take under a second. It uses Python 3.12 to 3.14 and uv fetches one if none is installed.
+Then ask things like:
 
 - "What is the molecular weight and XLogP of caffeine? Is it Lipinski-compliant?"
 - "Is ibuprofen hazardous? What does its GHS label say? Cite the sources."

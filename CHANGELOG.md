@@ -8,9 +8,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
-- The Claude plugin pins the package it runs (`uvx pubchem-finder==2.1.0 mcp`) and has an
-  icon and documentation and support links, as Anthropic's plugin directory requires. A
-  test and the release check keep the pin at the package version.
+- The Claude plugin runs the released package from its own lockfile
+  (`plugins/pubchem-finder/pyproject.toml` and `uv.lock`: every dependency at an exact
+  version with a checked hash) and has an icon and documentation and support links, as
+  Anthropic's plugin directory requires. `make plugin-lock VERSION=...` points it at a new
+  release; tests keep its files in step and never ahead of the package.
 
 ## [2.1.0] - 2026-10-26
 
