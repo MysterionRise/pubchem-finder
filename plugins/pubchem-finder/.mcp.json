@@ -1,18 +1,11 @@
 {
   "mcpServers": {
     "pubchem-finder": {
-      "command": "uv",
+      "command": "uvx",
       "args": [
-        "run",
-        "--locked",
-        "--project",
-        "${CLAUDE_PLUGIN_ROOT}",
-        "pubchem-finder",
+        "pubchem-finder==2.1.0",
         "mcp"
-      ],
-      "env": {
-        "UV_PROJECT_ENVIRONMENT": "${CLAUDE_PLUGIN_DATA}/venv"
-      }
+      ]
     }
   }
 }

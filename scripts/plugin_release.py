@@ -4,9 +4,9 @@ Run after a release, once the version is on PyPI::
 
     uv run python scripts/plugin_release.py 2.1.0
 
-It sets the pin in plugins/pubchem-finder/pyproject.toml, the plugin and marketplace
-versions, and refreshes plugins/pubchem-finder/uv.lock. tests/unit/test_metadata.py
-checks that the four agree.
+It sets the pin in plugins/pubchem-finder/pyproject.toml and .mcp.json, the plugin and
+marketplace versions, and refreshes plugins/pubchem-finder/uv.lock.
+tests/unit/test_metadata.py checks that the five agree.
 """
 
 from __future__ import annotations
@@ -44,6 +44,11 @@ def main(version: str) -> None:
         sys.exit(f"expected one pubchem-finder pin in {pyproject}, found {count}")
     pyproject.write_text(text, encoding="utf-8")
     _edit_json(PLUGIN / ".claude-plugin" / "plugin.json", ["version"], version)
+    _edit_json(
+        PLUGIN / ".mcp.json",
+        ["mcpServers", "pubchem-finder", "args", 0],
+        f"pubchem-finder=={version}",
+    )
     _edit_json(
         Path(".claude-plugin/marketplace.json"), ["plugins", 0, "version"], version
     )
