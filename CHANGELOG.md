@@ -19,6 +19,9 @@ All notable changes to this project are documented here. The format follows
   as `io.github.MysterionRise/pubchem-finder` (`server.json`; the release workflow
   publishes each version), and a Claude plugin (`/plugin marketplace add
   MysterionRise/pubchem-finder`) installs it in Claude Code and Cowork.
+- Python 3.14 is tested in CI and listed in the classifiers.
+- `examples/mcp_client.py`: the MCP tools from plain Python with the official client, the
+  starting point for agent-framework examples ([#34](https://github.com/MysterionRise/pubchem-finder/issues/34)).
 - `scripts/smoke.py --url` runs the MCP checks against a running HTTP server; CI does so
   with the installed wheel, and an end-to-end test starts the HTTP server on Linux, macOS
   and Windows.
@@ -28,6 +31,9 @@ All notable changes to this project are documented here. The format follows
 - PubChem's similarity and substructure hits are now re-scored with the local index's
   default fingerprint (ECFP4, 1024 bits) instead of 2048 bits, so `ecfp4_similarity` is
   comparable with `similarity_search` as the docs said. `compare` keeps 2048 bits and says so.
+
+- The unused `slow` test marker is gone, so `pytest` runs everything (the suite takes
+  about ten seconds). The source distribution no longer ships the demo media.
 
 ### Fixed
 

@@ -15,8 +15,8 @@ format:  ## Format with ruff
 typecheck:  ## Type-check with mypy
 	uv run mypy
 
-test:  ## Run the test suite (excluding slow tests) with coverage
-	uv run pytest -m "not slow" --cov --cov-report=term-missing
+test:  ## Run the test suite with coverage
+	uv run pytest --cov --cov-report=term-missing
 
 check: lint typecheck test  ## Everything CI runs
 	uv run ruff format --check .

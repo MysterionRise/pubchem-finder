@@ -19,6 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Chemistry",
 ]
 dependencies = [
@@ -57,6 +58,10 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pubchem_finder"]
+
+[tool.hatch.build.targets.sdist]
+# Keep the demo media, the plugin and CI files out of the source distribution.
+exclude = ["docs/media", "docs/images", ".github", ".claude-plugin", "plugins"]
 
 [tool.ruff]
 line-length = 88
@@ -100,7 +105,6 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 addopts = ["--strict-markers"]
 markers = [
-    "slow: long-running tests (deselect with -m 'not slow')",
     "live: tests that call the real PubChem API (set PUBCHEM_LIVE=1)",
 ]
 

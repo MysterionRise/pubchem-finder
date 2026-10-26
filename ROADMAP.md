@@ -1,7 +1,7 @@
 # Roadmap
 
 Decisions: FPSim2 + DuckDB/Parquet as the search backend (no server required),
-MCP over stdio (streamable HTTP optional), uv + hatchling + ruff, Python 3.11 to 3.13.
+MCP over stdio (streamable HTTP optional), uv + hatchling + ruff, Python 3.11 to 3.14.
 
 ## Phase 0: repo hygiene (done)
 

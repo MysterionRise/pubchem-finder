@@ -265,6 +265,12 @@ service.similarity_search("CC(=O)Oc1ccccc1C(=O)O", threshold=0.7)  # needs an in
 service.substructure_search("[NX3][SX4](=O)(=O)c", query_type="smarts")
 ```
 
+To give your own agent the tools instead, talk to the MCP server:
+[examples/mcp_client.py](https://github.com/MysterionRise/pubchem-finder/blob/master/examples/mcp_client.py)
+does it with the plain MCP client in under 50 lines (`uv run examples/mcp_client.py`, no
+API key). Examples for agent frameworks are welcome, see
+[#34](https://github.com/MysterionRise/pubchem-finder/issues/34).
+
 ## Troubleshooting
 
 - **The first run takes a minute.** uv downloads Python if needed and a few hundred MB of
@@ -306,7 +312,7 @@ Finder itself, see [CITATION.cff](https://github.com/MysterionRise/pubchem-finde
 
 ## Development
 
-Requires [uv](https://docs.astral.sh/uv/). Python 3.11, 3.12 and 3.13 are supported; the
+Requires [uv](https://docs.astral.sh/uv/). Python 3.11 to 3.14 are supported; the
 repository's `.python-version` makes `uv sync` use 3.12 even if pyenv or conda put an
 older Python first on your PATH.
 
