@@ -1,0 +1,15 @@
+# The Claude plugin's own project. The plugin runs the released pubchem-finder package
+# from the lockfile next to this file (`uv run --locked --project ${CLAUDE_PLUGIN_ROOT}`),
+# so every dependency is installed at an exact version with a checked hash, which
+# Anthropic's plugin directory requires for its Verified badge. After each release, point
+# it at the new version with `make plugin-lock VERSION=x.y.z`. The Python range is
+# narrower than the package's so the lockfile stays under the directory's 256 KiB limit.
+[project]
+name = "pubchem-finder-plugin"
+version = "0"
+description = "Runs the pubchem-finder MCP server for the Claude plugin"
+requires-python = ">=3.12,<3.15"
+dependencies = ["pubchem-finder==2.1.0"]
+
+[tool.uv]
+package = false

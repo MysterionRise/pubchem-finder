@@ -1,6 +1,7 @@
 """The version and registry name live in several files; they must agree."""
 
 import json
+import re
 from pathlib import Path
 
 from pubchem_finder import __version__
@@ -20,12 +21,6 @@ def test_versions_match_the_package():
             f"server.json packages[{i}]": package["version"]
             for i, package in enumerate(server["packages"])
         },
-        "plugin.json": _json("plugins/pubchem-finder/.claude-plugin/plugin.json")[
-            "version"
-        ],
-        "marketplace.json": _json(".claude-plugin/marketplace.json")["plugins"][0][
-            "version"
-        ],
     }
     cff = (ROOT / "CITATION.cff").read_text(encoding="utf-8").splitlines()
     found["CITATION.cff"] = next(
@@ -42,9 +37,52 @@ def test_registry_name_marker_is_in_the_readme():
     assert f"<!-- mcp-name: {name} -->" in lines
 
 
-def test_plugin_runs_the_released_package():
-    """Anthropic's plugin directory requires the command to pin an exact version, so the
-    plugin runs the package version it was published with."""
+PLUGIN = ROOT / "plugins" / "pubchem-finder"
+
+
+def _release_tuple(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def test_plugin_runs_one_released_version_from_its_lockfile():
+    """Anthropic's plugin directory wants the server run from a lockfile with exact
+    versions, registry sources and hashes. The plugin pins one released version in
+    four places (scripts/plugin_release.py moves them together); it may lag the
+    package between a release and that bump, but never run ahead of it."""
+    pyproject = (PLUGIN / "pyproject.toml").read_text(encoding="utf-8")
+    pins = re.findall(r'"pubchem-finder==([^"]+)"', pyproject)
+    assert len(pins) == 1
+    pinned = pins[0]
+
+    lock = (PLUGIN / "uv.lock").read_text(encoding="utf-8")
+    locked = re.search(
+        r'^name = "pubchem-finder"\nversion = "([^"]+)"\nsource = \{ registry = "https://pypi.org/simple" \}',
+        lock,
+        re.M,
+    )
+    assert locked is not None, "pubchem-finder is not locked from PyPI"
+    assert locked.group(1) == pinned
+    assert 'hash = "sha256:' in lock
+    assert (PLUGIN / "uv.lock").stat().st_size < 256 * 1024, (
+        "over the directory's limit"
+    )
+
+    assert (
+        _json("plugins/pubchem-finder/.claude-plugin/plugin.json")["version"] == pinned
+    )
+    assert _json(".claude-plugin/marketplace.json")["plugins"][0]["version"] == pinned
+    assert _release_tuple(pinned) <= _release_tuple(__version__)
+
+
+def test_plugin_command_runs_from_the_lockfile():
     server = _json("plugins/pubchem-finder/.mcp.json")["mcpServers"]["pubchem-finder"]
-    assert server["command"] == "uvx"
-    assert server["args"] == [f"pubchem-finder=={__version__}", "mcp"]
+    assert server["command"] == "uv"
+    assert server["args"] == [
+        "run",
+        "--locked",
+        "--project",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "pubchem-finder",
+        "mcp",
+    ]
+    assert server["env"] == {"UV_PROJECT_ENVIRONMENT": "${CLAUDE_PLUGIN_DATA}/venv"}
