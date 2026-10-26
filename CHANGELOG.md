@@ -15,6 +15,10 @@ All notable changes to this project are documented here. The format follows
   docs/clients.md, "Over HTTP", explains the reverse-proxy setup and the shared PubChem
   rate limit ([#33](https://github.com/MysterionRise/pubchem-finder/issues/33)).
 - `pubchem-finder mcp --home DIR`, like the other commands.
+- The server is listed in the [MCP registry](https://registry.modelcontextprotocol.io)
+  as `io.github.MysterionRise/pubchem-finder` (`server.json`; the release workflow
+  publishes each version), and a Claude plugin (`/plugin marketplace add
+  MysterionRise/pubchem-finder`) installs it in Claude Code and Cowork.
 - `scripts/smoke.py --url` runs the MCP checks against a running HTTP server; CI does so
   with the installed wheel, and an end-to-end test starts the HTTP server on Linux, macOS
   and Windows.
@@ -27,6 +31,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- CITATION.cff said 2.0.0; a test now keeps it, `server.json` and the plugin manifest
+  in step with the package version.
 - Concurrent MCP tool calls could exceed PubChem's limit of 5 requests per second: the
   shared client's throttle now holds a lock across its wait.
 

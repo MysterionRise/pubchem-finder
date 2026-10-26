@@ -1,0 +1,39 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.MysterionRise/pubchem-finder",
+  "title": "PubChem Finder",
+  "description": "Search PubChem by structure: a local similarity/substructure index, live PubChem data, RDKit tools",
+  "repository": {
+    "url": "https://github.com/MysterionRise/pubchem-finder",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/MysterionRise/pubchem-finder",
+  "version": "2.0.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "pubchem-finder",
+      "version": "2.0.1",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp",
+          "valueHint": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "PUBCHEM_FINDER_HOME",
+          "description": "Data directory for the local index and the PubChem response cache (default: the platform's user data directory)",
+          "format": "filepath",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

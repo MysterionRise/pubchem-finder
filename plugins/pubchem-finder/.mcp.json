@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "pubchem-finder": {
+      "command": "uvx",
+      "args": [
+        "pubchem-finder",
+        "mcp"
+      ]
+    }
+  }
+}

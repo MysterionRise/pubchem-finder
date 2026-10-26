@@ -1,0 +1,19 @@
+{
+  "name": "mysterionrise",
+  "owner": {
+    "name": "Konstantin Perikov",
+    "url": "https://github.com/MysterionRise"
+  },
+  "metadata": {
+    "description": "Plugins by MysterionRise: PubChem Finder."
+  },
+  "plugins": [
+    {
+      "name": "pubchem-finder",
+      "source": "./plugins/pubchem-finder",
+      "description": "Search PubChem by chemical structure: a local similarity and substructure index, live PubChem data (names, CAS numbers, safety, pharmacology, bioassays) and RDKit chemistry, through the pubchem-finder MCP server.",
+      "version": "2.0.1",
+      "category": "science"
+    }
+  ]
+}

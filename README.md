@@ -12,6 +12,7 @@ Desktop, Claude Code and other MCP clients.
 [![Python](https://img.shields.io/pypi/pyversions/pubchem-finder.svg)](https://pypi.org/project/pubchem-finder/)
 [![CI](https://github.com/MysterionRise/pubchem-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/MysterionRise/pubchem-finder/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/MysterionRise/pubchem-finder/blob/master/LICENSE)
+<!-- mcp-name: io.github.MysterionRise/pubchem-finder -->
 
 ![A similarity search for aspirin and a SMARTS substructure search over 444,794 PubChem compounds, with the hits appearing and their key atoms highlighted](https://raw.githubusercontent.com/MysterionRise/pubchem-finder/master/docs/media/search-demo.gif)
 
@@ -50,6 +51,12 @@ Python and everything else on first run.
 claude mcp add pubchem-finder -- uvx pubchem-finder mcp
 ```
 
+or as a plugin, which also works in Cowork:
+
+```
+/plugin install pubchem-finder --marketplace MysterionRise/pubchem-finder
+```
+
 **Claude Desktop** (Settings, Developer, Edit Config, then restart Claude):
 
 ```json
@@ -85,7 +92,9 @@ server picks it up. To use a non-default data directory, add
 
 **Other MCP clients:** the server speaks standard MCP over stdio, so any client that runs
 local MCP servers (Cursor, VS Code, Windsurf, Zed, JetBrains IDEs, Codex CLI, LM Studio...)
-can start it with the same command and arguments.
+can start it with the same command and arguments. It is listed in the
+[MCP registry](https://registry.modelcontextprotocol.io) as `io.github.MysterionRise/pubchem-finder`
+for clients that install servers from there.
 [docs/clients.md](https://github.com/MysterionRise/pubchem-finder/blob/master/docs/clients.md)
 has the settings, a quick check, and setups people have tested; if you use one of those
 clients, adding yours there is a good first contribution.

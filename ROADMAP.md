@@ -80,8 +80,10 @@ MCP over stdio (streamable HTTP optional), uv + hatchling + ruff, Python 3.11 to
 - [ ] Tested setups for MCP clients beyond Claude (Cursor, VS Code, Windsurf, Zed,
       JetBrains, Antigravity / Gemini CLI, Codex CLI, Cline, LM Studio) in
       [docs/clients.md](docs/clients.md): #23, one good first issue per client
-- [ ] List the server in the MCP registry, and ship a one-click Claude Desktop extension
-      (`.mcpb`) with each release
+- [x] List the server in the MCP registry (`server.json`, published by the release
+      workflow) and ship a Claude plugin (`plugins/pubchem-finder`) for Claude Code and Cowork
+- [ ] A `.mcpb` bundle for one-click install in Claude Desktop, if people ask: Anthropic's
+      directory no longer lists `.mcpb` files, so it would be a release asset only
 - [ ] A quick demo index (a few thousand well-known compounds via PUG REST), so the first
       local search takes seconds instead of a 250 MB download
 - [ ] MCP prompts and resources: a compound dossier prompt, `pubchem://compound/{cid}`
