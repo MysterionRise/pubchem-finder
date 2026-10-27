@@ -1,0 +1,23 @@
+{
+  "name": "pubchem-finder",
+  "displayName": "PubChem Finder",
+  "version": "2.1.0",
+  "description": "Search PubChem by chemical structure: a local similarity and substructure index, live PubChem data (names, CAS numbers, safety, pharmacology, bioassays) and RDKit chemistry, through the pubchem-finder MCP server.",
+  "author": {
+    "name": "Konstantin Perikov",
+    "url": "https://github.com/MysterionRise"
+  },
+  "homepage": "https://github.com/MysterionRise/pubchem-finder",
+  "repository": "https://github.com/MysterionRise/pubchem-finder",
+  "license": "MIT",
+  "icon": "./.claude-plugin/icon.png",
+  "documentationUrl": "https://github.com/MysterionRise/pubchem-finder#readme",
+  "supportUrl": "https://github.com/MysterionRise/pubchem-finder/issues",
+  "keywords": [
+    "chemistry",
+    "cheminformatics",
+    "pubchem",
+    "rdkit",
+    "mcp"
+  ]
+}

@@ -1,0 +1,15 @@
+# The Claude plugin runs `uvx pubchem-finder==<version> mcp` (.mcp.json). Anthropic's
+# plugin directory verifies that pin against the lockfile next to this file: uv.lock records
+# the exact dependency set, from PyPI with hashes, which the directory requires for its
+# Verified badge. After each release, point both at the new version with
+# `make plugin-lock VERSION=x.y.z`. The Python range is narrower than the package's only so
+# the lockfile stays under the directory's 256 KiB read limit.
+[project]
+name = "pubchem-finder-plugin"
+version = "0"
+description = "Runs the pubchem-finder MCP server for the Claude plugin"
+requires-python = ">=3.12,<3.15"
+dependencies = ["pubchem-finder==2.1.0"]
+
+[tool.uv]
+package = false

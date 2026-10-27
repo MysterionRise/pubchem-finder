@@ -1,6 +1,7 @@
 """Tests for the PUG REST client (all HTTP mocked with respx)."""
 
 import os
+import time
 
 import httpx
 import pytest
@@ -156,6 +157,33 @@ def test_throttle_spaces_requests(monkeypatch):
         client.lookup("caffeine")
     # second call came 0.05s after the first -> sleep 0.15; third came 10s later -> no sleep
     assert sleeps == pytest.approx([0.15])
+
+
+def test_throttle_serializes_threads():
+    """Two threads can't both pass the throttle within min_interval: the MCP
+    server calls the shared client from worker threads."""
+    import threading
+
+    client = PubChemClient(min_interval=0.2)
+    client._throttle()  # prime _last_request so both threads have to wait
+    barrier = threading.Barrier(2)
+    passed: list[float] = []
+
+    def go() -> None:
+        barrier.wait()
+        client._throttle()
+        passed.append(time.monotonic())
+
+    threads = [threading.Thread(target=go) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    client.close()
+    assert len(passed) == 2
+    # Without the lock both threads sleep at once and pass together. 30 ms of
+    # slack covers Windows' timer granularity.
+    assert abs(passed[1] - passed[0]) >= 0.2 - 0.03
 
 
 def test_injected_httpx_client_is_not_closed():

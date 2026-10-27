@@ -1,17 +1,21 @@
-"""MCP server (stdio) exposing PubChem lookups and RDKit utilities.
+"""MCP server (stdio or streamable HTTP) exposing PubChem lookups and RDKit utilities.
 
-Run with ``pubchem-finder mcp``. Nothing in this module may write to stdout:
-stdout is the MCP transport.
+Run with ``pubchem-finder mcp`` (stdio, the default) or
+``pubchem-finder mcp --transport http``. Nothing in this module may write to
+stdout: over stdio, stdout is the MCP transport.
 """
 
 import functools
 import logging
+import sys
 from collections.abc import Callable
 from typing import Literal, TypeVar
 
 import anyio
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 
 from . import __version__, service
 from .core.exceptions import PubChemFinderError
@@ -67,6 +71,20 @@ mcp = MCPServer(
     instructions=INSTRUCTIONS,
     log_level="WARNING",
 )
+
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+async def _health(_: Request) -> Response:
+    """Liveness check for reverse proxies and the HTTP end-to-end test."""
+    return JSONResponse(
+        {"status": "ok", "name": "pubchem-finder", "version": __version__}
+    )
+
+
+# Registered with the call form: custom_route is untyped as a decorator, which
+# mypy --strict rejects. The route only exists over HTTP.
+mcp.custom_route("/health", methods=["GET"], include_in_schema=False)(_health)
 
 
 async def _run(fn: Callable[..., T], *args: object, **kwargs: object) -> T:
@@ -327,12 +345,34 @@ async def medchem_profile(smiles: str) -> MedchemProfile:
     return await _run(service.medchem_profile, smiles)
 
 
-def main() -> None:
-    """Serve over stdio."""
+def main(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000) -> None:
+    """Serve over stdio (the default) or streamable HTTP at http://HOST:PORT/mcp."""
     logging.basicConfig(
         level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s"
     )
-    mcp.run(transport="stdio")
+    match transport:
+        case "stdio":
+            mcp.run(transport="stdio")
+        case "http":
+            url = f"http://{host}:{port}/mcp"
+            # uvicorn announces the address at INFO level, which WARNING hides.
+            print(
+                f"pubchem-finder {__version__}: MCP over streamable HTTP at {url} "
+                "(GET /health to check). Ctrl+C stops it.",
+                file=sys.stderr,
+                flush=True,
+            )
+            if host not in LOOPBACK_HOSTS:
+                print(
+                    "Warning: this server has no authentication or TLS. Keep it on "
+                    "127.0.0.1, or put an HTTPS reverse proxy with authentication in "
+                    'front of it (docs/clients.md, "Over HTTP").',
+                    file=sys.stderr,
+                    flush=True,
+                )
+            mcp.run(transport="streamable-http", host=host, port=port)
+        case _:
+            raise ValueError(f"Unknown transport {transport!r}; use 'stdio' or 'http'")
 
 
 if __name__ == "__main__":  # pragma: no cover

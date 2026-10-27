@@ -1,7 +1,7 @@
 # Roadmap
 
 Decisions: FPSim2 + DuckDB/Parquet as the search backend (no server required),
-MCP over stdio, uv + hatchling + ruff, Python 3.11 to 3.13.
+MCP over stdio (streamable HTTP optional), uv + hatchling + ruff, Python 3.11 to 3.14.
 
 ## Phase 0: repo hygiene (done)
 
@@ -80,11 +80,14 @@ MCP over stdio, uv + hatchling + ruff, Python 3.11 to 3.13.
 - [ ] Tested setups for MCP clients beyond Claude (Cursor, VS Code, Windsurf, Zed,
       JetBrains, Antigravity / Gemini CLI, Codex CLI, Cline, LM Studio) in
       [docs/clients.md](docs/clients.md): #23, one good first issue per client
-- [ ] List the server in the MCP registry, and ship a one-click Claude Desktop extension
-      (`.mcpb`) with each release
+- [x] List the server in the MCP registry (`server.json`, published by the release
+      workflow) and ship a Claude plugin (`plugins/pubchem-finder`) for Claude Code and Cowork
+- [ ] A `.mcpb` bundle for one-click install in Claude Desktop, if people ask: Anthropic's
+      directory no longer lists `.mcpb` files, so it would be a release asset only
 - [ ] A quick demo index (a few thousand well-known compounds via PUG REST), so the first
       local search takes seconds instead of a 250 MB download
 - [ ] MCP prompts and resources: a compound dossier prompt, `pubchem://compound/{cid}`
 - [ ] Matched molecular pairs across a hit set (`rdMMPA`)
 - [ ] ADMET predictions as an optional extra (pulls in PyTorch)
-- [ ] Streamable HTTP transport (#33) and a Docker image, if a shared server is wanted
+- [x] Streamable HTTP transport (#33): `pubchem-finder mcp --transport http`
+- [ ] A Docker image, and `--allowed-host` for the HTTP transport, if a shared server is wanted

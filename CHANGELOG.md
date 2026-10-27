@@ -4,6 +4,58 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- The Claude plugin runs one pinned release (`uvx pubchem-finder==2.1.0 mcp`), ships a
+  lockfile (`plugins/pubchem-finder/pyproject.toml` and `uv.lock`: the exact dependency
+  set, from PyPI with hashes) and has an icon and documentation and support links, as
+  Anthropic's plugin directory requires. `make plugin-lock VERSION=...` points it at a new
+  release; tests keep its files in step and never ahead of the package.
+
+## [2.1.0] - 2026-10-26
+
+### Added
+
+- **MCP over streamable HTTP:** `pubchem-finder mcp --transport http [--host 127.0.0.1]
+  [--port 8000]` serves the same 17 tools at `http://HOST:PORT/mcp` for clients that
+  connect to a URL and for one shared index on a team machine. stdio stays the default.
+  `GET /health` reports the version. The server has no authentication or TLS of its own;
+  docs/clients.md, "Over HTTP", explains the reverse-proxy setup and the shared PubChem
+  rate limit ([#33](https://github.com/MysterionRise/pubchem-finder/issues/33)).
+- `pubchem-finder mcp --home DIR`, like the other commands.
+- The server is listed in the [MCP registry](https://registry.modelcontextprotocol.io)
+  as `io.github.MysterionRise/pubchem-finder` (`server.json`; the release workflow
+  publishes each version), and a Claude plugin (`/plugin marketplace add
+  MysterionRise/pubchem-finder`) installs it in Claude Code and Cowork.
+- Python 3.14 is tested in CI and listed in the classifiers.
+- `examples/mcp_client.py`: the MCP tools from plain Python with the official client, the
+  starting point for agent-framework examples ([#34](https://github.com/MysterionRise/pubchem-finder/issues/34)).
+- Reviewing client-setup contributions: the pull request template asks for the tool
+  calls as the client showed them, docs/clients.md says what reviewers check, and a
+  repository skill (`.claude/skills/review-client-setup`) reproduces the reported
+  answers with the project before the maintainer posts a review.
+- `scripts/smoke.py --url` runs the MCP checks against a running HTTP server; CI does so
+  with the installed wheel, and an end-to-end test starts the HTTP server on Linux, macOS
+  and Windows.
+
+### Changed
+
+- PubChem's similarity and substructure hits are now re-scored with the local index's
+  default fingerprint (ECFP4, 1024 bits) instead of 2048 bits, so `ecfp4_similarity` is
+  comparable with `similarity_search` as the docs said. `compare` keeps 2048 bits and says so.
+
+- The unused `slow` test marker is gone, so `pytest` runs everything (the suite takes
+  about ten seconds). The source distribution no longer ships the demo media.
+
+### Fixed
+
+- CITATION.cff said 2.0.0; a test now keeps it, `server.json` and the plugin manifest
+  in step with the package version.
+- Concurrent MCP tool calls could exceed PubChem's limit of 5 requests per second: the
+  shared client's throttle now holds a lock across its wait.
+
 ## [2.0.1] - 2026-10-22
 
 Documentation release: the package's code and behaviour are unchanged.
@@ -72,5 +124,7 @@ with a local index you can build on a laptop.
 An Indigo + Elasticsearch indexer for PubChem SDF dumps. It was never released as a
 package.
 
+[Unreleased]: https://github.com/MysterionRise/pubchem-finder/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.1.0
 [2.0.1]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.0.1
 [2.0.0]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.0.0
