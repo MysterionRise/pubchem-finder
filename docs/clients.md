@@ -64,7 +64,7 @@ settings. The sections below give the exact config for each client someone has t
 | Claude Code | Documented | [README](https://github.com/MysterionRise/pubchem-finder#use-it-from-claude) |
 | Claude Desktop | Documented | [README](https://github.com/MysterionRise/pubchem-finder#use-it-from-claude) |
 | Cursor | Not tried yet | Help wanted: [#24](https://github.com/MysterionRise/pubchem-finder/issues/24) |
-| VS Code (GitHub Copilot agent mode) | Tested (VS Code 1.142.0, Windows 11) | [Setup](#vs-code-github-copilot)  |
+| VS Code (GitHub Copilot agent mode) | Tested (VS Code 1.142.0, Windows 11) | [Setup](#vs-code-github-copilot) |
 | Windsurf | Not tried yet | Help wanted: [#26](https://github.com/MysterionRise/pubchem-finder/issues/26) |
 | Zed | Not tried yet | Help wanted: [#27](https://github.com/MysterionRise/pubchem-finder/issues/27) |
 | JetBrains IDEs (AI Assistant) | Not tried yet | Help wanted: [#28](https://github.com/MysterionRise/pubchem-finder/issues/28) |
