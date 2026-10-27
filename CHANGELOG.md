@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- docs/clients.md has a tested setup for VS Code with GitHub Copilot, the first from an
+  outside contributor (@ashwinruke, [#37](https://github.com/MysterionRise/pubchem-finder/pull/37)).
+  Its notes cover a Copilot quirk worth knowing: the model can show a `similarity_search`
+  step and still report compounds and scores the tool never returned.
+
 ### Changed
 
 - The Claude plugin runs one pinned release (`uvx pubchem-finder==2.1.0 mcp`), ships a

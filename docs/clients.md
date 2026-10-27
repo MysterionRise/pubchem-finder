@@ -83,9 +83,11 @@ need a URL: see [Over HTTP](#over-http). All of this is tracked in
 
 ### VS Code (GitHub Copilot)
 
-Tested with VS Code 1.142.0 and GitHub Copilot Chat 0.41 on Windows 11 26H2, pubchem-finder 2.0.1.
+Tested with VS Code 1.142.0 and GitHub Copilot Chat 0.41 on Windows 11 26H2,
+pubchem-finder 2.0.1.
 
-Config file: `.vscode/mcp.json` in the workspace (created by the **MCP: Add Server** command, or by hand).
+Config file: `.vscode/mcp.json` in the workspace (created by the **MCP: Add Server**
+command, or by hand).
 
 ```json
 {
@@ -99,12 +101,24 @@ Config file: `.vscode/mcp.json` in the workspace (created by the **MCP: Add Serv
 }
 ```
 
-Pictures from `draw_molecules`: not shown. The model replied "[Generated image shown above]", but no image appeared in the chat.
+Pictures from `draw_molecules`: not shown. The model replied "[Generated image shown
+above]", but no image appeared in the chat.
 
 Notes:
-- Starting the server from `mcp.json` right after creating it failed with "Cannot start an MCP server before the session runtime has been created. Send a message first." Sending any message in an agent-mode chat first fixed it.
-- With the model picker on Auto, Copilot can show a `similarity_search` step and still answer with compounds and scores the tool never returns (one run listed CIDs 7167 and 229104 at 0.76 and 0.71). Expand the steps and compare the tool's output with the summary.
-- When the tool does run, its results are the same each time (aspirin, CID 2244, first at 1.00), but the model's summary changes between runs: it may hide aspirin itself, rename compounds, or drop rows. Read the tool output panel for the real numbers.
+- Starting the server from `mcp.json` right after creating it failed with "Cannot start an
+  MCP server before the session runtime has been created. Send a message first." Sending
+  any message in an agent-mode chat first fixed it.
+- With the model picker on "Auto", Copilot can show a `similarity_search` step and still
+  answer with compounds and scores the tool never returns (one run listed CIDs 7167 and
+  229104 at 0.76 and 0.71). Expand the steps in the chat and compare the tool's output
+  with the summary.
+- When the tool does run, its results are the same each time (aspirin, CID 2244, first at
+  1.00), but the model's summary changes between runs: it may hide aspirin itself, rename
+  compounds, or drop rows. Read the tool output panel for the real numbers.
+- VS Code's MCP docs now treat `.vscode/mcp.json` as a compatibility path (the guided flow
+  labels it deprecated) and offer **MCP: Add Server**, then Global, then Copilot Global
+  instead, which writes `~/.copilot/mcp-config.json` in the portable `mcpServers` format
+  rather than `servers`. The config above worked on 1.142.
 
 ## Over HTTP
 
@@ -197,10 +211,8 @@ Out of scope for now: built-in OAuth, and a Docker image
 The checks in CI don't cover client setups, so a short, exact section from someone who has
 run it is what helps the next person most.
 
-
 **What reviewers check:** that the config matches the client's current docs, that the
 versions exist, and that the answers in the PR are the tool's: the caffeine lookup is
 CID 2519 at 194.19 g/mol, and the aspirin search lists CID 2244 first. Models sometimes
 answer from memory without calling a tool; if yours did, watch the client's tool-call
 panel, ask again, and say so in Notes. That is useful information for the next person.
-
