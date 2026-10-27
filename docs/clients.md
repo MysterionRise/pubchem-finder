@@ -64,7 +64,7 @@ settings. The sections below give the exact config for each client someone has t
 | Claude Code | Documented | [README](https://github.com/MysterionRise/pubchem-finder#use-it-from-claude) |
 | Claude Desktop | Documented | [README](https://github.com/MysterionRise/pubchem-finder#use-it-from-claude) |
 | Cursor | Not tried yet | Help wanted: [#24](https://github.com/MysterionRise/pubchem-finder/issues/24) |
-| VS Code (GitHub Copilot agent mode) | Tested (VS Code 1.142.0, Windows 11) | [docs/clients.md](#vs-code-github-copilot)  |
+| VS Code (GitHub Copilot agent mode) | Tested (VS Code 1.142.0, Windows 11) | [Setup](#vs-code-github-copilot)  |
 | Windsurf | Not tried yet | Help wanted: [#26](https://github.com/MysterionRise/pubchem-finder/issues/26) |
 | Zed | Not tried yet | Help wanted: [#27](https://github.com/MysterionRise/pubchem-finder/issues/27) |
 | JetBrains IDEs (AI Assistant) | Not tried yet | Help wanted: [#28](https://github.com/MysterionRise/pubchem-finder/issues/28) |
@@ -130,3 +130,5 @@ Pictures from `draw_molecules`: not shown. The model replied "[Generated image s
 
 Notes:
 - Starting the server from `mcp.json` right after creating it failed with "Cannot start an MCP server before the session runtime has been created. Send a message first." Sending any message in an agent-mode chat first fixed it.
+- With the model picker on "Auto", Copilot sometimes answers similarity questions without running `similarity_search` and makes up compounds and scores. Expand the steps in the chat and check that the tool actually ran with input and output.
+- When the tool does run, its results are the same each time (aspirin, CID 2244, first at 1.00), but the model's summary changes between runs: it may hide aspirin itself, rename compounds, or drop rows. Read the tool output panel for the real numbers.
