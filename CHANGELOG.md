@@ -32,6 +32,9 @@ All notable changes to this project are documented here. The format follows
   downloading anything and says what to do, and a failed merge keeps the previous index
   searchable (the merged file replaces it only when complete). Chunks record their RDKit
   and FPSim2 versions, and pattern chunks are rebuilt when FPSim2 changes.
+- Indexes whose chunks overlap (for example an `--sdf` file repeating compounds of a
+  PubChem chunk) no longer return the same CID twice from `similarity_search` or
+  `substructure_search`.
 
 ## [2.1.0] - 2026-10-26
 

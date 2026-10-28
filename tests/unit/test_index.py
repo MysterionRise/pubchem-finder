@@ -407,3 +407,71 @@ def test_unreadable_sdf_is_an_index_build_error(tmp_path, sample_sdfs):
     broken.write_bytes(data[: len(data) // 2])
     with pytest.raises(IndexBuildError, match=f"Building {CHUNK_NAMES[1]} failed"):
         build_chunks(IndexPaths(tmp_path / "home"), sources([broken]), workers=1)
+
+
+# --- Overlapping chunks: each CID once ----------------------------------------
+
+
+@pytest.fixture(scope="module")
+def overlap_home(tmp_path_factory, sample_sdfs):
+    """Chunk A plus an SDF that repeats three of its compounds."""
+    from tests.conftest import CHUNK_A, write_sdf
+
+    d = tmp_path_factory.mktemp("overlap")
+    mine = write_sdf(d / "my_compounds.sdf", CHUNK_A[:3], gz=False)
+    paths = IndexPaths(d / "home")
+    build_chunks(paths, sources([sample_sdfs[0], mine]), workers=1)
+    finalize(paths, substructure=True)
+    return paths.home
+
+
+def test_overlapping_chunks_give_each_cid_once(overlap_home):
+    found = service.similarity_search(
+        ASPIRIN, threshold=0.01, top_k=1000, home=overlap_home
+    )
+    cids = [h.cid for h in found.hits]
+    assert cids[0] == 2244
+    assert len(cids) == len(set(cids)) == 5
+    top3 = service.similarity_search(
+        ASPIRIN, threshold=0.01, top_k=3, home=overlap_home
+    )
+    assert len({h.cid for h in top3.hits}) == 3
+
+
+def test_overlapping_chunks_give_each_substructure_hit_once(overlap_home):
+    found = service.substructure_search("c1ccccc1C(=O)O", home=overlap_home)
+    assert [h.cid for h in found.hits] == [243, 338, 2244, 4133]
+
+
+def test_search_asks_for_more_when_duplicates_crowd_out_hits(built_home, monkeypatch):
+    import numpy as np
+    from rdkit import Chem
+
+    rows = np.array(
+        [
+            (2244, 1.0),
+            (2244, 1.0),
+            (338, 0.8),
+            (338, 0.8),
+            (4133, 0.7),
+            (4133, 0.7),
+            (243, 0.6),
+        ],
+        dtype=[("mol_id", "<u4"), ("coeff", "<f4")],
+    )
+    asked: list[int] = []
+
+    class StubEngine:
+        def top_k(self, query, k, **kwargs):
+            asked.append(k)
+            return rows[:k]
+
+    index = LocalIndex(built_home, mode="memory")
+    monkeypatch.setattr(index, "_ensure_loaded", StubEngine)
+    index._in_memory = True
+    assert index.search(Chem.MolFromSmiles(ASPIRIN), 0.5, 3) == [
+        (2244, 1.0),
+        (338, 0.8),
+        (4133, 0.7),
+    ]
+    assert asked == [3, 6]
