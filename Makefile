@@ -24,7 +24,7 @@ check: lint typecheck test  ## Everything CI runs
 release-prep:  ## Roll the changelog and set every version: make release-prep VERSION=2.1.2
 	uv run --no-project python scripts/release_prep.py prep $(VERSION)
 
-plugin-lock:  ## Point the Claude plugin at a released version: make plugin-lock VERSION=2.1.0
+plugin-lock:  ## Point the Claude plugin at a release (the release workflow does it): make plugin-lock VERSION=x.y.z
 	uv run python scripts/plugin_release.py $(VERSION)
 
 clean:  ## Remove caches and build artifacts

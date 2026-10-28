@@ -278,3 +278,48 @@ jobs:
         run: |
           ./mcp-publisher login github-oidc
           ./mcp-publisher publish
+
+  # Points the Claude plugin at the release on a branch. Open the PR from the link in
+  # the job summary: a PR opened with the workflow's token would get no CI. Merging
+  # it moves the plugin-release branch that Anthropic's directory follows
+  # (promote-plugin.yml); every new plugin version waits for a directory reviewer, so
+  # docs/releasing.md says when to promote one.
+  plugin-branch:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.2
+        with:
+          python-version: "3.12"
+
+      - name: Point the plugin at the release
+        run: |
+          # PyPI's index can trail the upload by a minute or two.
+          for attempt in $(seq 1 10); do
+            if uv run --no-project python scripts/plugin_release.py "$VERSION"; then break; fi
+            if [ "$attempt" = 10 ]; then exit 1; fi
+            git checkout -- plugins .claude-plugin
+            sleep 30
+          done
+
+      - name: Push a branch for the plugin PR
+        run: |
+          branch="release/plugin-$VERSION"
+          git switch -c "$branch"
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -am "Point the Claude plugin at $VERSION"
+          gh auth setup-git
+          git push origin "HEAD:refs/heads/$branch"
+          echo "Open the plugin PR: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/master...$branch?expand=1" >> "$GITHUB_STEP_SUMMARY"
