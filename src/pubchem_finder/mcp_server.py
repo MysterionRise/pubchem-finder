@@ -44,6 +44,8 @@ from .models import (
     Synonyms,
 )
 
+logger = logging.getLogger(__name__)
+
 T = TypeVar("T")
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -137,6 +139,13 @@ async def _run(fn: Callable[..., T], *args: object, **kwargs: object) -> T:
         ) from exc
     except PubChemFinderError as exc:
         raise ToolError(str(exc)) from exc
+    except Exception as exc:  # a damaged cache or index file, a disk error, or a bug
+        logger.exception("%s failed", getattr(fn, "__name__", "tool"))
+        detail = f"{type(exc).__name__}: {exc}"[:300]
+        raise ToolError(
+            f"Unexpected error ({detail}). If it persists, report it at "
+            f"{REPO_URL}/issues with the server's log."
+        ) from exc
 
 
 @_tool("Look up a PubChem compound", calls_pubchem=True)

@@ -649,7 +649,7 @@ def index_build(
                 ]
                 report = build_chunks(paths, sources, workers, params, say)
         manifest = finalize(paths, say, substructure=with_substructure, workers=workers)
-    except PubChemFinderError as exc:
+    except (PubChemFinderError, OSError) as exc:
         _fail(exc)
         return
     extra = " with substructure search" if manifest.substructure else ""
@@ -663,7 +663,12 @@ def index_build(
 @index_app.command("status")
 def index_status_cmd(home: HomeOpt = None, as_json: JsonFlag = False) -> None:
     """Show whether the local index is built and what it contains."""
-    _emit(service.index_status(home), as_json)
+    try:
+        status = service.index_status(home)
+    except (PubChemFinderError, OSError, ValueError) as exc:  # e.g. a damaged manifest
+        _fail(exc)
+        return
+    _emit(status, as_json)
 
 
 def _emit_hits(result: RemoteSearchResults, as_json: bool) -> None:

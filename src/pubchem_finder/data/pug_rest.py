@@ -7,8 +7,10 @@ Successful responses can be cached on disk (see :mod:`.cache`).
 
 import json
 import logging
+import sqlite3
 import threading
 import time
+import zlib
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, get_args
 from urllib.parse import quote
@@ -21,6 +23,10 @@ from ..models import CompoundRecord
 from .cache import ResponseCache
 
 logger = logging.getLogger(__name__)
+
+# What a damaged or unwritable cache raises; the cache is an optimization, so these
+# fall back to the network instead of failing the request.
+CACHE_ERRORS = (sqlite3.Error, zlib.error, OSError, ValueError)
 
 DEFAULT_BASE_URL = "https://pubchem.ncbi.nlm.nih.gov/rest/pug"
 DEFAULT_VIEW_URL = "https://pubchem.ncbi.nlm.nih.gov/rest/pug_view"
@@ -146,6 +152,7 @@ class PubChemClient:
         self.base_url = base_url.rstrip("/")
         self.view_url = view_url.rstrip("/")
         self.cache = cache
+        self._cache_warned = False
         self.min_interval = min_interval
         self.max_retries = max_retries
         self._owns_client = client is None
@@ -310,16 +317,45 @@ class PubChemClient:
     ) -> dict[str, Any]:
         """Send a request (or answer it from the cache) and return the JSON body."""
         key = ResponseCache.key(method, url, params, data) if self.cache else ""
-        if self.cache is not None:
-            cached = self.cache.get(key)
-            if cached is not None:
-                result: dict[str, Any] = json.loads(cached)
-                return result
+        cached = self._cache_get(key)
+        if cached is not None:
+            return cached
         response = self._send(method, url, params, data)
         payload = self._handle(response)
-        if self.cache is not None:
-            self.cache.put(key, response.content)
+        if isinstance(
+            payload, dict
+        ):  # PubChem answers with an object; cache only those
+            self._cache_put(key, response.content)
         return payload
+
+    def _cache_get(self, key: str) -> dict[str, Any] | None:
+        if self.cache is None:
+            return None
+        try:
+            body = self.cache.get(key)
+            value = json.loads(body) if body is not None else None
+        except CACHE_ERRORS as exc:
+            self._cache_failed("read", exc)
+            return None
+        return value if isinstance(value, dict) else None
+
+    def _cache_put(self, key: str, body: bytes) -> None:
+        if self.cache is None:
+            return
+        try:
+            self.cache.put(key, body)
+        except CACHE_ERRORS as exc:
+            self._cache_failed("write", exc)
+
+    def _cache_failed(self, action: str, exc: Exception) -> None:
+        log = logger.debug if self._cache_warned else logger.warning
+        self._cache_warned = True
+        log(
+            "could not %s the PubChem response cache (%s: %s); using the network",
+            action,
+            type(exc).__name__,
+            exc,
+        )
 
     def _send(
         self,

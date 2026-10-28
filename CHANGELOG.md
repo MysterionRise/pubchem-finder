@@ -35,6 +35,11 @@ All notable changes to this project are documented here. The format follows
 - Indexes whose chunks overlap (for example an `--sdf` file repeating compounds of a
   PubChem chunk) no longer return the same CID twice from `similarity_search` or
   `substructure_search`.
+- Unexpected failures in MCP tools (a damaged cache or index file, a disk error) reach
+  the assistant as a short error naming the problem instead of a bare "Error
+  executing tool". The PubChem response cache falls back to the network when it can't
+  be read or written, and caches only JSON objects. `index status` and `index build`
+  report such errors without a traceback.
 
 ## [2.1.0] - 2026-10-26
 

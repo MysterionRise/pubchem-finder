@@ -66,6 +66,21 @@ async def test_every_tool_is_annotated_read_only_with_a_title():
     assert len(titles) == len(set(titles)) == len(EXPECTED_TOOLS)
 
 
+async def test_unexpected_errors_name_their_cause(monkeypatch, aspirin_smiles):
+    def full_disk(smiles):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("pubchem_finder.service.properties", full_disk)
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "compound_properties", {"smiles": aspirin_smiles}
+        )
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "OSError" in text and "No space left" in text
+    assert "/issues" in text
+
+
 async def test_compound_properties_structured(aspirin_smiles):
     async with Client(mcp) as client:
         result = await client.call_tool(

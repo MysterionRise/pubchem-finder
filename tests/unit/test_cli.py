@@ -123,6 +123,18 @@ def test_index_build_explains_a_version_mismatch(tmp_path, sample_sdfs, monkeypa
     assert isinstance(second.exception, SystemExit)
 
 
+def test_index_status_reports_a_damaged_manifest(tmp_path, built_home):
+    import shutil
+
+    home = tmp_path / "home"
+    shutil.copytree(built_home, home)
+    (home / "index" / "manifest.json").write_text("{")
+    result = runner.invoke(app, ["index", "status", "--home", str(home)])
+    assert result.exit_code == 1
+    assert "error:" in result.output
+    assert isinstance(result.exception, SystemExit)
+
+
 def test_index_build_downloads_with_limit(tmp_path, sample_sdfs, monkeypatch):
     """--limit N lists the mirror, fetches the first N chunks and deletes them after."""
     import shutil
