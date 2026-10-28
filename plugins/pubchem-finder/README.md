@@ -25,18 +25,19 @@ In Claude Code (2.1.275 or later; older versions take the two-step form below):
 ## Use it
 
 Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). The plugin runs
-one pinned release of the package (`uvx pubchem-finder==<version> mcp`); the first start
-downloads it and its dependencies (RDKit, PyArrow, DuckDB) and takes about a minute, later
-starts a few seconds. The lockfile next to the plugin records the exact dependency set
-Anthropic's directory verified. Then ask things like:
+one pinned release of the package (`uvx --python=3.14 pubchem-finder==<version> mcp`);
+the first start downloads it and its dependencies (RDKit, PyArrow, DuckDB) and takes
+about a minute, later starts a few seconds. `--python=3.14` keeps uv off Python 3.15, for
+which FPSim2, numexpr and ndindex publish no wheels yet. The lockfile next to the plugin
+records the exact dependency set Anthropic's directory verified. Then ask things like:
 
 - "What is the molecular weight and XLogP of caffeine? Is it Lipinski-compliant?"
 - "Is ibuprofen hazardous? What does its GHS label say? Cite the sources."
 - "Show me the closest analogues of aspirin and highlight what changed."
 
 For local structure search, build an index once from a terminal:
-`uvx pubchem-finder index build --limit 1 --with-substructure` (PubChem's first 445,000
-compounds; `--all` for everything). The server picks it up automatically.
+`uvx --python 3.14 pubchem-finder index build --limit 1 --with-substructure` (PubChem's
+first 445,000 compounds; `--all` for everything). The server picks it up automatically.
 
 ## Data
 

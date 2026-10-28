@@ -1,7 +1,7 @@
 {
   "name": "pubchem-finder",
   "displayName": "PubChem Finder",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Search PubChem by chemical structure: a local similarity and substructure index, live PubChem data (names, CAS numbers, safety, pharmacology, bioassays) and RDKit chemistry, through the pubchem-finder MCP server.",
   "author": {
     "name": "Konstantin Perikov",
