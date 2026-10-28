@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The Claude plugin runs 2.1.1 and passes `--python=3.14` to uvx, like the other
+  documented launch commands, so plugin users get the tool annotations and stay off
+  Python 3.15.
+
 ## [2.1.1] - 2026-10-28
 
 ### Added

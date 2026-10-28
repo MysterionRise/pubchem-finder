@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12, <3.15"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -793,7 +793,7 @@ wheels = [
 
 [[package]]
 name = "pubchem-finder"
-version = "2.1.0"
+version = "2.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "duckdb" },
@@ -811,9 +811,9 @@ dependencies = [
     { name = "tables" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4f/fb/7e4058a68a5fb1818c975c8b280695fa2c073bf721993ffab86ddb82bb20/pubchem_finder-2.1.0.tar.gz", hash = "sha256:ffb5c4fd805a7479a16d38300454cf1ca7a8d8267ddf2953250f6c0e665037ec", size = 288268, upload-time = "2026-10-26T20:48:44.827Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/df/43/020fb7ebbe91019457f482bcc807deea0a077e80a7d599a8e14cc96b3d7d/pubchem_finder-2.1.1.tar.gz", hash = "sha256:3bc463fc999253e195625f26e166db1d9931c54a0797315fe16393e5e210b2a9", size = 297931, upload-time = "2026-10-28T22:29:33.991Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/65/af/82f22d0ae9c7e4661cd12ec5c26e37dca87c7cf355269beb7c65e726de1a/pubchem_finder-2.1.0-py3-none-any.whl", hash = "sha256:9b488d37ce9605ac1e4093c04a3b6479ec73adbdc684e69d9cd622eb354d50a1", size = 78228, upload-time = "2026-10-26T20:48:43.16Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/b8/2197a7caf2f7b61eefab772c35604b2c9fd103b911d06d129bd26bf6e158/pubchem_finder-2.1.1-py3-none-any.whl", hash = "sha256:f47e4229126c26d1934d0f5a264be633e566549dced9e5a844b0e08e9ce465b3", size = 81471, upload-time = "2026-10-28T22:29:32.439Z" },
 ]
 
 [[package]]
@@ -825,7 +825,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pubchem-finder", specifier = "==2.1.0" }]
+requires-dist = [{ name = "pubchem-finder", specifier = "==2.1.1" }]
 
 [[package]]
 name = "py-cpuinfo"

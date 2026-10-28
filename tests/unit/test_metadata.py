@@ -94,7 +94,7 @@ def test_plugin_release_moves_every_pin(tmp_path, monkeypatch):
     mcp_json = tmp_path / "plugins" / "pubchem-finder" / ".mcp.json"
     config = json.loads(mcp_json.read_text(encoding="utf-8"))
     server = config["mcpServers"]["pubchem-finder"]
-    server["args"] = ["--python=3.14", *server["args"]]
+    server["args"] = ["--python=3.14", "pubchem-finder==1.0.0", "mcp"]
     mcp_json.write_text(json.dumps(config), encoding="utf-8")
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", lambda cmd, check: calls.append(cmd))
@@ -159,9 +159,13 @@ def test_plugin_runs_one_released_version_from_its_lockfile():
 
 
 def test_plugin_command_runs_the_pinned_release():
-    """The directory can pin and verify exactly `uvx <package>==<version>`: no other
-    options, no environment."""
+    """The directory pins and verifies `uvx <package>==<version>`; it blocks an `env`
+    block and any variable but ${CLAUDE_PLUGIN_ROOT}. The one option keeps uv on a
+    Python every dependency has wheels for (see test_published_launch_commands...)."""
     pyproject = (PLUGIN / "pyproject.toml").read_text(encoding="utf-8")
     (pinned,) = re.findall(r'"pubchem-finder==([^"]+)"', pyproject)
     server = _json("plugins/pubchem-finder/.mcp.json")["mcpServers"]["pubchem-finder"]
-    assert server == {"command": "uvx", "args": [f"pubchem-finder=={pinned}", "mcp"]}
+    assert server == {
+        "command": "uvx",
+        "args": [f"--python={LAUNCH_PYTHON}", f"pubchem-finder=={pinned}", "mcp"],
+    }
