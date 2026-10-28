@@ -135,28 +135,42 @@ class LocalIndex:
     def search(
         self, query: Chem.Mol, threshold: float, top_k: int, metric: Metric = "tanimoto"
     ) -> list[tuple[int, float]]:
-        """Top ``top_k`` (cid, similarity) pairs at or above ``threshold``, best first."""
+        """Top ``top_k`` (cid, similarity) pairs at or above ``threshold``, best first.
+
+        Each CID appears once. Chunks can overlap (an ``--sdf`` file repeating
+        compounds of a PubChem chunk), and the copies of a CID take FPSim2's slots,
+        so the search asks for more until it has ``top_k`` distinct CIDs or no
+        more hits exist; without duplicates that is a single FPSim2 call.
+        """
         engine = self._ensure_loaded()
-        if self._in_memory:
-            hits = engine.top_k(
-                query,
-                k=top_k,
-                threshold=threshold,
-                metric=metric,
-                n_workers=self.n_workers,
-            )
-        else:
-            # FPSim2 parallelizes on-disk search with forked processes, which can
-            # deadlock when called from a threaded server (the MCP server runs
-            # searches on worker threads), so on-disk search stays single-process.
-            hits = engine.on_disk_top_k(
-                query, k=top_k, threshold=threshold, metric=metric, n_workers=1
-            )
-        pairs = [(int(h["mol_id"]), round(float(h["coeff"]), 4)) for h in hits]
+        k = top_k
+        while True:
+            hits = self._top_k(engine, query, threshold, k, metric)
+            best: dict[int, float] = {}
+            for hit in hits:
+                cid, sim = int(hit["mol_id"]), round(float(hit["coeff"]), 4)
+                best[cid] = max(sim, best.get(cid, sim))
+            if len(best) >= top_k or len(hits) < k:
+                break
+            k *= 2
         # FPSim2 returns equal scores in whatever order its threads finish. Break
         # ties by CID so results are stable and long-known compounds come first
         # (e.g. aspirin, CID 2244, before its 11C-labelled twin, CID 450661).
-        return sorted(pairs, key=lambda pair: (-pair[1], pair[0]))
+        return sorted(best.items(), key=lambda pair: (-pair[1], pair[0]))[:top_k]
+
+    def _top_k(
+        self, engine: Any, query: Chem.Mol, threshold: float, k: int, metric: Metric
+    ) -> Any:
+        if self._in_memory:
+            return engine.top_k(
+                query, k=k, threshold=threshold, metric=metric, n_workers=self.n_workers
+            )
+        # FPSim2 parallelizes on-disk search with forked processes, which can
+        # deadlock when called from a threaded server (the MCP server runs
+        # searches on worker threads), so on-disk search stays single-process.
+        return engine.on_disk_top_k(
+            query, k=k, threshold=threshold, metric=metric, n_workers=1
+        )
 
     def _ensure_pattern_loaded(self) -> Any:
         with self._lock:
@@ -183,8 +197,9 @@ class LocalIndex:
             return self._pattern_engine
 
     def screen(self, query: Chem.Mol) -> np.ndarray:
-        """Sorted CIDs whose pattern fingerprint has every bit of the query's: a
-        superset of the compounds containing ``query``."""
+        """Sorted, distinct CIDs whose pattern fingerprint has every bit of the
+        query's: a superset of the compounds containing ``query``. Distinct because
+        overlapping chunks can hold a CID more than once."""
         engine = self._ensure_pattern_loaded()
         # Fingerprint the query here rather than letting FPSim2 parse it, so
         # SMARTS query molecules work too.
@@ -193,7 +208,7 @@ class LocalIndex:
             cids = engine.substructure(pattern_fp, n_workers=self.n_workers)
         else:  # single process on disk, see search()
             cids = engine.on_disk_substructure(pattern_fp, n_workers=1)
-        return np.sort(np.asarray(cids, dtype=np.int64))
+        return np.unique(np.asarray(cids, dtype=np.int64))
 
     def substructure(
         self,

@@ -284,3 +284,194 @@ def test_search_breaks_ties_by_cid(built_home, monkeypatch):
         (338, 0.7),
         (4133, 0.7),
     ]
+
+
+# --- Index merge safety: RDKit/FPSim2 upgrades and failed merges -------------
+
+OLD_RDKIT = "2000.01.1"
+
+
+def _build_old_chunk(paths, sdf, monkeypatch):
+    """Build and finalize one chunk as if an older RDKit had fingerprinted it."""
+    import rdkit
+
+    with monkeypatch.context() as m:
+        m.setattr(rdkit, "__version__", OLD_RDKIT)
+        build_chunks(paths, sources([sdf]), workers=1)
+        finalize(paths)
+    return paths.load_manifest()
+
+
+def _index_files(paths):
+    return sorted(p.name for p in paths.index_dir.iterdir())
+
+
+def test_chunk_stats_record_versions(built_home):
+    from importlib.metadata import version
+
+    import rdkit
+
+    stats = IndexPaths(built_home).completed_chunks()[0]
+    assert stats.rdkit_version == rdkit.__version__
+    assert stats.fpsim2_version == version("fpsim2")
+
+
+def test_extending_after_an_rdkit_upgrade_is_refused_and_keeps_the_index(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    paths = IndexPaths(tmp_path)
+    before = _build_old_chunk(paths, sample_sdfs[0], monkeypatch)
+    with pytest.raises(IndexBuildError, match=f"RDKit {OLD_RDKIT}") as err:
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    assert "still searchable" in str(err.value)
+    assert not paths.chunk_stats(CHUNK_NAMES[1]).exists()
+    assert paths.load_manifest() == before
+    found = service.similarity_search(ASPIRIN, threshold=0.3, home=tmp_path)
+    assert found.hits[0].cid == 2244
+
+
+def test_chunks_from_2_1_0_are_checked_through_their_h5(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """Chunks built before 2.1.1 record no versions in their JSON."""
+    paths = IndexPaths(tmp_path)
+    _build_old_chunk(paths, sample_sdfs[0], monkeypatch)
+    stats_file = paths.chunk_stats(CHUNK_NAMES[0])
+    stats = json.loads(stats_file.read_text())
+    del stats["rdkit_version"], stats["fpsim2_version"]
+    stats_file.write_text(json.dumps(stats))
+    with pytest.raises(IndexBuildError, match=f"RDKit {OLD_RDKIT}"):
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+
+
+def test_finalize_refuses_mixed_versions_before_touching_the_index(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    from pubchem_finder.index.builder import build_chunk
+
+    paths = IndexPaths(tmp_path)
+    before = _build_old_chunk(paths, sample_sdfs[0], monkeypatch)
+    fingerprints = paths.fingerprints.read_bytes()
+    build_chunk(str(sample_sdfs[1]), str(tmp_path))  # skips build_chunks' check
+    with pytest.raises(IndexBuildError, match="different versions"):
+        finalize(paths)
+    assert paths.load_manifest() == before
+    assert paths.fingerprints.read_bytes() == fingerprints
+    assert _index_files(paths) == ["manifest.json", "pubchem.h5"]
+
+
+def test_failed_merge_keeps_the_previous_index(tmp_path, sample_sdfs, monkeypatch):
+    from pubchem_finder.index import builder
+
+    paths = IndexPaths(tmp_path)
+    build_chunks(paths, sources([sample_sdfs[0]]), workers=1)
+    before = finalize(paths)
+    build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+
+    def full_disk(src, dest):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(builder, "sort_fpsim2_file", full_disk)
+    with pytest.raises(IndexBuildError, match=r"No space left.*unchanged"):
+        finalize(paths)
+    assert paths.load_manifest() == before
+    assert _index_files(paths) == ["manifest.json", "pubchem.h5"]
+
+
+def test_failed_swap_restores_the_manifest(tmp_path, sample_sdfs, monkeypatch):
+    """On Windows a running server can hold pubchem.h5 open, so replacing fails."""
+    import os
+
+    paths = IndexPaths(tmp_path)
+    build_chunks(paths, sources([sample_sdfs[0]]), workers=1)
+    before = finalize(paths)
+    build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    real_replace = os.replace
+
+    def locked(src, dst):
+        if str(dst).endswith("pubchem.h5"):
+            raise PermissionError(13, "The process cannot access the file")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", locked)
+    with pytest.raises(IndexBuildError, match="stop it and run the build again"):
+        finalize(paths)
+    monkeypatch.undo()
+    assert paths.load_manifest() == before
+    assert _index_files(paths) == ["manifest.json", "pubchem.h5"]
+
+
+def test_unreadable_sdf_is_an_index_build_error(tmp_path, sample_sdfs):
+    data = sample_sdfs[1].read_bytes()
+    broken = tmp_path / f"{CHUNK_NAMES[1]}.sdf.gz"
+    broken.write_bytes(data[: len(data) // 2])
+    with pytest.raises(IndexBuildError, match=f"Building {CHUNK_NAMES[1]} failed"):
+        build_chunks(IndexPaths(tmp_path / "home"), sources([broken]), workers=1)
+
+
+# --- Overlapping chunks: each CID once ----------------------------------------
+
+
+@pytest.fixture(scope="module")
+def overlap_home(tmp_path_factory, sample_sdfs):
+    """Chunk A plus an SDF that repeats three of its compounds."""
+    from tests.conftest import CHUNK_A, write_sdf
+
+    d = tmp_path_factory.mktemp("overlap")
+    mine = write_sdf(d / "my_compounds.sdf", CHUNK_A[:3], gz=False)
+    paths = IndexPaths(d / "home")
+    build_chunks(paths, sources([sample_sdfs[0], mine]), workers=1)
+    finalize(paths, substructure=True)
+    return paths.home
+
+
+def test_overlapping_chunks_give_each_cid_once(overlap_home):
+    found = service.similarity_search(
+        ASPIRIN, threshold=0.01, top_k=1000, home=overlap_home
+    )
+    cids = [h.cid for h in found.hits]
+    assert cids[0] == 2244
+    assert len(cids) == len(set(cids)) == 5
+    top3 = service.similarity_search(
+        ASPIRIN, threshold=0.01, top_k=3, home=overlap_home
+    )
+    assert len({h.cid for h in top3.hits}) == 3
+
+
+def test_overlapping_chunks_give_each_substructure_hit_once(overlap_home):
+    found = service.substructure_search("c1ccccc1C(=O)O", home=overlap_home)
+    assert [h.cid for h in found.hits] == [243, 338, 2244, 4133]
+
+
+def test_search_asks_for_more_when_duplicates_crowd_out_hits(built_home, monkeypatch):
+    import numpy as np
+    from rdkit import Chem
+
+    rows = np.array(
+        [
+            (2244, 1.0),
+            (2244, 1.0),
+            (338, 0.8),
+            (338, 0.8),
+            (4133, 0.7),
+            (4133, 0.7),
+            (243, 0.6),
+        ],
+        dtype=[("mol_id", "<u4"), ("coeff", "<f4")],
+    )
+    asked: list[int] = []
+
+    class StubEngine:
+        def top_k(self, query, k, **kwargs):
+            asked.append(k)
+            return rows[:k]
+
+    index = LocalIndex(built_home, mode="memory")
+    monkeypatch.setattr(index, "_ensure_loaded", StubEngine)
+    index._in_memory = True
+    assert index.search(Chem.MolFromSmiles(ASPIRIN), 0.5, 3) == [
+        (2244, 1.0),
+        (338, 0.8),
+        (4133, 0.7),
+    ]
+    assert asked == [3, 6]

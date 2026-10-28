@@ -17,18 +17,19 @@ others, [help is welcome](#add-your-client).
 |---|---|
 | Transport | stdio (a local command); or streamable HTTP, see [Over HTTP](#over-http) |
 | Command | `uvx` (install [uv](https://docs.astral.sh/uv/getting-started/installation/) first) |
-| Arguments | `pubchem-finder`, `mcp` |
+| Arguments | `--python`, `3.14`, `pubchem-finder`, `mcp` |
 | Environment (optional) | `PUBCHEM_FINDER_HOME=/path` to keep the local index somewhere other than the default data directory |
 
-Before adding it to a client, run `uvx pubchem-finder --version` once in a terminal. The
+Before adding it to a client, run `uvx --python 3.14 pubchem-finder --version` once in a
+terminal. The
 first run downloads Python packages (RDKit, PyArrow, DuckDB...) and can take a minute,
 longer than some clients wait for a server to start; later starts take about a second.
 
 If a desktop app can't find `uvx`, use its full path as the command: `which uvx` on macOS
 and Linux (usually `~/.local/bin/uvx`), `where uvx` on Windows. Apps started from the dock
 or Start menu often don't see your shell's `PATH`. If you'd rather not use uv,
-`pip install pubchem-finder` and use `pubchem-finder` as the command with `mcp` as the only
-argument.
+`pip install pubchem-finder` (Python 3.11 to 3.14) and use `pubchem-finder` as the command
+with `mcp` as the only argument.
 
 Most clients take the JSON shape Claude Desktop uses:
 
@@ -37,11 +38,16 @@ Most clients take the JSON shape Claude Desktop uses:
   "mcpServers": {
     "pubchem-finder": {
       "command": "uvx",
-      "args": ["pubchem-finder", "mcp"]
+      "args": ["--python", "3.14", "pubchem-finder", "mcp"]
     }
   }
 }
 ```
+
+`--python 3.14` keeps uv on a Python that every dependency publishes wheels for: uv
+otherwise picks its newest Python, and on 3.15 FPSim2, numexpr and ndindex have to be
+compiled. The tested setups below show each config as its tester ran it; add those two
+arguments if yours lack them.
 
 A few use their own shape: VS Code's `mcp.json` has `servers` with `"type": "stdio"`,
 Codex CLI uses TOML (`[mcp_servers.pubchem-finder]`), and Zed uses `context_servers` in its

@@ -37,6 +37,90 @@ def test_registry_name_marker_is_in_the_readme():
     assert f"<!-- mcp-name: {name} -->" in lines
 
 
+def test_icon_urls_point_at_a_file_in_the_repo():
+    """The server and the registry entry show the plugin's icon from master; moving
+    the file would break both silently."""
+    from pubchem_finder.mcp_server import ICON_URL
+
+    prefix = "https://raw.githubusercontent.com/MysterionRise/pubchem-finder/master/"
+    urls = {ICON_URL, *(icon["src"] for icon in _json("server.json")["icons"])}
+    assert urls == {ICON_URL}
+    assert ICON_URL.startswith(prefix)
+    assert (ROOT / ICON_URL.removeprefix(prefix)).is_file()
+
+
+LAUNCH_PYTHON = "3.14"
+
+
+def test_published_launch_commands_pin_a_supported_python():
+    """uvx runs uv's newest Python whatever the package supports, and FPSim2, numexpr
+    and ndindex publish no wheels for 3.15: every command we publish pins 3.14."""
+    import tomllib
+
+    package = _json("server.json")["packages"][0]
+    runtime = {(a["name"], a["value"]) for a in package["runtimeArguments"]}
+    assert ("--python", LAUNCH_PYTHON) in runtime
+    pinned = f'"args": ["--python", "{LAUNCH_PYTHON}", "pubchem-finder", "mcp"]'
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    clients = (ROOT / "docs" / "clients.md").read_text(encoding="utf-8")
+    general = clients.split("\n## Clients")[
+        0
+    ]  # tested setups stay as their testers ran them
+    for name, text in {"README.md": readme, "docs/clients.md": general}.items():
+        assert pinned in text, name
+        assert "uvx pubchem-finder" not in text, name
+        assert '"args": ["pubchem-finder", "mcp"]' not in text, name
+    example = (ROOT / "examples" / "mcp_client.py").read_text(encoding="utf-8")
+    assert f"uvx --python {LAUNCH_PYTHON} pubchem-finder" in example
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert (
+        f"Programming Language :: Python :: {LAUNCH_PYTHON}"
+        in (project["project"]["classifiers"])
+    )
+
+
+def test_plugin_release_moves_every_pin(tmp_path, monkeypatch):
+    """scripts/plugin_release.py finds the pinned argument wherever it sits, so a
+    flag before it (such as --python) is never overwritten."""
+    import importlib.util
+    import shutil
+    import subprocess
+
+    shutil.copytree(ROOT / "plugins", tmp_path / "plugins")
+    (tmp_path / ".claude-plugin").mkdir()
+    shutil.copy(
+        ROOT / ".claude-plugin" / "marketplace.json", tmp_path / ".claude-plugin"
+    )
+    mcp_json = tmp_path / "plugins" / "pubchem-finder" / ".mcp.json"
+    config = json.loads(mcp_json.read_text(encoding="utf-8"))
+    server = config["mcpServers"]["pubchem-finder"]
+    server["args"] = ["--python=3.14", *server["args"]]
+    mcp_json.write_text(json.dumps(config), encoding="utf-8")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run", lambda cmd, check: calls.append(cmd))
+    monkeypatch.chdir(tmp_path)
+    spec = importlib.util.spec_from_file_location(
+        "plugin_release", ROOT / "scripts" / "plugin_release.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    module.main("9.9.9")
+
+    plugin = tmp_path / "plugins" / "pubchem-finder"
+    args = json.loads(mcp_json.read_text(encoding="utf-8"))["mcpServers"][
+        "pubchem-finder"
+    ]["args"]
+    assert args == ["--python=3.14", "pubchem-finder==9.9.9", "mcp"]
+    assert '"pubchem-finder==9.9.9"' in (plugin / "pyproject.toml").read_text()
+    manifest = json.loads((plugin / ".claude-plugin" / "plugin.json").read_text())
+    assert manifest["version"] == "9.9.9"
+    market = json.loads((tmp_path / ".claude-plugin" / "marketplace.json").read_text())
+    assert market["plugins"][0]["version"] == "9.9.9"
+    assert calls == [["uv", "lock", "--project", str(Path("plugins/pubchem-finder"))]]
+
+
 PLUGIN = ROOT / "plugins" / "pubchem-finder"
 
 

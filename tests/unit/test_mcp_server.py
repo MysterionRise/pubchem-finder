@@ -46,6 +46,41 @@ async def test_tools_are_listed_with_schemas():
     ]
 
 
+async def test_every_tool_is_annotated_read_only_with_a_title():
+    """Anthropic's Software Directory Policy requires readOnlyHint, destructiveHint
+    and title on every tool; openWorldHint marks the tools that call PubChem."""
+    async with Client(mcp) as client:
+        result = await client.list_tools()
+    titles = []
+    for tool in result.tools:
+        notes = tool.annotations
+        assert notes is not None, tool.name
+        assert tool.title and tool.title == notes.title, tool.name
+        assert notes.read_only_hint is True, tool.name
+        assert notes.destructive_hint is False, tool.name
+        assert notes.idempotent_hint is True, tool.name
+        assert notes.open_world_hint is tool.name.startswith("pubchem_"), tool.name
+        wire = tool.model_dump(by_alias=True, exclude_none=True)["annotations"]
+        assert {"title", "readOnlyHint", "destructiveHint"} <= set(wire), tool.name
+        titles.append(tool.title)
+    assert len(titles) == len(set(titles)) == len(EXPECTED_TOOLS)
+
+
+async def test_unexpected_errors_name_their_cause(monkeypatch, aspirin_smiles):
+    def full_disk(smiles):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("pubchem_finder.service.properties", full_disk)
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "compound_properties", {"smiles": aspirin_smiles}
+        )
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "OSError" in text and "No space left" in text
+    assert "/issues" in text
+
+
 async def test_compound_properties_structured(aspirin_smiles):
     async with Client(mcp) as client:
         result = await client.call_tool(

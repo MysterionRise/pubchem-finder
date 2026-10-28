@@ -48,7 +48,7 @@ Python and everything else on first run.
 **Claude Code:**
 
 ```bash
-claude mcp add pubchem-finder -- uvx pubchem-finder mcp
+claude mcp add pubchem-finder -- uvx --python 3.14 pubchem-finder mcp
 ```
 
 or as a plugin, which also works in Cowork:
@@ -64,7 +64,7 @@ or as a plugin, which also works in Cowork:
   "mcpServers": {
     "pubchem-finder": {
       "command": "uvx",
-      "args": ["pubchem-finder", "mcp"]
+      "args": ["--python", "3.14", "pubchem-finder", "mcp"]
     }
   }
 }
@@ -132,12 +132,14 @@ before binding it to anything but `127.0.0.1`.
 ## Use it from the command line
 
 ```bash
-uvx pubchem-finder lookup caffeine                     # PubChem record by name, CID, SMILES or InChIKey
-uvx pubchem-finder props "CC(=O)Oc1ccccc1C(=O)O"       # RDKit descriptors (offline)
+uvx --python 3.14 pubchem-finder lookup caffeine                # PubChem record by name, CID, SMILES or InChIKey
+uvx --python 3.14 pubchem-finder props "CC(=O)Oc1ccccc1C(=O)O"  # RDKit descriptors (offline)
 ```
 
-`uvx` runs the latest release without installing it. To install the command once:
-`uv tool install pubchem-finder` (or `pip install pubchem-finder`). The examples below
+`uvx` runs the package without installing it; `--python 3.14` keeps uv off Python 3.15
+(see [Troubleshooting](#troubleshooting)). To install the command once:
+`uv tool install --python 3.14 pubchem-finder` (or `pip install pubchem-finder` on Python
+3.11 to 3.14). The examples below
 assume it is installed. To try the development version, replace `pubchem-finder` with
 `--from git+https://github.com/MysterionRise/pubchem-finder pubchem-finder` in any `uvx`
 command.
@@ -286,6 +288,11 @@ API key). Examples for agent frameworks are welcome, see
   and retried when PubChem is busy. Structure searches across all of PubChem can time out
   on very generic fragments; use a more specific query, or the local index.
 - **Behind a proxy:** set `HTTPS_PROXY`; all requests to PubChem and NCBI honour it.
+- **Python 3.15.** pubchem-finder runs on Python 3.11 to 3.14. FPSim2, numexpr and ndindex
+  publish no wheels for 3.15 yet, so installing on 3.15 compiles them (about half a minute
+  with a C/C++ compiler) or fails without one. `uvx` uses uv's newest Python whatever the
+  package supports, which is why the commands here pass `--python 3.14`; keep it in any
+  command or client config you write yourself.
 - **Linux on ARM (aarch64):** FPSim2 publishes no wheel there, so installing needs a C++
   compiler to build it.
 - **Starting over:** `pubchem-finder cache clear` empties the response cache; deleting the

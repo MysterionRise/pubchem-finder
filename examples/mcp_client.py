@@ -4,11 +4,11 @@
 # ///
 """Call pubchem-finder's MCP tools from plain Python, with no agent framework.
 
-    uv run examples/mcp_client.py                      # starts `uvx pubchem-finder mcp`
+    uv run examples/mcp_client.py      # starts `uvx --python 3.14 pubchem-finder mcp`
     PUBCHEM_FINDER_COMMAND=.venv/bin/pubchem-finder uv run examples/mcp_client.py
 
 Lists the tools, computes aspirin's properties (offline) and, if a local index exists
-(`uvx pubchem-finder index build --limit 1`), finds its closest analogues. No API key
+(`uvx --python 3.14 pubchem-finder index build --limit 1`), finds its closest analogues. No API key
 needed. Agent frameworks (OpenAI Agents SDK, LangChain, PydanticAI...) connect to the
 same server with the same command; see
 https://github.com/MysterionRise/pubchem-finder/issues/34.
@@ -26,7 +26,7 @@ ASPIRIN = "CC(=O)Oc1ccccc1C(=O)O"
 
 async def main() -> None:
     command = shlex.split(
-        os.environ.get("PUBCHEM_FINDER_COMMAND", "uvx pubchem-finder"),
+        os.environ.get("PUBCHEM_FINDER_COMMAND", "uvx --python 3.14 pubchem-finder"),
         posix=os.name != "nt",
     )
     params = StdioServerParameters(

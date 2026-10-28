@@ -38,6 +38,14 @@ class ChunkStats(BaseModel):
     seconds: float
     fp_type: str
     fp_params: dict[str, Any]
+    rdkit_version: str | None = Field(
+        default=None,
+        description="RDKit that fingerprinted the chunk (None: built by 2.1.0 or "
+        "earlier; the chunk's .h5 records it)",
+    )
+    fpsim2_version: str | None = Field(
+        default=None, description="FPSim2 that wrote the chunk's .h5"
+    )
 
 
 def fpsim2_memory_bytes(n_compounds: int, fp_bits: int) -> int:
@@ -59,6 +67,9 @@ class PatternChunkStats(BaseModel):
     n_failed: int = Field(description="Stored SMILES RDKit could not parse")
     seconds: float
     rdkit_version: str
+    fpsim2_version: str | None = Field(
+        default=None, description="FPSim2 that wrote the .h5 (None: 2.1.0 or earlier)"
+    )
 
 
 class SubstructureInfo(BaseModel):

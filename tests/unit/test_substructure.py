@@ -287,3 +287,27 @@ def test_small_metadata_batches_give_the_same_answer(substructure_home):
     )
     assert [r["cid"] for r in found.rows] == oracle("[#6]", "smarts")
     assert found.exhaustive is True
+
+
+def test_pattern_chunks_rebuilt_when_fpsim2_changes(tmp_path, substructure_home):
+    """FPSim2 refuses to merge files written by different versions."""
+    home = tmp_path / "home"
+    shutil.copytree(substructure_home, home)
+    paths = IndexPaths(home)
+    stale = paths.pattern_stats(INDEXED_CHUNKS[0])
+    stale.write_text(
+        json.dumps({**json.loads(stale.read_text()), "fpsim2_version": "0.0.1"})
+    )
+    # A chunk from 2.1.0 records no FPSim2 version; its .h5 says it is current.
+    legacy = paths.pattern_stats(INDEXED_CHUNKS[1])
+    stats = json.loads(legacy.read_text())
+    del stats["fpsim2_version"]
+    legacy.write_text(json.dumps(stats))
+
+    events: list[str] = []
+    finalize(paths, events.append, force=True)
+    rebuilt = [e for e in events if "pattern fingerprints for" in e]
+    assert len(rebuilt) == 1 and INDEXED_CHUNKS[0] in rebuilt[0]
+    assert [h.cid for h in service.substructure_search("c1ccccc1", home=home).hits] == (
+        oracle("c1ccccc1", "smiles")
+    )

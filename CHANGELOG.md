@@ -6,8 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-10-28
+
 ### Added
 
+- Every MCP tool has a title and annotations (read-only, non-destructive, idempotent;
+  open-world for the `pubchem_*` tools, which call PubChem), as Anthropic's Software
+  Directory Policy requires. The server reports its title, website and icon, and the
+  MCP registry entry shows the icon.
 - docs/clients.md has a tested setup for VS Code with GitHub Copilot, the first from an
   outside contributor (@ashwinruke, [#37](https://github.com/MysterionRise/pubchem-finder/pull/37)).
   Its notes cover a Copilot quirk worth knowing: the model can show a `similarity_search`
@@ -15,11 +21,33 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- The documented launch commands, the example client and the MCP registry entry pass
+  `--python 3.14` to uvx. uvx uses uv's newest Python whatever the package supports, and
+  on Python 3.15 FPSim2, numexpr and ndindex publish no wheels yet, so installing
+  compiles them (about half a minute with a C/C++ compiler) or fails without one. CI
+  checks that dependencies install from wheels on Python 3.11 and 3.14 on Linux, macOS
+  and Windows, and a weekly job reports when Python 3.15 catches up.
 - The Claude plugin runs one pinned release (`uvx pubchem-finder==2.1.0 mcp`), ships a
   lockfile (`plugins/pubchem-finder/pyproject.toml` and `uv.lock`: the exact dependency
   set, from PyPI with hashes) and has an icon and documentation and support links, as
   Anthropic's plugin directory requires. `make plugin-lock VERSION=...` points it at a new
   release; tests keep its files in step and never ahead of the package.
+
+### Fixed
+
+- Extending an index after an RDKit or FPSim2 upgrade no longer leaves it unusable:
+  `index build` checks which versions fingerprinted the existing chunks before
+  downloading anything and says what to do, and a failed merge keeps the previous index
+  searchable (the merged file replaces it only when complete). Chunks record their RDKit
+  and FPSim2 versions, and pattern chunks are rebuilt when FPSim2 changes.
+- Indexes whose chunks overlap (for example an `--sdf` file repeating compounds of a
+  PubChem chunk) no longer return the same CID twice from `similarity_search` or
+  `substructure_search`.
+- Unexpected failures in MCP tools (a damaged cache or index file, a disk error) reach
+  the assistant as a short error naming the problem instead of a bare "Error
+  executing tool". The PubChem response cache falls back to the network when it can't
+  be read or written, and caches only JSON objects. `index status` and `index build`
+  report such errors without a traceback.
 
 ## [2.1.0] - 2026-10-26
 
@@ -131,7 +159,8 @@ with a local index you can build on a laptop.
 An Indigo + Elasticsearch indexer for PubChem SDF dumps. It was never released as a
 package.
 
-[Unreleased]: https://github.com/MysterionRise/pubchem-finder/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/MysterionRise/pubchem-finder/compare/v2.1.1...HEAD
+[2.1.1]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.1.1
 [2.1.0]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.1.0
 [2.0.1]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.0.1
 [2.0.0]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.0.0

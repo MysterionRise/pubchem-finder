@@ -96,3 +96,52 @@ def test_errors_are_not_cached(cached_client):
             cached_client.compound_json(2244, "synonyms")
         assert cached_client.compound_json(2244, "synonyms") == fx.SYNONYMS
     assert route.call_count == 2
+
+
+# --- A damaged or unwritable cache falls back to the network ------------------
+
+SYN_URL = fx.REST + "/compound/cid/2244/synonyms/JSON"
+
+
+def test_cache_failures_fall_back_to_network(cached_client, monkeypatch):
+    import sqlite3
+
+    def broken(*args):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(cached_client.cache, "get", broken)
+    monkeypatch.setattr(cached_client.cache, "put", broken)
+    with respx.mock() as router:
+        route = router.get(SYN_URL).respond(200, json=fx.SYNONYMS)
+        assert cached_client.compound_json(2244, "synonyms") == fx.SYNONYMS
+        assert cached_client.compound_json(2244, "synonyms") == fx.SYNONYMS
+    assert route.call_count == 2
+
+
+def test_corrupt_cache_entry_is_refetched(cached_client):
+    import sqlite3
+    import zlib
+
+    with respx.mock() as router:
+        route = router.get(SYN_URL).respond(200, json=fx.SYNONYMS)
+        cached_client.compound_json(2244, "synonyms")
+        with sqlite3.connect(cached_client.cache.path) as con:
+            con.execute("UPDATE responses SET body = ?", (zlib.compress(b"\xffjunk"),))
+        assert cached_client.compound_json(2244, "synonyms") == fx.SYNONYMS
+        assert cached_client.compound_json(2244, "synonyms") == fx.SYNONYMS
+    assert route.call_count == 2  # refetched once, then served from the cache again
+
+
+def test_damaged_cache_file_falls_back_to_network(cached_client):
+    cached_client.cache.path.write_bytes(b"this is not a database" * 100)
+    with respx.mock() as router:
+        router.get(SYN_URL).respond(200, json=fx.SYNONYMS)
+        assert cached_client.compound_json(2244, "synonyms") == fx.SYNONYMS
+
+
+def test_only_json_objects_are_cached(cached_client):
+    with respx.mock() as router:
+        route = router.get(SYN_URL).respond(200, json=[])
+        assert cached_client.request("GET", SYN_URL) == []
+        assert cached_client.request("GET", SYN_URL) == []
+    assert route.call_count == 2
