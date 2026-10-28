@@ -63,6 +63,38 @@ jobs:
           name: coverage-xml
           path: coverage.xml
 
+  # uvx picks uv's newest Python whatever the package supports, so the published
+  # commands pass --python 3.14. Check that every dependency installs from wheels on
+  # the oldest and the pinned Python, on each platform, and that server.json (which
+  # carries the pin for MCP registry clients) matches the registry's schema.
+  wheels:
+    name: wheels (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.2
+
+      - name: Dependencies resolve to wheels only
+        shell: bash
+        run: |
+          for platform in x86_64-manylinux_2_28 aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc; do
+            echo "::group::$platform"
+            uv pip compile pyproject.toml --quiet --no-header --only-binary :all: \
+              --python-version "${{ matrix.python-version }}" --python-platform "$platform"
+            echo "::endgroup::"
+          done
+
+      - name: server.json matches the MCP registry schema
+        if: matrix.python-version == '3.14'
+        run: uvx check-jsonschema --schemafile https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json server.json
+
   # Build the wheel, install it the way a user would (fresh environment, newest
   # compatible dependencies from PyPI, not the lockfile) and smoke-test the
   # installed command and MCP server.
@@ -91,6 +123,12 @@ jobs:
         run: |
           uv venv .smoke --python 3.12
           uv pip install --python .smoke dist/*.whl
+
+      # The published launch command: uvx with --python 3.14, nothing built from
+      # source. setup-uv sets UV_PYTHON, which would hide a missing --python.
+      - name: Run the wheel the way the docs launch it
+        shell: bash
+        run: env -u UV_PYTHON uvx --no-build --python 3.14 --from "$(ls dist/*.whl)" pubchem-finder --version
 
       - name: Smoke test
         shell: bash

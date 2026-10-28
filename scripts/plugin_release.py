@@ -44,9 +44,16 @@ def main(version: str) -> None:
         sys.exit(f"expected one pubchem-finder pin in {pyproject}, found {count}")
     pyproject.write_text(text, encoding="utf-8")
     _edit_json(PLUGIN / ".claude-plugin" / "plugin.json", ["version"], version)
+    mcp_json = PLUGIN / ".mcp.json"
+    args = json.loads(mcp_json.read_text(encoding="utf-8"))["mcpServers"][
+        "pubchem-finder"
+    ]["args"]
+    pins = [i for i, arg in enumerate(args) if arg.startswith("pubchem-finder==")]
+    if len(pins) != 1:
+        sys.exit(f"expected one pubchem-finder== argument in {mcp_json}, found {args}")
     _edit_json(
-        PLUGIN / ".mcp.json",
-        ["mcpServers", "pubchem-finder", "args", 0],
+        mcp_json,
+        ["mcpServers", "pubchem-finder", "args", pins[0]],
         f"pubchem-finder=={version}",
     )
     _edit_json(

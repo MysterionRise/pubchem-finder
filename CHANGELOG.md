@@ -19,6 +19,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- The documented launch commands, the example client and the MCP registry entry pass
+  `--python 3.14` to uvx. uvx uses uv's newest Python whatever the package supports, and
+  on Python 3.15 FPSim2, numexpr and ndindex publish no wheels yet, so installing
+  compiles them (about half a minute with a C/C++ compiler) or fails without one. CI
+  checks that dependencies install from wheels on Python 3.11 and 3.14 on Linux, macOS
+  and Windows, and a weekly job reports when Python 3.15 catches up.
 - The Claude plugin runs one pinned release (`uvx pubchem-finder==2.1.0 mcp`), ships a
   lockfile (`plugins/pubchem-finder/pyproject.toml` and `uv.lock`: the exact dependency
   set, from PyPI with hashes) and has an icon and documentation and support links, as

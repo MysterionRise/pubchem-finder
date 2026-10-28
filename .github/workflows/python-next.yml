@@ -1,0 +1,62 @@
+name: Next Python
+
+# Weekly: does the latest release still install from wheels on the Python the docs
+# pin (3.14), and has Python 3.15 caught up? FPSim2, numexpr and ndindex published no
+# 3.15 wheels when 3.15 came out, which is why the launch commands pass
+# --python 3.14. When the canary passes, that pin can go.
+
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  next-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.2
+
+      - name: Latest release on the pinned Python
+        run: |
+          latest=$(curl -fsS https://pypi.org/pypi/pubchem-finder/json | jq -r .info.version)
+          echo "LATEST=$latest" >> "$GITHUB_ENV"
+          uvx --no-build --python 3.14 "pubchem-finder==$latest" --version
+
+      - name: Python 3.15 canary
+        id: canary
+        continue-on-error: true
+        run: |
+          uv python install 3.15
+          uvx --no-build --python 3.15 "pubchem-finder==$LATEST" --version
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "## pubchem-finder $LATEST"
+            echo
+            echo "- Python 3.14 (the documented pin): installs from wheels"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.canary.outcome }}" = success ]; then
+            echo "- Python 3.15: installs from wheels; the --python 3.14 pin can be relaxed" >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::pubchem-finder $LATEST installs from wheels on Python 3.15; the --python 3.14 pin can be relaxed"
+            exit 0
+          fi
+          echo "- Python 3.15: needs a source build for:" >> "$GITHUB_STEP_SUMMARY"
+          # A wheel installs on 3.15 if it is pure Python, built for 3.15, or abi3.
+          WHEEL_FOR_315='[.urls[].filename | select(
+            test("-(py3[^-]*|py2[.]py3|cp315[^-]*)-[^-]+-[^-]+[.]whl$")
+            or test("-cp3[0-9]+-abi3[^-]*-[^-]+[.]whl$"))] | length > 0'
+          uv pip compile --quiet --no-header --python-version 3.15 - <<< "pubchem-finder==$LATEST" \
+            | grep -E '^[A-Za-z0-9_.-]+==' > pins.txt
+          while IFS='=' read -r name _ version; do
+            if ! curl -fsS "https://pypi.org/pypi/$name/$version/json" \
+                | jq -e "$WHEEL_FOR_315" > /dev/null; then
+              echo "  - $name $version" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done < pins.txt

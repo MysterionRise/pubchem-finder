@@ -25,6 +25,14 @@
       "identifier": "pubchem-finder",
       "version": "2.1.0",
       "runtimeHint": "uvx",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--python",
+          "value": "3.14",
+          "description": "Python 3.11-3.14: FPSim2, numexpr and ndindex publish no wheels for 3.15 yet"
+        }
+      ],
       "transport": {
         "type": "stdio"
       },
