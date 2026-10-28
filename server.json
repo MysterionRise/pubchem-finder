@@ -8,6 +8,15 @@
     "source": "github"
   },
   "websiteUrl": "https://github.com/MysterionRise/pubchem-finder",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/MysterionRise/pubchem-finder/master/plugins/pubchem-finder/.claude-plugin/icon.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "1024x1024"
+      ]
+    }
+  ],
   "version": "2.1.0",
   "packages": [
     {

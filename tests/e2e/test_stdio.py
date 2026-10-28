@@ -57,6 +57,8 @@ async def test_stdio_server_end_to_end(substructure_home, tmp_path):
 
     assert init.server_info.name == "pubchem-finder"
     assert init.server_info.version == __version__
+    assert init.server_info.title == "PubChem Finder"
+    assert init.server_info.icons[0].src.startswith("https://")
     assert len(tools.tools) == 17
     assert props.structured_content["canonical_smiles"] == ASPIRIN
     assert similar.structured_content["hits"][0]["cid"] == 2244

@@ -9,11 +9,12 @@ import functools
 import logging
 import sys
 from collections.abc import Callable
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar
 
 import anyio
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import Icon, ToolAnnotations
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -44,6 +45,7 @@ from .models import (
 )
 
 T = TypeVar("T")
+F = TypeVar("F", bound=Callable[..., Any])
 
 INSTRUCTIONS = """\
 Tools for small-molecule chemistry backed by PubChem and RDKit.
@@ -65,12 +67,43 @@ relative to a reference, or a similarity map); medchem_profile triages drug-like
 synthetic accessibility and PAINS/Brenk/NIH structural alerts.
 SMILES inputs are case-sensitive; aromatic atoms are lowercase."""
 
+REPO_URL = "https://github.com/MysterionRise/pubchem-finder"
+# The plugin's icon, served from the repository rather than inlined: a data: URI
+# would add ~35 KB to every initialize response.
+ICON_URL = (
+    "https://raw.githubusercontent.com/MysterionRise/pubchem-finder/master/"
+    "plugins/pubchem-finder/.claude-plugin/icon.png"
+)
+
 mcp = MCPServer(
     "pubchem-finder",
+    title="PubChem Finder",
     version=__version__,
     instructions=INSTRUCTIONS,
+    website_url=REPO_URL,
+    icons=[Icon(src=ICON_URL, mime_type="image/png", sizes=["1024x1024"])],
     log_level="WARNING",
 )
+
+
+def _tool(title: str, *, calls_pubchem: bool) -> Callable[[F], F]:
+    """Register a tool with a title and annotations, as directory policies require.
+
+    Every tool only reads: its arguments, the local index or PubChem. The response
+    cache is internal state, not the tool's environment. ``calls_pubchem`` marks
+    the tools that reach an external service (the open world).
+    """
+    return mcp.tool(
+        title=title,
+        annotations=ToolAnnotations(
+            title=title,
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=calls_pubchem,
+        ),
+    )
+
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
@@ -106,7 +139,7 @@ async def _run(fn: Callable[..., T], *args: object, **kwargs: object) -> T:
         raise ToolError(str(exc)) from exc
 
 
-@mcp.tool()
+@_tool("Look up a PubChem compound", calls_pubchem=True)
 async def pubchem_lookup(
     query: str,
     by: Literal["name", "cid", "smiles", "inchikey"] = "name",
@@ -121,7 +154,7 @@ async def pubchem_lookup(
     return await _run(service.lookup, query, by=by, limit=limit)
 
 
-@mcp.tool()
+@_tool("Compute molecular properties", calls_pubchem=False)
 async def compound_properties(smiles: str) -> Properties:
     """Calculate RDKit descriptors for a SMILES string.
 
@@ -133,14 +166,14 @@ async def compound_properties(smiles: str) -> Properties:
     return await _run(service.properties, smiles)
 
 
-@mcp.tool()
+@_tool("Standardize a structure", calls_pubchem=False)
 async def standardize(smiles: str) -> Standardized:
     """Standardize a structure: remove salts/counter-ions, neutralize charges,
     normalize functional groups, and return canonical SMILES of the parent."""
     return await _run(service.standardize, smiles)
 
 
-@mcp.tool()
+@_tool("Compare two structures", calls_pubchem=False)
 async def compare(smiles_a: str, smiles_b: str) -> Comparison:
     """Fingerprint similarity between two structures.
 
@@ -151,7 +184,7 @@ async def compare(smiles_a: str, smiles_b: str) -> Comparison:
     return await _run(service.compare, smiles_a, smiles_b)
 
 
-@mcp.tool()
+@_tool("Similarity search (local index)", calls_pubchem=False)
 async def similarity_search(
     smiles: str,
     threshold: float = 0.7,
@@ -179,7 +212,7 @@ async def similarity_search(
     )
 
 
-@mcp.tool()
+@_tool("Substructure search (local index)", calls_pubchem=False)
 async def substructure_search(
     query: str,
     query_type: Literal["smiles", "smarts"] = "smiles",
@@ -202,7 +235,7 @@ async def substructure_search(
     )
 
 
-@mcp.tool()
+@_tool("Local index status", calls_pubchem=False)
 async def index_status() -> IndexStatus:
     """Report whether the local PubChem index is built, how many compounds it
     holds, its fingerprint, size, whether substructure search is available, and
@@ -210,7 +243,7 @@ async def index_status() -> IndexStatus:
     return await _run(service.index_status)
 
 
-@mcp.tool()
+@_tool("PubChem similarity search", calls_pubchem=True)
 async def pubchem_similarity_search(
     smiles: str, threshold: int = 90, max_records: int = 25
 ) -> RemoteSearchResults:
@@ -230,7 +263,7 @@ async def pubchem_similarity_search(
     )
 
 
-@mcp.tool()
+@_tool("PubChem substructure search", calls_pubchem=True)
 async def pubchem_substructure_search(
     smiles: str, max_records: int = 25
 ) -> RemoteSearchResults:
@@ -245,7 +278,7 @@ async def pubchem_substructure_search(
     )
 
 
-@mcp.tool()
+@_tool("PubChem exact structure match", calls_pubchem=True)
 async def pubchem_exact_match(
     smiles: str, identity_type: IdentityType = "same_stereo_isotope"
 ) -> RemoteSearchResults:
@@ -259,14 +292,14 @@ async def pubchem_exact_match(
     return await _run(service.pubchem_exact_match, smiles, identity_type=identity_type)
 
 
-@mcp.tool()
+@_tool("PubChem synonyms and CAS numbers", calls_pubchem=True)
 async def pubchem_synonyms(cid: int, limit: int = 25) -> Synonyms:
     """Names a compound is known by (common, brand, systematic), most common
     first, plus its CAS Registry Numbers. Get the CID from pubchem_lookup."""
     return await _run(service.pubchem_synonyms, cid, limit=limit)
 
 
-@mcp.tool()
+@_tool("PubChem cross-references", calls_pubchem=True)
 async def pubchem_xrefs(cid: int) -> CrossRefs:
     """Counts and examples of external identifiers linked to a compound:
     registry IDs (e.g. CAS, ChEMBL, DrugBank), PubMed articles (with links) and
@@ -274,14 +307,14 @@ async def pubchem_xrefs(cid: int) -> CrossRefs:
     return await _run(service.pubchem_xrefs, cid)
 
 
-@mcp.tool()
+@_tool("PubChem compound description", calls_pubchem=True)
 async def pubchem_description(cid: int) -> Description:
     """Short curated descriptions of a compound (what it is, what it is used
     for), each with its source."""
     return await _run(service.pubchem_description, cid)
 
 
-@mcp.tool()
+@_tool("PubChem page section", calls_pubchem=True)
 async def pubchem_annotations(
     cid: int, heading: AnnotationHeading, max_chars: int = 6000
 ) -> AnnotationSection:
@@ -298,7 +331,7 @@ async def pubchem_annotations(
     return await _run(service.pubchem_annotations, cid, heading, max_chars=max_chars)
 
 
-@mcp.tool()
+@_tool("PubChem bioactivity summary", calls_pubchem=True)
 async def pubchem_bioactivity(cid: int) -> BioactivitySummary:
     """Summary of PubChem BioAssay results for a compound: how many assays,
     outcome counts, the targets with the most active results (UniProt
@@ -306,7 +339,7 @@ async def pubchem_bioactivity(cid: int) -> BioactivitySummary:
     return await _run(service.pubchem_bioactivity, cid)
 
 
-@mcp.tool()
+@_tool("Draw molecules", calls_pubchem=False)
 async def draw_molecules(
     smiles: list[str],
     legends: list[str] | None = None,
@@ -335,7 +368,7 @@ async def draw_molecules(
     return Image(data=png, format="png")
 
 
-@mcp.tool()
+@_tool("Medicinal chemistry profile", calls_pubchem=False)
 async def medchem_profile(smiles: str) -> MedchemProfile:
     """Medicinal-chemistry triage of a structure: QED drug-likeness (0-1),
     synthetic accessibility (1 easy - 10 hard), Lipinski violations, Veber rules,

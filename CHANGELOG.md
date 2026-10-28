@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Every MCP tool has a title and annotations (read-only, non-destructive, idempotent;
+  open-world for the `pubchem_*` tools, which call PubChem), as Anthropic's Software
+  Directory Policy requires. The server reports its title, website and icon, and the
+  MCP registry entry shows the icon.
 - docs/clients.md has a tested setup for VS Code with GitHub Copilot, the first from an
   outside contributor (@ashwinruke, [#37](https://github.com/MysterionRise/pubchem-finder/pull/37)).
   Its notes cover a Copilot quirk worth knowing: the model can show a `similarity_search`

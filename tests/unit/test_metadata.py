@@ -37,6 +37,18 @@ def test_registry_name_marker_is_in_the_readme():
     assert f"<!-- mcp-name: {name} -->" in lines
 
 
+def test_icon_urls_point_at_a_file_in_the_repo():
+    """The server and the registry entry show the plugin's icon from master; moving
+    the file would break both silently."""
+    from pubchem_finder.mcp_server import ICON_URL
+
+    prefix = "https://raw.githubusercontent.com/MysterionRise/pubchem-finder/master/"
+    urls = {ICON_URL, *(icon["src"] for icon in _json("server.json")["icons"])}
+    assert urls == {ICON_URL}
+    assert ICON_URL.startswith(prefix)
+    assert (ROOT / ICON_URL.removeprefix(prefix)).is_file()
+
+
 PLUGIN = ROOT / "plugins" / "pubchem-finder"
 
 
