@@ -284,3 +284,126 @@ def test_search_breaks_ties_by_cid(built_home, monkeypatch):
         (338, 0.7),
         (4133, 0.7),
     ]
+
+
+# --- Index merge safety: RDKit/FPSim2 upgrades and failed merges -------------
+
+OLD_RDKIT = "2000.01.1"
+
+
+def _build_old_chunk(paths, sdf, monkeypatch):
+    """Build and finalize one chunk as if an older RDKit had fingerprinted it."""
+    import rdkit
+
+    with monkeypatch.context() as m:
+        m.setattr(rdkit, "__version__", OLD_RDKIT)
+        build_chunks(paths, sources([sdf]), workers=1)
+        finalize(paths)
+    return paths.load_manifest()
+
+
+def _index_files(paths):
+    return sorted(p.name for p in paths.index_dir.iterdir())
+
+
+def test_chunk_stats_record_versions(built_home):
+    from importlib.metadata import version
+
+    import rdkit
+
+    stats = IndexPaths(built_home).completed_chunks()[0]
+    assert stats.rdkit_version == rdkit.__version__
+    assert stats.fpsim2_version == version("fpsim2")
+
+
+def test_extending_after_an_rdkit_upgrade_is_refused_and_keeps_the_index(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    paths = IndexPaths(tmp_path)
+    before = _build_old_chunk(paths, sample_sdfs[0], monkeypatch)
+    with pytest.raises(IndexBuildError, match=f"RDKit {OLD_RDKIT}") as err:
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    assert "still searchable" in str(err.value)
+    assert not paths.chunk_stats(CHUNK_NAMES[1]).exists()
+    assert paths.load_manifest() == before
+    found = service.similarity_search(ASPIRIN, threshold=0.3, home=tmp_path)
+    assert found.hits[0].cid == 2244
+
+
+def test_chunks_from_2_1_0_are_checked_through_their_h5(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """Chunks built before 2.1.1 record no versions in their JSON."""
+    paths = IndexPaths(tmp_path)
+    _build_old_chunk(paths, sample_sdfs[0], monkeypatch)
+    stats_file = paths.chunk_stats(CHUNK_NAMES[0])
+    stats = json.loads(stats_file.read_text())
+    del stats["rdkit_version"], stats["fpsim2_version"]
+    stats_file.write_text(json.dumps(stats))
+    with pytest.raises(IndexBuildError, match=f"RDKit {OLD_RDKIT}"):
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+
+
+def test_finalize_refuses_mixed_versions_before_touching_the_index(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    from pubchem_finder.index.builder import build_chunk
+
+    paths = IndexPaths(tmp_path)
+    before = _build_old_chunk(paths, sample_sdfs[0], monkeypatch)
+    fingerprints = paths.fingerprints.read_bytes()
+    build_chunk(str(sample_sdfs[1]), str(tmp_path))  # skips build_chunks' check
+    with pytest.raises(IndexBuildError, match="different versions"):
+        finalize(paths)
+    assert paths.load_manifest() == before
+    assert paths.fingerprints.read_bytes() == fingerprints
+    assert _index_files(paths) == ["manifest.json", "pubchem.h5"]
+
+
+def test_failed_merge_keeps_the_previous_index(tmp_path, sample_sdfs, monkeypatch):
+    from pubchem_finder.index import builder
+
+    paths = IndexPaths(tmp_path)
+    build_chunks(paths, sources([sample_sdfs[0]]), workers=1)
+    before = finalize(paths)
+    build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+
+    def full_disk(src, dest):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(builder, "sort_fpsim2_file", full_disk)
+    with pytest.raises(IndexBuildError, match=r"No space left.*unchanged"):
+        finalize(paths)
+    assert paths.load_manifest() == before
+    assert _index_files(paths) == ["manifest.json", "pubchem.h5"]
+
+
+def test_failed_swap_restores_the_manifest(tmp_path, sample_sdfs, monkeypatch):
+    """On Windows a running server can hold pubchem.h5 open, so replacing fails."""
+    import os
+
+    paths = IndexPaths(tmp_path)
+    build_chunks(paths, sources([sample_sdfs[0]]), workers=1)
+    before = finalize(paths)
+    build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    real_replace = os.replace
+
+    def locked(src, dst):
+        if str(dst).endswith("pubchem.h5"):
+            raise PermissionError(13, "The process cannot access the file")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", locked)
+    with pytest.raises(IndexBuildError, match="stop it and run the build again"):
+        finalize(paths)
+    monkeypatch.undo()
+    assert paths.load_manifest() == before
+    assert _index_files(paths) == ["manifest.json", "pubchem.h5"]
+
+
+def test_unreadable_sdf_is_an_index_build_error(tmp_path, sample_sdfs):
+    data = sample_sdfs[1].read_bytes()
+    broken = tmp_path / f"{CHUNK_NAMES[1]}.sdf.gz"
+    broken.write_bytes(data[: len(data) // 2])
+    with pytest.raises(IndexBuildError, match=f"Building {CHUNK_NAMES[1]} failed"):
+        build_chunks(IndexPaths(tmp_path / "home"), sources([broken]), workers=1)

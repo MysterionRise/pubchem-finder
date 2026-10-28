@@ -25,6 +25,14 @@ All notable changes to this project are documented here. The format follows
   Anthropic's plugin directory requires. `make plugin-lock VERSION=...` points it at a new
   release; tests keep its files in step and never ahead of the package.
 
+### Fixed
+
+- Extending an index after an RDKit or FPSim2 upgrade no longer leaves it unusable:
+  `index build` checks which versions fingerprinted the existing chunks before
+  downloading anything and says what to do, and a failed merge keeps the previous index
+  searchable (the merged file replaces it only when complete). Chunks record their RDKit
+  and FPSim2 versions, and pattern chunks are rebuilt when FPSim2 changes.
+
 ## [2.1.0] - 2026-10-26
 
 ### Added

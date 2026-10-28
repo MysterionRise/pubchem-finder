@@ -107,6 +107,22 @@ def test_index_status_not_built(tmp_path):
     assert "not_built" in result.output
 
 
+def test_index_build_explains_a_version_mismatch(tmp_path, sample_sdfs, monkeypatch):
+    import rdkit
+
+    home = ["--home", str(tmp_path), "--workers", "1"]
+    with monkeypatch.context() as m:
+        m.setattr(rdkit, "__version__", "2000.01.1")
+        first = runner.invoke(
+            app, ["index", "build", "--sdf", str(sample_sdfs[0]), *home]
+        )
+    assert first.exit_code == 0, first.output
+    second = runner.invoke(app, ["index", "build", "--sdf", str(sample_sdfs[1]), *home])
+    assert second.exit_code == 1
+    assert "RDKit 2000.01.1" in second.output
+    assert isinstance(second.exception, SystemExit)
+
+
 def test_index_build_downloads_with_limit(tmp_path, sample_sdfs, monkeypatch):
     """--limit N lists the mirror, fetches the first N chunks and deletes them after."""
     import shutil

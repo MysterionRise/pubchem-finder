@@ -40,7 +40,7 @@ from FPSim2.io.backends.pytables import merge_db_files
 from rdkit import Chem, rdBase
 
 from .. import __version__
-from ..core.exceptions import IndexBuildError
+from ..core.exceptions import IndexBuildError, PubChemFinderError
 from ..data.sdf import SdfReader
 from .layout import (
     PATTERN_FP_TYPE,
@@ -139,6 +139,8 @@ def build_chunk(
         seconds=round(time.perf_counter() - start, 2),
         fp_type=FP_TYPE,
         fp_params=params,
+        rdkit_version=rdkit.__version__,
+        fpsim2_version=version("fpsim2"),
     )
     write_json_atomic(paths.chunk_stats(name), stats)
     return stats
@@ -185,6 +187,7 @@ def build_pattern_chunk(home: str, name: str) -> PatternChunkStats:
         n_failed=counts["failed"],
         seconds=round(time.perf_counter() - start, 2),
         rdkit_version=rdkit.__version__,
+        fpsim2_version=version("fpsim2"),
     )
     write_json_atomic(paths.pattern_stats(name), stats)
     return stats
@@ -200,10 +203,9 @@ def build_pattern_chunks(
     emit = on_event or (lambda msg: logger.info(msg))
     done = paths.completed_pattern_chunks()
     # Pattern fingerprints can change between RDKit releases, and a screen built
-    # with different bits than the query would miss matches: rebuild stale ones.
-    todo = [
-        n for n in names if n not in done or done[n].rdkit_version != rdkit.__version__
-    ]
+    # with different bits than the query would miss matches; FPSim2 also refuses to
+    # merge files written by different versions: rebuild stale ones.
+    todo = [n for n in names if n not in done or _pattern_stale(paths, done[n])]
     built: list[PatternChunkStats] = []
 
     def report(stats: PatternChunkStats) -> None:
@@ -297,6 +299,9 @@ def build_chunks(
             todo.append(src)
     if report.skipped:
         emit(f"{len(report.skipped)} chunk(s) already built, skipping")
+    if todo:
+        # Before any download: FPSim2 can't merge new chunks with old ones.
+        _check_versions(paths, paths.completed_chunks())
 
     def done(src: SdfSource, path: Path, stats: ChunkStats) -> None:
         report.built.append(stats)
@@ -310,7 +315,13 @@ def build_chunks(
     if workers <= 1:
         for src in todo:
             path = src.path()
-            done(src, path, build_chunk(str(path), str(paths.home), params))
+            try:
+                stats = build_chunk(str(path), str(paths.home), params)
+            except PubChemFinderError:
+                raise
+            except Exception as exc:
+                raise IndexBuildError(f"Building {src.name} failed: {exc}") from exc
+            done(src, path, stats)
         return report
 
     ctx = multiprocessing.get_context("spawn")
@@ -346,6 +357,63 @@ def _check_params(paths: IndexPaths, params: dict[str, Any]) -> None:
                 f"Existing chunks in {paths.chunks} use {stats.fp_type} {stats.fp_params}, "
                 f"not {FP_TYPE} {params}. Use a different --home or delete the chunks."
             )
+
+
+def runtime_versions() -> tuple[str, str]:
+    """The RDKit and FPSim2 versions this process fingerprints with."""
+    return rdkit.__version__, version("fpsim2")
+
+
+def h5_versions(path: Path) -> tuple[str, str]:
+    """The RDKit and FPSim2 versions recorded in an FPSim2 file, which FPSim2
+    compares (with the fingerprint settings) before it merges files."""
+    with tb.open_file(str(path), mode="r") as f:
+        return str(f.root.config[2]), str(f.root.config[3])
+
+
+def _chunk_versions(paths: IndexPaths, stats: ChunkStats) -> tuple[str, str] | None:
+    if stats.n_records == 0:
+        return None  # no .h5, nothing to merge
+    if stats.rdkit_version and stats.fpsim2_version:
+        return stats.rdkit_version, stats.fpsim2_version
+    return h5_versions(paths.chunk_h5(stats.name))
+
+
+def _pattern_stale(paths: IndexPaths, stats: PatternChunkStats) -> bool:
+    rdkit_now, fpsim2_now = runtime_versions()
+    if stats.rdkit_version != rdkit_now:
+        return True
+    if stats.n_records == 0:
+        return False
+    built_with = stats.fpsim2_version or h5_versions(paths.pattern_h5(stats.name))[1]
+    return built_with != fpsim2_now
+
+
+def _version_help(paths: IndexPaths) -> str:
+    return (
+        "FPSim2 can't merge fingerprints written by different versions. The current "
+        "index is unchanged and still searchable. To grow it, build the larger index "
+        "in a new data directory (`pubchem-finder index build --limit N --home NEW_DIR`)"
+        f" and point PUBCHEM_FINDER_HOME at it once it's ready, or delete {paths.home}"
+        " and build again."
+    )
+
+
+def _check_versions(paths: IndexPaths, chunks: Sequence[ChunkStats]) -> None:
+    """Refuse to add chunks next to ones fingerprinted by another RDKit/FPSim2."""
+    now = runtime_versions()
+    old: dict[tuple[str, str], int] = {}
+    for stats in chunks:
+        built_with = _chunk_versions(paths, stats)
+        if built_with is not None and built_with != now:
+            old[built_with] = old.get(built_with, 0) + 1
+    if old:
+        rdkit_then, fpsim2_then = next(iter(old))
+        raise IndexBuildError(
+            f"{sum(old.values())} chunk(s) in {paths.chunks} were fingerprinted with "
+            f"RDKit {rdkit_then} / FPSim2 {fpsim2_then}; this pubchem-finder runs RDKit "
+            f"{now[0]} / FPSim2 {now[1]}. {_version_help(paths)}"
+        )
 
 
 def finalize(
@@ -390,8 +458,11 @@ def finalize(
         manifest = current
         similarity_rebuilt = False
     else:
-        manifest = _merge_similarity(paths, chunks, emit)  # removes the manifest
+        manifest = _merge_similarity(paths, chunks, emit)
         similarity_rebuilt = True
+        # Similarity search works again while the pattern database is merged; the
+        # manifest gains substructure search below, once that merge is done.
+        write_json_atomic(paths.manifest, manifest)
 
     sub: SubstructureInfo | None = None
     if want_sub and sub_fresh:
@@ -426,10 +497,11 @@ def _merge_similarity(
     if any(c.fp_params != params or c.fp_type != chunks[0].fp_type for c in chunks):
         raise IndexBuildError("Chunks were built with different fingerprint settings")
     paths.index_dir.mkdir(parents=True, exist_ok=True)
-    paths.manifest.unlink(missing_ok=True)  # the index is not ready until we finish
     files = [str(paths.chunk_h5(c.name)) for c in chunks]
     emit(f"merging {len(files)} chunk(s) into {paths.fingerprints}")
-    _merge_h5(files, paths.fingerprints)
+    # The old manifest stays until the merged file is complete, so a failed merge
+    # leaves the previous index searchable; it is withdrawn only for the swap.
+    _merge_h5(files, paths.fingerprints, withdraw=paths.manifest, home=paths.home)
     all_stats = paths.completed_chunks()
     return Manifest(
         fp_type=chunks[0].fp_type,
@@ -472,22 +544,79 @@ def _merge_patterns(
     )
 
 
-def _merge_h5(files: list[str], dest: Path) -> None:
-    """Merge FPSim2 files into one popcount-sorted file at ``dest``, atomically."""
+def _merge_h5(
+    files: list[str],
+    dest: Path,
+    withdraw: Path | None = None,
+    home: Path | None = None,
+) -> None:
+    """Merge FPSim2 files into one popcount-sorted file at ``dest``, atomically.
+
+    Nothing at ``dest`` changes unless the merged file is complete. ``withdraw``
+    (the manifest) is moved aside while ``dest`` is replaced, so running servers
+    never pair it with a half-written file, and put back if the swap fails.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     unsorted = dest.with_name(dest.name + ".unsorted")
     tmp = dest.with_name(dest.name + ".tmp")
     for path in (unsorted, tmp):
         path.unlink(missing_ok=True)
-    if len(files) == 1:
-        shutil.copyfile(files[0], unsorted)
-    else:
-        merge_db_files(files, str(unsorted), sort_by_popcnt=False)
+    _check_mergeable(files, home or dest.parent)
     try:
+        if len(files) == 1:
+            shutil.copyfile(files[0], unsorted)
+        else:
+            merge_db_files(files, str(unsorted), sort_by_popcnt=False)
         sort_fpsim2_file(unsorted, tmp)
+    except Exception as exc:
+        tmp.unlink(missing_ok=True)
+        if isinstance(exc, PubChemFinderError):
+            raise
+        raise IndexBuildError(
+            f"Merging into {dest} failed: {exc}. The current index is unchanged."
+        ) from exc
     finally:
         unsorted.unlink(missing_ok=True)
-    os.replace(tmp, dest)
+    _swap_in(tmp, dest, withdraw)
+
+
+def _check_mergeable(files: list[str], home: Path) -> None:
+    """FPSim2's merge raises a bare ValueError on mixed versions; say why first."""
+    if len(files) < 2:
+        return
+    found: dict[tuple[str, str], list[str]] = {}
+    for file in files:
+        found.setdefault(h5_versions(Path(file)), []).append(Path(file).stem)
+    if len(found) > 1:
+        groups = "; ".join(
+            f"RDKit {r} / FPSim2 {f}: {', '.join(names[:3])}"
+            + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+            for (r, f), names in found.items()
+        )
+        raise IndexBuildError(
+            f"Chunks were fingerprinted by different versions ({groups}). "
+            f"{_version_help(IndexPaths(home))}"
+        )
+
+
+def _swap_in(tmp: Path, dest: Path, withdraw: Path | None) -> None:
+    aside = withdraw.with_name(withdraw.name + ".old") if withdraw else None
+    if withdraw is not None and aside is not None and withdraw.exists():
+        os.replace(withdraw, aside)
+    else:
+        aside = None
+    try:
+        os.replace(tmp, dest)
+    except OSError as exc:
+        if withdraw is not None and aside is not None:
+            os.replace(aside, withdraw)
+        tmp.unlink(missing_ok=True)
+        raise IndexBuildError(
+            f"Could not replace {dest}: {exc}. If a server is using the index, stop "
+            "it and run the build again; the current index is unchanged."
+        ) from exc
+    if aside is not None:
+        aside.unlink(missing_ok=True)
 
 
 def sort_fpsim2_file(src: Path, dest: Path) -> None:
