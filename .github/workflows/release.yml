@@ -1,12 +1,18 @@
 name: Release
 
-# Run from the Actions tab: "Release" -> "Run workflow".
-# With dry_run (the default) it only builds and tests the package. Without it, it
-# publishes to PyPI with trusted publishing, then tags the commit and creates the
-# GitHub Release with the CHANGELOG section as notes.
+# Run from the Actions tab: "Release" -> "Run workflow", or
+#   gh workflow run release.yml -f version=x.y.z                  (dry run)
+#   gh workflow run release.yml -f version=x.y.z -f dry_run=false (from master)
+# Prepare the files first with `make release-prep VERSION=x.y.z`; docs/releasing.md
+# is the runbook, with what to do when a step fails.
 #
-# Afterwards, point the Claude plugin at the new version and open a PR:
-#   make plugin-lock VERSION=x.y.z
+# A dry run (the default) builds, tests and checks the package from any branch and
+# runs the real-data end-to-end check. A real run only starts from master, on a
+# commit whose CI passed. It tags the commit and drafts the GitHub Release first
+# (cheap, undoable), then publishes to PyPI with trusted publishing (the pypi
+# environment needs approval), then publishes the release, lists the version in
+# the MCP registry and pushes a branch that points the Claude plugin at it.
+# Every job can be re-run on its own.
 #
 # One-time setup on pypi.org (Account -> Publishing -> Add a pending publisher):
 # project pubchem-finder, owner MysterionRise, repository pubchem-finder,
@@ -23,58 +29,80 @@ on:
         type: boolean
         default: true
 
-permissions:
-  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions: {}
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read # the CI gate reads this commit's CI runs
     env:
       VERSION: ${{ inputs.version }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Guard
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must look like 2.1.1, not '$VERSION'"; exit 1
+          fi
+          if [ "$DRY_RUN" != true ]; then
+            if [ "$GITHUB_REF" != refs/heads/master ]; then
+              echo "::error::real releases run from master, not $GITHUB_REF"; exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+              echo "::error::$GITHUB_SHA is not on master"; exit 1
+            fi
+          fi
+          # Wait (up to 25 minutes) for CI on this exact commit.
+          for _ in $(seq 1 50); do
+            runs=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
+              --commit "$GITHUB_SHA" --json status,conclusion)
+            if jq -e 'any(.[]; .conclusion == "success")' <<< "$runs" > /dev/null; then
+              echo "CI passed on $GITHUB_SHA"; exit 0
+            fi
+            if jq -e 'length > 0 and all(.[]; .status == "completed")' <<< "$runs" > /dev/null; then
+              break
+            fi
+            sleep 30
+          done
+          message="no successful CI run on $GITHUB_SHA (start one: gh workflow run ci.yml --ref ${GITHUB_REF#refs/heads/})"
+          if [ "$DRY_RUN" = true ]; then echo "::warning::$message"; else echo "::error::$message"; exit 1; fi
 
       - name: Install uv
         uses: astral-sh/setup-uv@v10.3.2
         with:
           python-version: "3.12"
 
-      - name: Check the version and changelog
+      - name: Versions, changelog and citation agree
+        run: uv run --no-project python scripts/release_prep.py check "$VERSION" --notes release-notes.md
+
+      - name: Not released yet
         run: |
-          project=$(uv run --no-project python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
-          if [ "$project" != "$VERSION" ]; then
-            echo "::error::pyproject.toml says $project, not $VERSION"; exit 1
+          tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" --jq .object.sha 2> /dev/null || true)
+          on_pypi=false
+          if curl -fs -o /dev/null "https://pypi.org/pypi/pubchem-finder/$VERSION/json"; then on_pypi=true; fi
+          problem=""
+          if [ -n "$tag_sha" ] && [ "$tag_sha" != "$GITHUB_SHA" ]; then
+            problem="tag v$VERSION already points at $tag_sha"
+          elif [ "$on_pypi" = true ] && [ "$tag_sha" != "$GITHUB_SHA" ]; then
+            problem="pubchem-finder $VERSION is already on PyPI"
+          elif [ -n "$tag_sha" ]; then
+            echo "::notice::v$VERSION is already tagged on this commit: resuming a release"
           fi
-          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null; then
-            echo "::error::tag v$VERSION already exists"; exit 1
-          fi
-          awk -v v="$VERSION" '
-            index($0, "## [" v "]") == 1 { on = 1; next }
-            on && /^## / { exit }
-            on { print }
-          ' CHANGELOG.md > release-notes.md
-          if [ ! -s release-notes.md ]; then
-            echo "::error::CHANGELOG.md has no section for $VERSION"; exit 1
-          fi
-          uv run --no-project python - "$VERSION" <<'PY'
-          import json, sys
-          version = sys.argv[1]
-          server = json.load(open("server.json"))
-          # The Claude plugin (plugins/pubchem-finder) pins the previous release until
-          # `make plugin-lock VERSION=...` re-locks it after this one; its tests keep it consistent.
-          found = {
-              "server.json": server["version"],
-              **{f"server.json packages[{i}]": p["version"] for i, p in enumerate(server["packages"])},
-          }
-          if wrong := {k: v for k, v in found.items() if v != version}:
-              print(f"::error::not at {version}: {wrong}"); sys.exit(1)
-          PY
-          cff=$(sed -n 's/^version: *//p' CITATION.cff)
-          if [ "$cff" != "$VERSION" ]; then
-            echo "::error::CITATION.cff says $cff, not $VERSION"; exit 1
-          fi
-          if ! grep -q '^date-released: "20' CITATION.cff; then
-            echo "::error::CITATION.cff has no date-released"; exit 1
+          if [ -n "$problem" ]; then
+            if [ "$DRY_RUN" = true ]; then echo "::warning::$problem"; else echo "::error::$problem"; exit 1; fi
           fi
 
       - name: Lint, type-check and test
@@ -87,6 +115,17 @@ jobs:
 
       - name: Build sdist and wheel
         run: uv build
+
+      - name: Package metadata
+        run: |
+          uvx twine==7.0.0 check --strict dist/*
+          test -f "dist/pubchem_finder-$VERSION-py3-none-any.whl"
+          name=$(jq -r .name server.json)
+          # The MCP registry proves PyPI ownership with this line in the description.
+          unzip -p dist/*.whl '*.dist-info/METADATA' | grep -Fxq "<!-- mcp-name: $name -->"
+          tar -xzOf dist/*.tar.gz --wildcards '*/PKG-INFO' | grep -Fxq "<!-- mcp-name: $name -->"
+          uvx check-jsonschema --schemafile \
+            https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json server.json
 
       - name: Smoke-test the wheel in a clean environment
         run: |
@@ -104,27 +143,23 @@ jobs:
           name: release-notes
           path: release-notes.md
 
-  publish:
+  # Dry runs also build a real index from PubChem's first SDF chunk and run every
+  # command against it (about 7 minutes).
+  e2e:
+    needs: build
+    if: ${{ inputs.dry_run }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/e2e-real.yml
+    with:
+      chunks: "1"
+
+  # Cheap, undoable steps before the one that can't be undone (PyPI).
+  prepare-release:
     needs: build
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/project/pubchem-finder/${{ inputs.version }}/
-    permissions:
-      id-token: write # trusted publishing
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: dist
-          path: dist/
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-
-  github-release:
-    needs: publish
-    runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     env:
@@ -140,22 +175,65 @@ jobs:
         with:
           name: release-notes
 
-      - name: Tag and create the GitHub Release
+      - name: Tag the commit
         run: |
-          gh release create "v$VERSION" dist/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "v$VERSION" \
-            --notes-file release-notes.md
+          tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" --jq .object.sha 2> /dev/null || true)
+          if [ -z "$tag_sha" ]; then
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/v$VERSION" -f sha="$GITHUB_SHA"
+          elif [ "$tag_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::tag v$VERSION points at $tag_sha, not $GITHUB_SHA"; exit 1
+          fi
+
+      - name: Draft the GitHub Release
+        run: |
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "release v$VERSION exists: resuming"; exit 0
+          fi
+          gh release create "v$VERSION" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --draft --title "v$VERSION" --notes-file release-notes.md
+
+  publish:
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pubchem-finder/${{ inputs.version }}/
+    permissions:
+      id-token: write # trusted publishing
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          skip-existing: true # a re-run after a partial upload is safe
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Publish the GitHub Release
+        run: gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --draft=false --latest
 
   # The MCP registry (registry.modelcontextprotocol.io) lists the server from
   # server.json. It checks that the PyPI release exists and that the package
-  # description (the README) carries the "mcp-name" marker, so this runs last,
-  # after PyPI serves the release; a failure here leaves PyPI, the tag and the
-  # GitHub Release intact and the job can be re-run on its own.
+  # description (the README) carries the "mcp-name" marker, so this runs after
+  # PyPI serves the release; a failure here leaves PyPI, the tag and the GitHub
+  # Release intact and the job can be re-run on its own.
   mcp-registry:
     needs: github-release
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       id-token: write # proves ownership of io.github.MysterionRise/* through GitHub OIDC
       contents: read
@@ -164,6 +242,8 @@ jobs:
       MCP_PUBLISHER_VERSION: v1.8.5
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Wait until PyPI serves the release with the registry marker
         run: |
