@@ -1,0 +1,57 @@
+name: Promote plugin
+
+# Anthropic's plugin directory follows the plugin-release branch, so only commits
+# that raise the plugin's version become directory versions (each one waits for a
+# reviewer, because the plugin launches a package with uvx). When plugin.json's
+# version rises on master and that release is on PyPI, fast-forward plugin-release.
+
+on:
+  push:
+    branches: [master]
+    paths: ["plugins/pubchem-finder/.claude-plugin/plugin.json"]
+  workflow_dispatch:
+
+concurrency:
+  group: promote-plugin
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fast-forward plugin-release
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/master ]; then
+            echo "::error::run this from master"; exit 1
+          fi
+          manifest=plugins/pubchem-finder/.claude-plugin/plugin.json
+          new=$(jq -r .version "$manifest")
+          if git ls-remote --exit-code --heads origin plugin-release > /dev/null; then
+            old=$(git show "origin/plugin-release:$manifest" | jq -r .version)
+            newest=$(printf '%s\n%s\n' "$old" "$new" | sort -V | tail -1)
+            if [ "$old" = "$new" ] || [ "$newest" = "$old" ]; then
+              echo "plugin-release already has plugin $old (master: $new); nothing to promote"
+              exit 0
+            fi
+            if ! git merge-base --is-ancestor origin/plugin-release "$GITHUB_SHA"; then
+              echo "::error::plugin-release is not an ancestor of $GITHUB_SHA"; exit 1
+            fi
+          fi
+          if ! curl -fs -o /dev/null "https://pypi.org/pypi/pubchem-finder/$new/json"; then
+            echo "::error::pubchem-finder $new is not on PyPI; release it first"; exit 1
+          fi
+          gh auth setup-git
+          git push origin "$GITHUB_SHA:refs/heads/plugin-release"
+          echo "plugin-release is now $GITHUB_SHA (plugin $new)" >> "$GITHUB_STEP_SUMMARY"

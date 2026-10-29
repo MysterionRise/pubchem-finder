@@ -10,6 +10,11 @@ on:
       chunks:
         description: "PubChem SDF chunks to index (about 500,000 compounds each)"
         default: "1"
+  workflow_call: # release dry runs
+    inputs:
+      chunks:
+        type: string
+        default: "1"
 
 permissions:
   contents: read
@@ -19,12 +24,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      CHUNKS: ${{ inputs.chunks }}
+      CHUNKS: ${{ inputs.chunks || '1' }}
       PUBCHEM_FINDER_CACHE: "0"
       ASPIRIN: "CC(=O)Oc1ccccc1C(=O)O"
       INDOLE: "c1ccc2[nH]ccc2c1"
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v10.3.2

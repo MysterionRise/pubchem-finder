@@ -79,12 +79,11 @@ def test_published_launch_commands_pin_a_supported_python():
     )
 
 
-def test_plugin_release_moves_every_pin(tmp_path, monkeypatch):
+def test_plugin_release_moves_every_pin(tmp_path):
     """scripts/plugin_release.py finds the pinned argument wherever it sits, so a
     flag before it (such as --python) is never overwritten."""
     import importlib.util
     import shutil
-    import subprocess
 
     shutil.copytree(ROOT / "plugins", tmp_path / "plugins")
     (tmp_path / ".claude-plugin").mkdir()
@@ -97,8 +96,6 @@ def test_plugin_release_moves_every_pin(tmp_path, monkeypatch):
     server["args"] = ["--python=3.14", "pubchem-finder==1.0.0", "mcp"]
     mcp_json.write_text(json.dumps(config), encoding="utf-8")
     calls: list[list[str]] = []
-    monkeypatch.setattr(subprocess, "run", lambda cmd, check: calls.append(cmd))
-    monkeypatch.chdir(tmp_path)
     spec = importlib.util.spec_from_file_location(
         "plugin_release", ROOT / "scripts" / "plugin_release.py"
     )
@@ -106,7 +103,7 @@ def test_plugin_release_moves_every_pin(tmp_path, monkeypatch):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    module.main("9.9.9")
+    module.main("9.9.9", root=tmp_path, run=lambda cmd, cwd, check: calls.append(cmd))
 
     plugin = tmp_path / "plugins" / "pubchem-finder"
     args = json.loads(mcp_json.read_text(encoding="utf-8"))["mcpServers"][
@@ -118,7 +115,8 @@ def test_plugin_release_moves_every_pin(tmp_path, monkeypatch):
     assert manifest["version"] == "9.9.9"
     market = json.loads((tmp_path / ".claude-plugin" / "marketplace.json").read_text())
     assert market["plugins"][0]["version"] == "9.9.9"
-    assert calls == [["uv", "lock", "--project", str(Path("plugins/pubchem-finder"))]]
+    plugin_dir = str(Path("plugins/pubchem-finder"))
+    assert calls == [["uv", "lock", "--upgrade", "--project", plugin_dir]]
 
 
 PLUGIN = ROOT / "plugins" / "pubchem-finder"

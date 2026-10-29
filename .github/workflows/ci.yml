@@ -1,19 +1,48 @@
 name: CI
 
+# Pull requests run on any base: in a stack, each PR targets the branch below it.
+# Branch pushes without a PR don't run (they used to, doubling every stacked PR);
+# master runs on every push and is never cancelled, so each merge gets a result.
 on:
   push:
-    branches: [master, main, "claude/**", "feature/**"]
+    branches: [master]
   pull_request:
-    branches: [master, main]
+  workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Install project
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy
+
   test:
     name: test (${{ matrix.os }}, ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
@@ -31,6 +60,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v10.3.2
@@ -40,18 +71,6 @@ jobs:
 
       - name: Install project
         run: uv sync --locked
-
-      - name: Lint
-        if: runner.os == 'Linux'
-        run: uv run ruff check .
-
-      - name: Format check
-        if: runner.os == 'Linux'
-        run: uv run ruff format --check .
-
-      - name: Type check
-        if: runner.os == 'Linux'
-        run: uv run mypy
 
       - name: Test
         run: uv run pytest --cov --cov-report=term-missing --cov-report=xml
@@ -77,6 +96,8 @@ jobs:
         python-version: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v10.3.2
@@ -109,6 +130,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v10.3.2
@@ -147,3 +170,19 @@ jobs:
           trap 'kill $! 2> /dev/null; echo "--- server log ---"; cat http-server.log' EXIT
           for _ in $(seq 1 90); do curl -fs http://127.0.0.1:8765/health > /dev/null && break; sleep 1; done
           .smoke/bin/python scripts/smoke.py --url http://127.0.0.1:8765/mcp
+
+  # The one check branch protection requires: it passes only if every job above
+  # passed, so adding or renaming matrix cells never breaks the ruleset.
+  ci-ok:
+    if: always()
+    needs: [lint, test, wheels, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          for result in $RESULTS; do
+            if [ "$result" != success ]; then echo "::error::a job ended $result"; exit 1; fi
+          done

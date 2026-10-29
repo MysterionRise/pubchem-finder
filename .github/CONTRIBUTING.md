@@ -37,10 +37,15 @@ Python 3.11 to 3.14 are supported and tested in CI.
 
 ## What CI checks
 
-- **CI** (every push and pull request): lint, format and `mypy --strict` on Linux; the test
-  suite on Linux (Python 3.11 to 3.14), macOS and Windows; and a `package` job on all
-  three that builds the wheel, installs it into a clean environment with the newest
-  dependencies from PyPI, and runs `scripts/smoke.py` against the installed command.
+- **CI** (every pull request, whatever its base, and every push to master): lint, format
+  and `mypy --strict`; the test suite on Linux (Python 3.11 to 3.14), macOS and Windows;
+  a `wheels` job that checks every dependency installs from wheels on Python 3.11 and
+  3.14; and a `package` job on all three systems that builds the wheel, installs it into
+  a clean environment with the newest dependencies from PyPI, and runs `scripts/smoke.py`
+  against the installed command. `ci-ok` passes when all of them do; it is the check
+  master requires.
+- **Next Python** (weekly): whether the latest release installs from wheels on Python
+  3.15 yet, and which packages still lack them.
 - **Live PubChem** (weekly and on demand): the `live` tests against the real PubChem
   services. Run them locally with `PUBCHEM_LIVE=1 uv run pytest -m live`.
 - **Real-data end-to-end** (on demand, from the Actions tab): downloads real PubChem SDF
@@ -48,6 +53,12 @@ Python 3.11 to 3.14 are supported and tested in CI.
   tool against it and against PubChem, and writes build time, file sizes, memory and query
   timings to the job summary. Locally: `uv run pubchem-finder index build --limit 1
   --with-substructure`, then `uv run python scripts/smoke.py --home <data dir> --live`.
+
+## Releasing
+
+[docs/releasing.md](../docs/releasing.md) has the steps and what to do when one
+fails. In short: `make release-prep VERSION=x.y.z`, a dry run, merge, then the release
+workflow from master, then the plugin PR it prepares.
 
 ## Code style
 
