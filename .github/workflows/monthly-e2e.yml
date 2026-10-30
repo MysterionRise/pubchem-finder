@@ -1,0 +1,32 @@
+name: Monthly real-data check
+
+# Once a month, the real-data end-to-end workflow (a real index from PubChem's
+# first SDF chunk, every command and MCP tool against it) on master, so a change in
+# PubChem's files or in a dependency shows up before the next release's dry run.
+# A failure opens an issue. e2e-real.yml itself stays read-only: release dry runs
+# call it too.
+
+on:
+  schedule:
+    - cron: "41 5 3 * *" # the 3rd of each month, 05:41 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  e2e:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/e2e-real.yml
+    with:
+      chunks: "1"
+
+  report:
+    needs: e2e
+    if: always()
+    permissions:
+      issues: write
+    uses: ./.github/workflows/scheduled-failure.yml
+    with:
+      title: "The monthly real-data check is failing"
+      result: ${{ needs.e2e.result }}

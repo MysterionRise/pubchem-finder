@@ -5,3 +5,5 @@ rules:
   self-repository:
     ignore:
       - release.yml
+      - monthly-e2e.yml
+      - live.yml

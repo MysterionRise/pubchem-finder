@@ -34,3 +34,13 @@ jobs:
         env:
           PUBCHEM_LIVE: "1"
         run: uv run pytest -m live -v
+
+  report:
+    needs: live
+    if: always() && github.event_name == 'schedule'
+    permissions:
+      issues: write
+    uses: ./.github/workflows/scheduled-failure.yml
+    with:
+      title: "The weekly live PubChem tests are failing"
+      result: ${{ needs.live.result }}
