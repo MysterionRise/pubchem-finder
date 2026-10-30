@@ -11,7 +11,8 @@ SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "demo_media.py"
 
 def load_script():
     spec = importlib.util.spec_from_file_location("demo_media", SCRIPT)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module  # dataclasses look their module up here
     spec.loader.exec_module(module)
@@ -29,7 +30,8 @@ def test_collect_then_render_gif(substructure_home, tmp_path):
     )
     assert data["similarity"]["hits"][0]["cid"] == 2244
     assert data["substructure"]["hits"]
-    assert data["similarity_ms"] > 0 and data["substructure_ms"] > 0
+    assert data["similarity_ms"] > 0
+    assert data["substructure_ms"] > 0
 
     written = demo.render(
         data, tmp_path, example="OC(=O)c1ccccc1", fps=2, use_ffmpeg=False

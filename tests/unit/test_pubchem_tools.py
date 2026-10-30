@@ -277,7 +277,8 @@ def test_shared_client_uses_cache_when_enabled(tmp_path, monkeypatch):
     assert client.cache.path == tmp_path / "cache" / "pubchem-http.sqlite"
     client.cache.put("k", b"{}")
     stats = service.cache_stats(tmp_path)
-    assert stats is not None and stats.entries == 1
+    assert stats is not None
+    assert stats.entries == 1
     assert service.cache_clear(tmp_path) == 1
     monkeypatch.setattr(service, "_client", None)
 
@@ -329,7 +330,9 @@ def test_live_compound_information(monkeypatch):
     assert service.pubchem_xrefs(2244).counts["PubMedID"] > 0
     assert service.pubchem_description(2244).title == "Aspirin"
     bio = service.pubchem_bioactivity(2244)
-    assert bio.tested and bio.n_assays > 0
+    assert bio.tested
+    assert bio.n_assays > 0
     ghs = service.pubchem_annotations(2244, "GHS Classification")
-    assert ghs.annotations and ghs.sources
+    assert ghs.annotations
+    assert ghs.sources
     monkeypatch.setattr(service, "_client", None)

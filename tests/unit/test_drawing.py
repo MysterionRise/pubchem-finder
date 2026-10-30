@@ -31,7 +31,7 @@ def test_single_row_uses_actual_count():
 
 
 @pytest.mark.parametrize(
-    "mode,kwargs",
+    ("mode", "kwargs"),
     [
         ("smarts", {"smarts": "c1ccccc1C(=O)[OX2H1]"}),
         ("diff", {"reference": ASPIRIN}),
@@ -79,7 +79,7 @@ def test_atom_contributions_identical_molecule_is_all_non_negative():
 
 
 @pytest.mark.parametrize(
-    "kwargs,error,match",
+    ("kwargs", "error", "match"),
     [
         ({"smiles": []}, InvalidInput, "between 1 and 24"),
         ({"smiles": ["C"] * 25}, InvalidInput, "between 1 and 24"),

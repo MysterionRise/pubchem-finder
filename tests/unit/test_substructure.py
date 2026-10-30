@@ -55,7 +55,8 @@ def fresh_home(tmp_path, sdfs):
 def test_pattern_layout_and_manifest(substructure_home):
     paths = IndexPaths(substructure_home)
     manifest = paths.load_manifest()
-    assert manifest is not None and manifest.substructure is not None
+    assert manifest is not None
+    assert manifest.substructure is not None
     sub = manifest.substructure
     assert sub.fp_type == "RDKitPattern"
     assert sub.n_compounds == N_GOOD
@@ -221,7 +222,8 @@ def test_rdkit_version_change_warns_then_rebuilds(tmp_path, substructure_home):
     shutil.copytree(substructure_home, home)
     paths = IndexPaths(home)
     manifest = paths.load_manifest()
-    assert manifest is not None and manifest.substructure is not None
+    assert manifest is not None
+    assert manifest.substructure is not None
     old = manifest.substructure.model_copy(update={"rdkit_version": "2000.01.1"})
     paths.manifest.write_text(
         manifest.model_copy(update={"substructure": old}).model_dump_json()
@@ -307,7 +309,8 @@ def test_pattern_chunks_rebuilt_when_fpsim2_changes(tmp_path, substructure_home)
     events: list[str] = []
     finalize(paths, events.append, force=True)
     rebuilt = [e for e in events if "pattern fingerprints for" in e]
-    assert len(rebuilt) == 1 and INDEXED_CHUNKS[0] in rebuilt[0]
+    assert len(rebuilt) == 1
+    assert INDEXED_CHUNKS[0] in rebuilt[0]
     assert [h.cid for h in service.substructure_search("c1ccccc1", home=home).hits] == (
         oracle("c1ccccc1", "smiles")
     )

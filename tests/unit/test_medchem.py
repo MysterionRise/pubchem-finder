@@ -17,7 +17,8 @@ def profile(smiles):
 def test_aspirin_profile():
     p = profile("CC(=O)Oc1ccccc1C(=O)O")
     assert 0.5 < p.qed < 0.6
-    assert p.sa_score is not None and 1 <= p.sa_score < 3
+    assert p.sa_score is not None
+    assert 1 <= p.sa_score < 3
     assert p.lipinski_violations == []
     assert p.veber_ok is True
     assert p.pains_free is True
@@ -31,8 +32,10 @@ def test_pains_compound_flags_alerts_with_atoms():
     catalogs = {a.catalog for a in p.alerts}
     assert {"PAINS_A", "Brenk", "NIH"} <= catalogs
     pains = next(a for a in p.alerts if a.catalog == "PAINS_A")
-    assert pains.atoms and all(0 <= i < 14 for i in pains.atoms)
-    assert pains.reference and "Baell" in pains.reference
+    assert pains.atoms
+    assert all(0 <= i < 14 for i in pains.atoms)
+    assert pains.reference
+    assert "Baell" in pains.reference
 
 
 def test_rule_violations_and_acyclic_scaffold():

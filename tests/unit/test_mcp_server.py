@@ -55,7 +55,8 @@ async def test_every_tool_is_annotated_read_only_with_a_title():
     for tool in result.tools:
         notes = tool.annotations
         assert notes is not None, tool.name
-        assert tool.title and tool.title == notes.title, tool.name
+        assert tool.title, tool.name
+        assert tool.title == notes.title, tool.name
         assert notes.read_only_hint is True, tool.name
         assert notes.destructive_hint is False, tool.name
         assert notes.idempotent_hint is True, tool.name
@@ -77,7 +78,8 @@ async def test_unexpected_errors_name_their_cause(monkeypatch, aspirin_smiles):
         )
     assert result.is_error is True
     text = result.content[0].text
-    assert "OSError" in text and "No space left" in text
+    assert "OSError" in text
+    assert "No space left" in text
     assert "/issues" in text
 
 

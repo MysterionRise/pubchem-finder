@@ -99,7 +99,8 @@ def test_plugin_release_moves_every_pin(tmp_path):
     spec = importlib.util.spec_from_file_location(
         "plugin_release", ROOT / "scripts" / "plugin_release.py"
     )
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 

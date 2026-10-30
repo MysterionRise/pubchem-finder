@@ -259,15 +259,12 @@ class LocalIndex:
             if self._db is None or self._db_files != files:
                 self._db = duckdb.connect(":memory:")
                 self._db_files = files
-                file_list = ", ".join(
-                    "'" + str(f).replace("'", "''") + "'" for f in files
-                )
-                self._db.execute(
-                    f"CREATE VIEW meta AS SELECT * FROM read_parquet([{file_list}])"
-                )
+                # A relation, not SQL text, so file paths need no quoting.
+                self._db.read_parquet([str(f) for f in files]).create_view("meta")
             cursor = self._db.cursor()
         ids = ", ".join(str(int(c)) for c in cids)
+        # Integers only; a literal IN list lets DuckDB push the filter into the scan.
         rows = cursor.execute(
-            f"SELECT {', '.join(METADATA_COLUMNS)} FROM meta WHERE cid IN ({ids})"
+            f"SELECT {', '.join(METADATA_COLUMNS)} FROM meta WHERE cid IN ({ids})"  # noqa: S608
         ).fetchall()
         return {int(r[0]): dict(zip(METADATA_COLUMNS, r, strict=True)) for r in rows}

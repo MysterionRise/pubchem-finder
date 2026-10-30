@@ -529,7 +529,8 @@ def _run_batch(
     columns: list[str],
     fn: Callable[[batch.InputRow], list[dict[str, Any]]],
 ) -> None:
-    assert input_file is not None
+    if input_file is None:  # callers check _batch_requested() first
+        raise typer.BadParameter("an input file is required", param_hint="'--input'")
     try:
         rows = batch.read_inputs(input_file)
         if output is None or str(output) == "-":
