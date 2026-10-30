@@ -27,14 +27,14 @@ dependencies = [
     "numpy>=2",
     "httpx>=0.28",
     "pydantic>=2.7",
-    "typer>=0.15",
+    "typer>=0.16",  # 0.15 breaks on usage errors with click 8.2+
     "mcp>=2.3,<3",
     "platformdirs>=4",
     "fpsim2>=0.7.4",
     "tables>=3.10",  # FPSim2's storage; read directly when sorting index files
     "duckdb>=1.1",
     "pyarrow>=17",
-    "pillow>=10",
+    "pillow>=10.1",  # ImageFont.load_default(size=...)
     "psutil>=5.9",
     "starlette>=1",
 ]

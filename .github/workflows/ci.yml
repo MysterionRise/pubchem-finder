@@ -124,6 +124,28 @@ jobs:
         if: matrix.python-version == '3.14'
         run: uvx check-jsonschema --schemafile https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json server.json
 
+  # The oldest version pyproject.toml allows of each direct dependency, on the
+  # oldest Python: proves the lower bounds still hold (Pillow's and typer's had
+  # drifted below what the code needs).
+  lowest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.11"
+
+      - name: Install the lowest allowed versions
+        run: uv sync --resolution lowest-direct --no-build
+
+      - name: Test
+        run: uv run --no-sync pytest
+
   # Build the wheel, install it the way a user would (fresh environment, newest
   # compatible dependencies from PyPI, not the lockfile) and smoke-test the
   # installed command and MCP server.
@@ -183,7 +205,7 @@ jobs:
   # passed, so adding or renaming matrix cells never breaks the ruleset.
   ci-ok:
     if: always()
-    needs: [lint, test, wheels, package]
+    needs: [lint, test, lowest, wheels, package]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
