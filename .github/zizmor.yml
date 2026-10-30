@@ -1,0 +1,7 @@
+# zizmor (GitHub Actions security linter) settings; it runs as a pre-commit hook.
+rules:
+  # Suggests GitHub's newer `$/...` syntax for calling a workflow in this
+  # repository; actionlint doesn't know it yet, so keep `./...`.
+  self-repository:
+    ignore:
+      - release.yml

@@ -43,6 +43,13 @@ jobs:
       - name: Type check
         run: uv run mypy
 
+      # The other pre-commit hooks: workflow security (zizmor) and correctness
+      # (actionlint), YAML/TOML syntax, whitespace. Ruff ran above, from the lockfile.
+      - name: Pre-commit hooks
+        env:
+          SKIP: ruff-check,ruff-format
+        run: uv run pre-commit run --all-files --show-diff-on-failure
+
   test:
     name: test (${{ matrix.os }}, ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}

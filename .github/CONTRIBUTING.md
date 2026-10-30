@@ -63,7 +63,8 @@ workflow from master, then the plugin PR it prepares.
 ## Code style
 
 - `ruff format` decides formatting; `ruff check` decides lint. Both run in CI and as
-  pre-commit hooks (`uv tool install pre-commit && uv run pre-commit install`).
+  pre-commit hooks (`uv run pre-commit install`), with zizmor and actionlint for the
+  workflows; `make check` and CI run them all.
 - `mypy --strict` must pass. RDKit is untyped; keep its objects behind small, typed
   wrappers rather than sprinkling `Any` through the codebase.
 - Public functions get a short docstring. Comment the why, not the what.

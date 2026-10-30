@@ -83,9 +83,11 @@ jobs:
       - name: Pictures and triage
         run: |
           uv run pubchem-finder triage "$ASPIRIN" --json > out/triage-aspirin.json
-          uv run pubchem-finder draw $(jq -r '.hits[:8][].smiles' out/search-aspirin.json) \
+          mapfile -t analogues < <(jq -r '.hits[:8][].smiles' out/search-aspirin.json)
+          uv run pubchem-finder draw "${analogues[@]}" \
             --highlight diff --reference "$ASPIRIN" -o out/aspirin-analogues.png
-          uv run pubchem-finder draw $(jq -r '.hits[:8][].smiles' out/substructure-sulfonamide.json) \
+          mapfile -t sulfonamides < <(jq -r '.hits[:8][].smiles' out/substructure-sulfonamide.json)
+          uv run pubchem-finder draw "${sulfonamides[@]}" \
             --highlight smarts --smarts "[NX3][SX4](=O)(=O)c" -o out/sulfonamides.png
 
       - name: Every MCP tool over stdio

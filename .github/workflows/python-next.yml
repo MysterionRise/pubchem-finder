@@ -36,13 +36,15 @@ jobs:
 
       - name: Report
         if: always()
+        env:
+          CANARY: ${{ steps.canary.outcome }}
         run: |
           {
             echo "## pubchem-finder $LATEST"
             echo
             echo "- Python 3.14 (the documented pin): installs from wheels"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "${{ steps.canary.outcome }}" = success ]; then
+          if [ "$CANARY" = success ]; then
             echo "- Python 3.15: installs from wheels; the --python 3.14 pin can be relaxed" >> "$GITHUB_STEP_SUMMARY"
             echo "::notice::pubchem-finder $LATEST installs from wheels on Python 3.15; the --python 3.14 pin can be relaxed"
             exit 0
