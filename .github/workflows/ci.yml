@@ -80,14 +80,15 @@ jobs:
         run: uv sync --locked
 
       - name: Test
-        run: uv run pytest --cov --cov-report=term-missing --cov-report=xml
+        if: ${{ !(runner.os == 'Linux' && matrix.python-version == '3.12') }}
+        run: uv run pytest
 
-      - name: Upload coverage report
+      # One cell measures coverage (lines and branches, including the MCP server
+      # subprocesses), enforces the floor in pyproject.toml and puts the table in
+      # the job summary.
+      - name: Test with coverage
         if: runner.os == 'Linux' && matrix.python-version == '3.12'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: coverage-xml
-          path: coverage.xml
+        run: uv run pytest --cov --cov-report=term-missing --cov-report="markdown-append:$GITHUB_STEP_SUMMARY"
 
   # uvx picks uv's newest Python whatever the package supports, so the published
   # commands pass --python 3.14. Check that every dependency installs from wheels on
