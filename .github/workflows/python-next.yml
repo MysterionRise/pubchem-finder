@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.3.2
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
 
       - name: Latest release on the pinned Python
         run: |
@@ -36,13 +36,15 @@ jobs:
 
       - name: Report
         if: always()
+        env:
+          CANARY: ${{ steps.canary.outcome }}
         run: |
           {
             echo "## pubchem-finder $LATEST"
             echo
             echo "- Python 3.14 (the documented pin): installs from wheels"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "${{ steps.canary.outcome }}" = success ]; then
+          if [ "$CANARY" = success ]; then
             echo "- Python 3.15: installs from wheels; the --python 3.14 pin can be relaxed" >> "$GITHUB_STEP_SUMMARY"
             echo "::notice::pubchem-finder $LATEST installs from wheels on Python 3.15; the --python 3.14 pin can be relaxed"
             exit 0

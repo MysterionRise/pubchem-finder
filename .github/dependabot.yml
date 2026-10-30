@@ -1,17 +1,32 @@
 version: 2
+# Updates wait a week after a release (cooldown): long enough for a broken or
+# malicious release to be yanked before it reaches a pull request.
 updates:
   - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     groups:
       python-dependencies:
         patterns: ["*"]
+  # The Claude plugin's lockfile: security updates only. Version bumps come with
+  # each release (the release workflow re-locks it).
+  - package-ecosystem: uv
+    directory: /plugins/pubchem-finder
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: pubchem-finder
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]
@@ -19,3 +34,5 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 7

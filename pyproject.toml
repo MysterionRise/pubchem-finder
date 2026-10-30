@@ -27,14 +27,14 @@ dependencies = [
     "numpy>=2",
     "httpx>=0.28",
     "pydantic>=2.7",
-    "typer>=0.15",
+    "typer>=0.16",  # 0.15 breaks on usage errors with click 8.2+
     "mcp>=2.3,<3",
     "platformdirs>=4",
     "fpsim2>=0.7.4",
     "tables>=3.10",  # FPSim2's storage; read directly when sorting index files
     "duckdb>=1.1",
     "pyarrow>=17",
-    "pillow>=10",
+    "pillow>=10.1",  # ImageFont.load_default(size=...)
     "psutil>=5.9",
     "starlette>=1",
 ]
@@ -54,6 +54,8 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "respx>=0.22",
+    "pre-commit>=4.7.0",
+    "types-psutil>=7.2.2.20260906",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -79,6 +81,8 @@ select = [
     "UP",  # pyupgrade
     "SIM", # flake8-simplify
     "RUF", # ruff-specific
+    "S",   # flake8-bandit (security)
+    "PT",  # flake8-pytest-style
 ]
 ignore = [
     "E501",  # line too long (formatter handles it)
@@ -89,16 +93,25 @@ known-first-party = ["pubchem_finder", "tests"]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
+# Tests assert, start our own server as a subprocess, bind to 0.0.0.0 to check the
+# warning, and compute MD5 the way PubChem publishes its checksums.
+"tests/**" = ["S101", "S603", "S104", "S324"]
+# Scripts check results with assert and run our own commands.
+"scripts/**" = ["S101", "S603"]
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
 warn_unreachable = true
-ignore_missing_imports = true
-files = ["src"]
+files = ["src", "scripts", "examples"]
 
 [[tool.mypy.overrides]]
 module = "rdkit.*"
+ignore_missing_imports = true
+
+# No type information published for these.
+[[tool.mypy.overrides]]
+module = ["pyarrow.*", "tables.*", "FPSim2.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -110,10 +123,17 @@ markers = [
 
 [tool.coverage.run]
 source = ["src"]
+branch = true
+# The end-to-end tests run the MCP server as a subprocess (stdio and HTTP);
+# measure it too. The HTTP server is stopped with SIGTERM.
+patch = ["subprocess"]
+sigterm = true
 
 [tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
+# Measured 96.8% (lines and branches, server subprocesses included) in October
+# 2026; the floor sits a point below so refactors have room, not untested code.
+fail_under = 95
+exclude_also = [
     "if TYPE_CHECKING:",
     "@abstractmethod",
 ]

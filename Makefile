@@ -20,6 +20,7 @@ test:  ## Run the test suite with coverage
 
 check: lint typecheck test  ## Everything CI runs
 	uv run ruff format --check .
+	SKIP=ruff-check,ruff-format uv run pre-commit run --all-files
 
 release-prep:  ## Roll the changelog and set every version: make release-prep VERSION=2.1.2
 	uv run --no-project python scripts/release_prep.py prep $(VERSION)

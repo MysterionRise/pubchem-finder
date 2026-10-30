@@ -1,0 +1,50 @@
+name: Scheduled failure report
+
+# Called by scheduled workflows after their main job: opens an issue when the job
+# fails, comments on it while it keeps failing, and closes it once it passes again,
+# so a broken scheduled run doesn't go unnoticed in an email.
+
+on:
+  workflow_call:
+    inputs:
+      title:
+        description: "Issue title; one open issue per title"
+        type: string
+        required: true
+      result:
+        description: "The checked job's result: success, failure, cancelled or skipped"
+        type: string
+        required: true
+
+permissions: {}
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: ${{ inputs.title }}
+      RESULT: ${{ inputs.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open, update or close the issue
+        run: |
+          if [ "$RESULT" = skipped ]; then exit 0; fi
+          gh label create ci-failure --color B60205 \
+            --description "A scheduled workflow is failing" 2> /dev/null || true
+          number=$(gh issue list --label ci-failure --state open --json number,title \
+            --jq 'map(select(.title == env.TITLE)) | .[0].number // empty')
+          if [ "$RESULT" = success ]; then
+            if [ -n "$number" ]; then gh issue close "$number" --comment "Passing again: $RUN_URL"; fi
+          elif [ -n "$number" ]; then
+            gh issue comment "$number" --body "Still failing ($RESULT): $RUN_URL"
+          else
+            gh issue create --title "$TITLE" --label ci-failure --assignee MysterionRise \
+              --body "The scheduled run ended with **$RESULT**: $RUN_URL
+
+          This issue closes itself when the next scheduled run passes."
+          fi

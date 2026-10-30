@@ -12,6 +12,13 @@ All notable changes to this project are documented here. The format follows
   documented launch commands, so plugin users get the tool annotations and stay off
   Python 3.15.
 
+### Fixed
+
+- The declared minimum versions work again: Pillow 10.1 (`draw_molecules` needs
+  `ImageFont.load_default(size=...)`; with Pillow 10.0 it failed) and typer 0.16 (0.15
+  crashed on usage errors with click 8.2 or later). CI now runs the tests against the
+  lowest allowed version of every direct dependency.
+
 ## [2.1.1] - 2026-10-28
 
 ### Added

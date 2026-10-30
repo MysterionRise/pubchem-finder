@@ -217,7 +217,8 @@ def test_pubchem_commands(pubchem_knowledge_api):
     assert "ACETYLSALICYLIC ACID" in syn.output
 
     xrefs = runner.invoke(app, ["pubchem", "xrefs", "2244"])
-    assert "PubMedID" in xrefs.output and "CHEMBL25" in xrefs.output
+    assert "PubMedID" in xrefs.output
+    assert "CHEMBL25" in xrefs.output
 
     desc = runner.invoke(app, ["pubchem", "describe", "2244"])
     assert desc.output.startswith("Aspirin")
@@ -227,7 +228,8 @@ def test_pubchem_commands(pubchem_knowledge_api):
         app, ["pubchem", "annotations", "2244", "--heading", "GHS Classification"]
     )
     assert ghs.exit_code == 0, ghs.output
-    assert "Irritant" in ghs.output and "European Chemicals Agency" in ghs.output
+    assert "Irritant" in ghs.output
+    assert "European Chemicals Agency" in ghs.output
     short = runner.invoke(
         app,
         [
@@ -243,9 +245,9 @@ def test_pubchem_commands(pubchem_knowledge_api):
     assert "more; raise --max-chars" in short.output
 
     bio = runner.invoke(app, ["pubchem", "bioactivity", "2244"])
-    assert (
-        "6 assays" in bio.output and "P23219" in bio.output and "0.5 µM" in bio.output
-    )
+    assert "6 assays" in bio.output
+    assert "P23219" in bio.output
+    assert "0.5 µM" in bio.output
     untested = runner.invoke(app, ["pubchem", "bioactivity", "5"])
     assert "no BioAssay results" in untested.output
 
@@ -336,7 +338,8 @@ def test_batch_props_standardize_triage(tmp_path):
         out = tmp_path / f"{cmd}.csv"
         result = runner.invoke(app, [cmd, "--input", str(src), "--output", str(out)])
         assert result.exit_code == 0, (cmd, result.output)
-        assert "3 input(s), 3 row(s)" in result.output and "1 error(s)" in result.output
+        assert "3 input(s), 3 row(s)" in result.output
+        assert "1 error(s)" in result.output
         rows = list(csv.DictReader(out.open()))
         assert [r["id"] for r in rows] == ["salt", "broken", "3"]
         assert rows[1]["error"].startswith("Invalid SMILES")
@@ -381,7 +384,8 @@ def test_search_batch_and_scaffolds(tmp_path, built_home):
     assert result.exit_code == 0, result.output
     rows = list(csv.DictReader(out.open()))
     aspirin = [r for r in rows if r["id"] == "aspirin"]
-    assert aspirin[0]["rank"] == "1" and aspirin[0]["cid"] == "2244"
+    assert aspirin[0]["rank"] == "1"
+    assert aspirin[0]["cid"] == "2244"
     assert any(r["id"] == "ethanol" for r in rows)
     grouped = runner.invoke(
         app,
@@ -438,7 +442,8 @@ def test_substructure_batch(tmp_path, substructure_home):
         ],
     )
     assert result.exit_code == 0, result.output
-    assert "3 input(s)" in result.output and "1 error(s)" in result.output
+    assert "3 input(s)" in result.output
+    assert "1 error(s)" in result.output
     rows = list(csv.DictReader(out.open()))
     benzoic = [r for r in rows if r["id"] == "benzoic"]
     assert [r["cid"] for r in benzoic] == ["243", "338", "2244", "4133"]

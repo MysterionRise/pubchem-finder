@@ -28,13 +28,13 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
-from rdkit import Chem, RDLogger
+from rdkit import Chem, rdBase
 from rdkit.Chem import rdDepictor
 from rdkit.Chem.Draw import rdMolDraw2D
 
 from pubchem_finder.drawing import MIN_FONT_SIZE, diff_highlights, smarts_highlights
 
-RDLogger.DisableLog("rdApp.*")
+rdBase.DisableLog("rdApp.*")
 
 W, H = 1280, 720
 GIF_WIDTH = 960
@@ -78,8 +78,8 @@ def draw_mol(
 ) -> Image.Image:
     drawer = rdMolDraw2D.MolDraw2DCairo(*size)
     options = drawer.drawOptions()
-    options.minFontSize = MIN_FONT_SIZE
-    options.clearBackground = True
+    options.minFontSize = MIN_FONT_SIZE  # type: ignore[assignment]  # stub says MolDrawOptions
+    options.clearBackground = True  # type: ignore[assignment]  # stub says MolDrawOptions
     atoms, bonds = atoms or [], bonds or []
     rdMolDraw2D.PrepareAndDrawMolecule(
         drawer,

@@ -57,9 +57,9 @@ def test_batch_matches_pairwise(metric):
 
 
 def test_batch_rejects_bad_shapes():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="2-D"):
         TanimotoSimilarity().batch_calculate(np.array([1, 0]), np.array([1, 0]))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="2-D"):
         CosineSimilarity().batch_calculate(np.array([1, 0]), np.array([1, 0]))
 
 
@@ -95,7 +95,7 @@ def test_morgan_matches_rdkit_generator(aspirin_mol):
 
 
 def test_morgan_rejects_bad_params():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="radius"):
         MorganFingerprint(radius=-1)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="n_bits"):
         MorganFingerprint(n_bits=0)

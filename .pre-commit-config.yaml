@@ -2,7 +2,7 @@ repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.2
     hooks:
-      - id: ruff
+      - id: ruff-check
         args: [--fix]
       - id: ruff-format
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -12,3 +12,18 @@ repos:
       - id: trailing-whitespace
       - id: check-yaml
       - id: check-toml
+  # Workflow security (template injection, credential persistence, unpinned
+  # actions...) and correctness. CI runs every hook but ruff, which runs from the
+  # lockfile there.
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.31.1
+    hooks:
+      - id: zizmor
+        args: [--offline]
+  - repo: https://github.com/Mateusz-Grzelinski/actionlint-py
+    rev: v1.7.12.25
+    hooks:
+      - id: actionlint
+        # actionlint checks run: scripts with shellcheck when it's on PATH (CI's
+        # runners have it); bring it along so local runs check the same.
+        additional_dependencies: [shellcheck-py==0.11.0.1]
