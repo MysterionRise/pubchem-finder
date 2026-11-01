@@ -26,6 +26,17 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from .. import __version__
+from ..core.exceptions import IndexIncompatible
+
+FORMAT_VERSION = 1
+"""Version of the index format this release writes and the newest it reads.
+
+Bump it when an older pubchem-finder would misread an index written by this one
+(a new optional field or Parquet column does not need it). Manifests without the
+field were written by 2.1 or earlier: format 1.
+"""
+
 
 class ChunkStats(BaseModel):
     """Result of fingerprinting one SDF file."""
@@ -91,6 +102,9 @@ class SubstructureInfo(BaseModel):
 class Manifest(BaseModel):
     """Describes a finalized index."""
 
+    format_version: int = Field(
+        default=1, description="Index format; see FORMAT_VERSION"
+    )
     fp_type: str
     fp_params: dict[str, Any]
     n_compounds: int
@@ -186,9 +200,25 @@ class IndexPaths:
         return {s.name: s for s in stats}
 
     def load_manifest(self) -> Manifest | None:
+        """The finalized index's manifest, or None if there is no index.
+
+        Raises:
+            IndexIncompatible: a newer pubchem-finder wrote the index.
+        """
         if not self.manifest.exists() or not self.fingerprints.exists():
             return None
-        return Manifest.model_validate_json(self.manifest.read_text(encoding="utf-8"))
+        data = json.loads(self.manifest.read_text(encoding="utf-8"))
+        # Before validating: a newer format may not fit this version's model.
+        found = data.get("format_version", 1) if isinstance(data, dict) else 1
+        if isinstance(found, int) and found > FORMAT_VERSION:
+            built_by = data.get("pubchem_finder_version", "a newer version")
+            raise IndexIncompatible(
+                f"The index in {self.home} was built by pubchem-finder {built_by} "
+                f"(index format {found}); pubchem-finder {__version__} reads format "
+                f"{FORMAT_VERSION} and older. Upgrade pubchem-finder, or build an "
+                "index for this version in another data directory (--home)."
+            )
+        return Manifest.model_validate(data)
 
 
 def chunk_name(path: Path | str) -> str:

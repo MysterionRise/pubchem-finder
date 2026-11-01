@@ -135,6 +135,22 @@ def test_index_status_reports_a_damaged_manifest(tmp_path, built_home):
     assert isinstance(result.exception, SystemExit)
 
 
+def test_index_status_explains_a_newer_index_format(tmp_path, built_home):
+    import json
+    import shutil
+
+    home = tmp_path / "home"
+    shutil.copytree(built_home, home)
+    manifest_file = home / "index" / "manifest.json"
+    manifest = json.loads(manifest_file.read_text())
+    manifest["format_version"] += 1
+    manifest_file.write_text(json.dumps(manifest))
+    result = runner.invoke(app, ["index", "status", "--home", str(home)])
+    assert result.exit_code == 1
+    assert "Upgrade pubchem-finder" in result.output
+    assert isinstance(result.exception, SystemExit)
+
+
 def test_index_build_downloads_with_limit(tmp_path, sample_sdfs, monkeypatch):
     """--limit N lists the mirror, fetches the first N chunks and deletes them after."""
     import shutil

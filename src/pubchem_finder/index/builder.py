@@ -43,6 +43,7 @@ from .. import __version__
 from ..core.exceptions import IndexBuildError, PubChemFinderError
 from ..data.sdf import SdfReader
 from .layout import (
+    FORMAT_VERSION,
     PATTERN_FP_TYPE,
     ChunkStats,
     IndexPaths,
@@ -504,6 +505,7 @@ def _merge_similarity(
     _merge_h5(files, paths.fingerprints, withdraw=paths.manifest, home=paths.home)
     all_stats = paths.completed_chunks()
     return Manifest(
+        format_version=FORMAT_VERSION,
         fp_type=chunks[0].fp_type,
         fp_params=params,
         n_compounds=sum(c.n_records for c in chunks),

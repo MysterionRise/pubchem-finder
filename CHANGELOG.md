@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- The index manifest records an index format version. A pubchem-finder that meets an
+  index written in a newer format says so and what to do, instead of misreading it.
+  Indexes from 2.1 and earlier are format 1 and keep working.
+
 ### Changed
 
 - The Claude plugin runs 2.1.1 and passes `--python=3.14` to uvx, like the other

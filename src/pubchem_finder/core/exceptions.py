@@ -17,6 +17,10 @@ class IndexNotBuilt(PubChemFinderError):
     """No finalized local similarity index exists at the configured location."""
 
 
+class IndexIncompatible(PubChemFinderError):
+    """The local index was written in a format this version cannot read."""
+
+
 class IndexBuildError(PubChemFinderError):
     """Building or merging the local similarity index failed."""
 

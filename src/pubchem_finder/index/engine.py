@@ -259,8 +259,11 @@ class LocalIndex:
             if self._db is None or self._db_files != files:
                 self._db = duckdb.connect(":memory:")
                 self._db_files = files
-                # A relation, not SQL text, so file paths need no quoting.
-                self._db.read_parquet([str(f) for f in files]).create_view("meta")
+                # A relation, not SQL text, so file paths need no quoting. By name:
+                # chunks written by different versions may not share every column.
+                self._db.read_parquet(
+                    [str(f) for f in files], union_by_name=True
+                ).create_view("meta")
             cursor = self._db.cursor()
         ids = ", ".join(str(int(c)) for c in cids)
         # Integers only; a literal IN list lets DuckDB push the filter into the scan.
