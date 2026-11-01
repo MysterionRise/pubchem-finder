@@ -261,7 +261,10 @@ def search(
     output: OutputOpt = None,
     as_json: JsonFlag = False,
 ) -> None:
-    """Find the most similar compounds in the local index (one query or a file)."""
+    """Find the most similar compounds in the local index (one query or a file).
+
+    With no index built, searches the built-in demo set of FDA-approved drugs.
+    """
     if _batch_requested(smiles, input_file):
 
         def one(row: batch.InputRow) -> list[dict[str, Any]]:
@@ -294,6 +297,8 @@ def search(
     if as_json:
         typer.echo(result.model_dump_json(indent=2))
         return
+    if result.note:
+        typer.echo(f"note: {result.note}", err=True)
     typer.echo(
         f"{len(result.hits)} hit(s) >= {result.threshold} {result.metric} "
         f"among {result.n_indexed:,} compounds ({result.fingerprint})"
@@ -337,7 +342,8 @@ def substructure(
 ) -> None:
     """Find indexed compounds that contain a fragment, lowest CID first.
 
-    Needs an index built with --with-substructure.
+    Needs an index built with --with-substructure; with no index built, searches
+    the built-in demo set of FDA-approved drugs.
     """
     query_type: service.QueryType = "smarts" if smarts else "smiles"
 
@@ -377,6 +383,8 @@ def substructure(
         f"{len(result.hits)} hit(s){more}; {result.n_candidates:,} of "
         f"{result.n_indexed:,} compounds passed the screen, {result.n_checked:,} checked"
     )
+    if result.note:
+        typer.echo(f"note: {result.note}", err=True)
     if result.warning:
         typer.echo(f"warning: {result.warning}", err=True)
     for hit in result.hits:

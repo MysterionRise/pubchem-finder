@@ -7,8 +7,9 @@
     uv run examples/mcp_client.py      # starts `uvx --python 3.14 pubchem-finder mcp`
     PUBCHEM_FINDER_COMMAND=.venv/bin/pubchem-finder uv run examples/mcp_client.py
 
-Lists the tools, computes aspirin's properties (offline) and, if a local index exists
-(`uvx --python 3.14 pubchem-finder index build --limit 1`), finds its closest analogues. No API key
+Lists the tools, computes aspirin's properties (offline) and finds its closest
+analogues: in the local index once one is built (`uvx --python 3.14 pubchem-finder index
+build --limit 1`), until then in the built-in demo set of FDA-approved drugs. No API key
 needed. Agent frameworks (OpenAI Agents SDK, LangChain, PydanticAI...) connect to the
 same server with the same command; see
 https://github.com/MysterionRise/pubchem-finder/issues/34.
@@ -49,14 +50,20 @@ async def main() -> None:
         )
 
         status = (await session.call_tool("index_status", {})).structured_content
-        if status["state"] != "ready":
+        # Releases before 2.2 have no demo set and no search_scope.
+        ready = "index" if status["state"] == "ready" else "none"
+        if status.get("search_scope", ready) == "none":
             print(f"no local index: {status['hint']}")
             return
-        hits = await session.call_tool(
-            "similarity_search", {"smiles": ASPIRIN, "threshold": 0.6, "top_k": 5}
-        )
-        print(f"closest analogues in {status['n_compounds']:,} indexed compounds:")
-        for hit in hits.structured_content["hits"]:
+        found = (
+            await session.call_tool(
+                "similarity_search", {"smiles": ASPIRIN, "threshold": 0.3, "top_k": 5}
+            )
+        ).structured_content
+        if found.get("note"):
+            print(found["note"])
+        print(f"closest analogues in {found['n_indexed']:,} indexed compounds:")
+        for hit in found["hits"]:
             print(
                 f"  CID {hit['cid']:>9}  {hit['similarity']:.3f}  {hit['iupac_name']}"
             )

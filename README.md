@@ -77,16 +77,19 @@ Then ask things like:
 - "What are the main targets of celecoxib in PubChem bioassays?"
 - "Show me the closest analogues of aspirin and highlight what changed."
 - "Does this compound have any PAINS alerts? `O=C1C(=Cc2ccccc2)SC(=S)N1`"
-- With a local index: "Find the 20 compounds most similar to ibuprofen" or "Which indexed
-  compounds contain an aryl sulfonamide? Draw a few with the group highlighted."
+- "Find the 20 compounds most similar to ibuprofen" or "Which indexed compounds contain an
+  aryl sulfonamide? Draw a few with the group highlighted." (local search: the demo set of
+  FDA-approved drugs until you build an index)
 
 ![Sulfonamide drugs with the aryl sulfonamide SMARTS match highlighted](https://raw.githubusercontent.com/MysterionRise/pubchem-finder/master/docs/images/sulfonamides-smarts.png)
 
 *`draw_molecules` with `highlight="smarts"`: eight sulfonamide drugs with the match for
 `[NX3][SX4](=O)(=O)c` highlighted, as Claude shows it inline.*
 
-The local-index tools need an index; build one from the command line (below) and the
-server picks it up. To use a non-default data directory, add
+Local similarity and substructure search work from the first question: until you build
+an index, they search a built-in demo set of 1,932 FDA-approved drugs (built in about a
+second on first use) and say so. Build a PubChem index from the command line (below) and
+the server switches to it, no restart needed. To use a non-default data directory, add
 `"env": {"PUBCHEM_FINDER_HOME": "/path"}` to the Claude Desktop entry, or
 `--env PUBCHEM_FINDER_HOME=/path` to `claude mcp add`.
 
@@ -156,6 +159,13 @@ pubchem-finder index status
 
 pubchem-finder index build --sdf my_library.sdf.gz         # or index your own SDF files
 ```
+
+Before any index is built, `search` and `substructure` use the built-in demo set: 1,932
+FDA-approved drugs (PubChem's parent compounds of what it links to Drugs@FDA), built into
+`<data directory>/demo` in about a second on first use, and the results say so
+(`search_scope: "demo"` in JSON). `index build --demo` builds it ahead of time;
+`PUBCHEM_FINDER_DEMO=0` turns the fallback off. Once a PubChem or SDF index is built,
+searches use it.
 
 `index build --limit N` downloads the first N of PubChem's 359 SDF chunks (up to 500,000
 CIDs each; the first is a 323 MB download) from NCBI over HTTPS, verifies each file's MD5,
@@ -281,7 +291,11 @@ API key). Examples for agent frameworks are welcome, see
   your shell's `PATH`, so `uvx` may not be found. Use its full path as the `command`
   (run `which uvx`, typically `~/.local/bin/uvx`). The server's log is in Claude
   Desktop's MCP logs.
-- **"No local index"** from `similarity_search` or `substructure_search`: build one with
+- **"Searched the built-in demo set"** in search results: no index is built yet, so local
+  searches cover the 1,932 FDA-approved drugs shipped with pubchem-finder. Build an index
+  as below; the pubchem_* tools search all of PubChem meanwhile.
+- **"No local index"** from `similarity_search` or `substructure_search` (with
+  `PUBCHEM_FINDER_DEMO=0`): build one with
   `pubchem-finder index build --limit 1 --with-substructure`. The message (and
   `index_status`) gives the exact command to paste into a terminal: it runs the server's
   version through `uvx` and names the data directory if the server uses another one.
@@ -310,7 +324,10 @@ and cite PubChem when you use its data:
 > [doi:10.1093/nar/gkae1059](https://doi.org/10.1093/nar/gkae1059)
 
 Annotations (safety, pharmacology, toxicity...) are deposited by other organisations;
-each one names its source, and some carry their own license terms.
+each one names its source, and some carry their own license terms. The demo set comes from
+[Drugs@FDA](https://www.accessdata.fda.gov/scripts/cder/daf/) (U.S. Food and Drug
+Administration, public domain) via PubChem, with PubChem's structures; see
+`src/pubchem_finder/index/demo_data/fda_approved_drugs.json`.
 
 PubChem Finder is built on [RDKit](https://www.rdkit.org/),
 [FPSim2](https://github.com/chembl/FPSim2), [DuckDB](https://duckdb.org/),

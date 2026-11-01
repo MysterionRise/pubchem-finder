@@ -55,10 +55,11 @@ Use pubchem_lookup to resolve names, CIDs, SMILES or InChIKeys to PubChem record
 (properties, identifiers, link). Use compound_properties for RDKit descriptors of any
 SMILES, standardize to normalize a structure (salts removed, charges neutralized),
 and compare for fingerprint similarity between two structures.
-similarity_search finds the most similar compounds in the local PubChem index, and
-substructure_search the indexed compounds containing a SMILES or SMARTS fragment
-(check index_status first; if the index or its substructure search is missing, tell the
-user the command it gives).
+similarity_search finds the most similar compounds in the local index, and
+substructure_search the indexed compounds containing a SMILES or SMARTS fragment.
+Until the user builds a local PubChem index, both search a built-in demo set of about
+1,900 FDA-approved drugs and say so in note: tell the user, and offer the pubchem_*
+searches (all of PubChem, live) or the build command index_status gives.
 The pubchem_* tools query PubChem live: structure searches over all of PubChem
 (similarity, substructure, exact match), synonyms and CAS numbers, cross-references
 (PubMed, patents, registry IDs), descriptions, curated page sections such as GHS
@@ -92,7 +93,8 @@ def _tool(title: str, *, calls_pubchem: bool) -> Callable[[F], F]:
     """Register a tool with a title and annotations, as directory policies require.
 
     Every tool only reads: its arguments, the local index or PubChem. The response
-    cache is internal state, not the tool's environment. ``calls_pubchem`` marks
+    cache and the demo index (built on the first local search when no index
+    exists) are internal state, not the tool's environment. ``calls_pubchem`` marks
     the tools that reach an external service (the open world).
     """
     return mcp.tool(
@@ -206,9 +208,11 @@ async def similarity_search(
     Exact fingerprint similarity (ECFP4/Morgan by default) over every indexed
     compound, best first, with CID, SMILES, InChIKey, IUPAC name, formula, MW
     and PubChem link. threshold is the minimum similarity (0-1, 0.7 finds close
-    analogues; lower it to widen the search). Requires a local index built with
-    `pubchem-finder index build`; the first search loads it, which can take a
-    while for a full PubChem index. group_by_scaffold adds the hits grouped by
+    analogues; lower it to widen the search). Searches the index built with
+    `pubchem-finder index build` (the first search loads it, which takes a while
+    for a full PubChem index); until one is built, a demo set of about 1,900
+    FDA-approved drugs, with search_scope="demo" and a note to pass on to the
+    user. group_by_scaffold adds the hits grouped by
     Bemis-Murcko scaffold, to see how many chemical series the hits span.
     """
     return await _run(
@@ -233,11 +237,12 @@ async def substructure_search(
     query_type="smarts", a SMARTS pattern (e.g. '[NX3][SX4](=O)(=O)c' for aryl
     sulfonamides). Offline, exact (every hit is verified atom by atom; stereo is
     ignored) and not rate-limited, so prefer it over pubchem_substructure_search
-    when index_status shows substructure: true. Hits come lowest CID first, which
-    puts long-known compounds first. n_candidates bounds how many matches exist;
-    exhaustive=false means more matches may exist beyond max_hits (1-1000) or the
-    candidate limit. To show where the fragment sits, pass hits to draw_molecules
-    with highlight="smarts" and the query as smarts.
+    when index_status shows substructure: true. Without a local index it
+    searches the demo set of FDA-approved drugs (search_scope="demo"). Hits come
+    lowest CID first, which puts long-known compounds first. n_candidates bounds
+    how many matches exist; exhaustive=false means more matches may exist beyond
+    max_hits (1-1000) or the candidate limit. To show where the fragment sits,
+    pass hits to draw_molecules with highlight="smarts" and the query as smarts.
     """
     return await _run(
         service.substructure_search, query, query_type=query_type, max_hits=max_hits
@@ -247,8 +252,9 @@ async def substructure_search(
 @_tool("Local index status", calls_pubchem=False)
 async def index_status() -> IndexStatus:
     """Report whether the local PubChem index is built, how many compounds it
-    holds, its fingerprint, size, whether substructure search is available, and
-    how to build what is missing."""
+    holds, its fingerprint, size, whether substructure search is available, what
+    local searches cover now (search_scope: the index, or the built-in demo set of
+    FDA-approved drugs) and how to build what is missing."""
     return await _run(service.index_status)
 
 

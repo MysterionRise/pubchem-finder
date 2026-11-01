@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Local similarity and substructure search work on first use: until an index is built,
+  they search a built-in demo set of 1,932 FDA-approved drugs (PubChem's parent compounds
+  of what it links to Drugs@FDA, public domain), built into the data directory in about a
+  second on the first search. Results say so with `search_scope: "demo"` and a `note`
+  that points to PubChem's live searches and the build command; `index_status` reports
+  `search_scope` and `demo_compounds`. Once an index is built, searches use it without a
+  restart. `index build --demo` builds the demo index ahead of time and
+  `PUBCHEM_FINDER_DEMO=0` turns the fallback off. `scripts/build_demo_set.py` regenerates
+  the data.
 - The index manifest records an index format version. A pubchem-finder that meets an
   index written in a newer format says so and what to do, instead of misreading it.
   Indexes from 2.1 and earlier are format 1 and keep working.

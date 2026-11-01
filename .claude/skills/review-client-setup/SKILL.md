@@ -61,6 +61,11 @@ uv run pubchem-finder search "CC(=O)Oc1ccccc1C(=O)O" --threshold 0.7 --top 5   #
 - `docs/media/demo-data.json` holds the real top-40 similarity hits for aspirin on
   PubChem's first chunk with their scores. A PR that quotes other CIDs or other scores for
   "close analogues of aspirin" did not get them from the tool.
+- From 2.2 a tester without an index gets the built-in demo set of FDA-approved drugs
+  instead (`search_scope: "demo"`; the answer should say so). Its aspirin hits are
+  2244 (1.0), 338 (0.464), 41684 (0.417), 4133 (0.364), 4044 (0.359):
+  `uv run pubchem-finder index build --demo --home /tmp/demo` then
+  `uv run pubchem-finder search "CC(=O)Oc1ccccc1C(=O)O" --threshold 0.3 --top 5 --home /tmp/demo`.
 - For any similarity number quoted for a specific pair, compute it:
   `service.compare(smiles_a, smiles_b).ecfp4_tanimoto` (look the CID up with
   `service.lookup(str(cid), by="cid")` to get its SMILES).

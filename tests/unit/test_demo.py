@@ -177,3 +177,109 @@ def test_demo_switch(monkeypatch):
     for off in ("0", "false", "OFF", " no "):
         monkeypatch.setenv("PUBCHEM_FINDER_DEMO", off)
         assert not demo_enabled()
+
+
+# --- Searches fall back to the demo index ------------------------------------
+
+
+@pytest.fixture
+def demo_on(monkeypatch):
+    monkeypatch.setenv("PUBCHEM_FINDER_DEMO", "1")
+
+
+def test_similarity_search_without_an_index_searches_the_demo_set(demo_built, demo_on):
+    found = service.similarity_search(ASPIRIN, threshold=0.4, home=demo_built)
+    n = demo.provenance()["n_compounds"]
+    assert found.search_scope == "demo"
+    assert found.n_indexed == n
+    assert found.hits[0].cid == 2244
+    assert f"demo set of {n:,} FDA-approved drugs, not PubChem" in found.note
+    assert "index build --limit 1 --with-substructure" in found.note
+    assert "pubchem_similarity_search" in found.note
+
+
+def test_substructure_search_without_an_index_searches_the_demo_set(
+    demo_built, demo_on
+):
+    found = service.substructure_search("c1ccc2[nH]ccc2c1", home=demo_built)
+    assert found.search_scope == "demo"
+    assert found.hits
+    assert found.note is not None
+
+
+def test_status_says_searches_use_the_demo_set(demo_built, demo_on):
+    status = service.index_status(demo_built)
+    n = demo.provenance()["n_compounds"]
+    assert (status.state, status.search_scope, status.demo_compounds) == (
+        "not_built",
+        "demo",
+        n,
+    )
+    assert f"demo set of {n:,} FDA-approved drugs" in status.hint
+
+
+def test_status_with_the_demo_off(tmp_path):
+    status = service.index_status(tmp_path)
+    assert (status.search_scope, status.demo_compounds) == ("none", 0)
+    assert "demo set" not in status.hint
+
+
+def test_a_built_index_takes_over_without_a_restart(tmp_path, sample_sdfs, demo_on):
+    from pubchem_finder.index.builder import SdfSource, build_chunks, finalize
+    from pubchem_finder.index.layout import chunk_name
+
+    before = service.similarity_search(ASPIRIN, threshold=0.4, home=tmp_path)
+    assert before.search_scope == "demo"
+    paths = IndexPaths(tmp_path)
+    build_chunks(paths, [SdfSource(chunk_name(p), local_path=p) for p in sample_sdfs])
+    finalize(paths)
+    after = service.similarity_search(ASPIRIN, threshold=0.4, home=tmp_path)
+    assert (after.search_scope, after.note) == ("index", None)
+    assert after.n_indexed == 11
+    assert service.index_status(tmp_path).search_scope == "index"
+
+
+def test_no_demo_fallback_for_substructure_on_an_index_without_it(built_home, demo_on):
+    from pubchem_finder.core.exceptions import IndexNotBuilt
+
+    with pytest.raises(IndexNotBuilt, match="no substructure search"):
+        service.substructure_search("c1ccccc1", home=built_home)
+
+
+def test_with_the_demo_off_searches_say_how_to_build_an_index(tmp_path):
+    from pubchem_finder.core.exceptions import IndexNotBuilt
+
+    with pytest.raises(IndexNotBuilt, match="index build --limit 1"):
+        service.similarity_search(ASPIRIN, home=tmp_path)
+    assert not (tmp_path / "demo").exists()
+
+
+@pytest.mark.anyio
+async def test_mcp_search_reports_the_demo_scope(demo_built, demo_on, monkeypatch):
+    from mcp.client.client import Client
+
+    from pubchem_finder.mcp_server import mcp
+
+    monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(demo_built))
+    async with Client(mcp) as client:
+        status = await client.call_tool("index_status", {})
+        result = await client.call_tool(
+            "similarity_search", {"smiles": ASPIRIN, "threshold": 0.4}
+        )
+    assert status.structured_content["search_scope"] == "demo"
+    assert result.is_error is False
+    assert result.structured_content["search_scope"] == "demo"
+    assert result.structured_content["hits"][0]["cid"] == 2244
+    assert "FDA-approved drugs" in result.structured_content["note"]
+
+
+def test_cli_search_prints_the_demo_note(demo_built, demo_on):
+    sim = runner.invoke(app, ["search", ASPIRIN, "--home", str(demo_built)])
+    assert sim.exit_code == 0, sim.output
+    assert "note: Searched the built-in demo set" in sim.output
+    assert "CID 2244" in sim.output
+    sub = runner.invoke(
+        app, ["substructure", "c1ccc2[nH]ccc2c1", "--home", str(demo_built)]
+    )
+    assert sub.exit_code == 0, sub.output
+    assert "note: Searched the built-in demo set" in sub.output

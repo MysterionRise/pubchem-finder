@@ -8,8 +8,10 @@ With ``--url`` the MCP checks go to that server over streamable HTTP and the CLI
 checks run only if ``--command`` is given too; ``--home`` then just says that the
 server has an index.
 
-Offline checks always run. ``--home`` adds the local-index tools (substructure
-search too, if the index has it); ``--live`` adds the tools that call PubChem.
+Offline checks always run, local searches included: without ``--home`` they search
+the built-in demo index (unless PUBCHEM_FINDER_DEMO=0), with it the index there
+(substructure search too, if the index has it); ``--live`` adds the tools that call
+PubChem.
 Prints a Markdown table (also appended to ``$GITHUB_STEP_SUMMARY`` when set) and
 exits non-zero if any check fails. Needs the ``mcp`` package, which
 pubchem-finder depends on, so run it with the interpreter it is installed in.
@@ -62,7 +64,9 @@ class Smoke:
         return sum(not ok for _, ok, _, _ in self.rows)
 
 
-def run_cli(smoke: Smoke, command: list[str], env: dict[str, str]) -> None:
+def run_cli(
+    smoke: Smoke, command: list[str], env: dict[str, str], search: bool
+) -> None:
     def check(name: str, args: list[str], verify: Callable[[str], str]) -> None:
         start = time.perf_counter()
         try:
@@ -94,9 +98,19 @@ def run_cli(smoke: Smoke, command: list[str], env: dict[str, str]) -> None:
         assert data.startswith(b"\x89PNG"), "not a PNG"
         return f"{len(data):,} byte PNG"
 
+    def searched(out: str) -> str:
+        data = json.loads(out)
+        first = data["hits"][0]["cid"]
+        assert first == 2244, f"first CID {first}"
+        return f"{len(data['hits'])} hits, first CID {first} ({data['search_scope']})"
+
     check("cli --version", ["--version"], lambda out: out.strip())
     check("cli props", ["props", ASPIRIN, "--json"], props)
     check("cli draw", ["draw", ASPIRIN, "O=C(O)c1ccccc1O", "-o", str(png)], drawn)
+    if search:
+        check(
+            "cli search", ["search", ASPIRIN, "--threshold", "0.5", "--json"], searched
+        )
 
 
 Verify = Callable[[Any], str]
@@ -199,10 +213,16 @@ async def run_mcp(
         status = await check(
             "index_status",
             tool("index_status", {}),
-            lambda r: f"{data(r)['state']}, {data(r)['n_compounds']:,} compounds",
+            lambda r: (
+                f"{data(r)['state']}, {data(r)['n_compounds']:,} compounds, "
+                f"searches {data(r)['search_scope']}"
+            ),
         )
+        scope = data(status)["search_scope"] if status is not None else "none"
+        # With --home the index there answers; without, the demo index.
+        expected = "index" if home else "demo"
 
-        if home and status is not None:
+        if scope != "none":
             await check(
                 "similarity_search",
                 tool(
@@ -210,11 +230,13 @@ async def run_mcp(
                     {"smiles": ASPIRIN, "threshold": 0.5, "top_k": 10},
                 ),
                 lambda r: expect(
-                    data(r)["hits"][0]["cid"] == 2244,
-                    f"{len(data(r)['hits'])} hits, first CID {data(r)['hits'][0]['cid']}",
+                    data(r)["hits"][0]["cid"] == 2244
+                    and data(r)["search_scope"] == expected,
+                    f"{len(data(r)['hits'])} hits, first CID "
+                    f"{data(r)['hits'][0]['cid']} ({data(r)['search_scope']})",
                 ),
             )
-            if data(status).get("substructure"):
+            if data(status).get("substructure") or scope == "demo":
                 for label, query, kind in (
                     ("indole", INDOLE, "smiles"),
                     ("aryl sulfonamide", "[NX3][SX4](=O)(=O)c", "smarts"),
@@ -328,9 +350,11 @@ def main() -> int:
     else:
         env["PUBCHEM_FINDER_HOME"] = tempfile.mkdtemp(prefix="pubchem-finder-smoke-")
 
+    demo = env.get("PUBCHEM_FINDER_DEMO", "1").strip().lower()
+    search = args.home is not None or demo not in {"0", "false", "no", "off"}
     smoke = Smoke()
     if args.command or not args.url:
-        run_cli(smoke, command, env)
+        run_cli(smoke, command, env, search)
     anyio.run(run_mcp, smoke, command, env, args.home is not None, args.live, args.url)
 
     table = smoke.table()

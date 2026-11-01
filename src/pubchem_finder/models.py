@@ -100,6 +100,15 @@ class SimilarityResults(BaseModel):
     metric: str
     fingerprint: str = Field(description="Fingerprint the index was built with")
     n_indexed: int = Field(description="Compounds in the index")
+    search_scope: str = Field(
+        default="index",
+        description="'index': the local index built with `index build`; 'demo': the "
+        "built-in demo set of FDA-approved drugs, searched while no index is built",
+    )
+    note: str | None = Field(
+        default=None,
+        description="What was searched, when it was the demo set; tell the user",
+    )
     hits: list[SimilarityHit]
     scaffolds: list["ScaffoldGroup"] | None = Field(
         default=None, description="Hits grouped by Murcko scaffold, when requested"
@@ -112,6 +121,15 @@ class SubstructureResults(BaseModel):
     query: str
     query_type: str = Field(description="'smiles' or 'smarts'")
     n_indexed: int = Field(description="Compounds in the substructure index")
+    search_scope: str = Field(
+        default="index",
+        description="'index': the local index built with `index build`; 'demo': the "
+        "built-in demo set of FDA-approved drugs, searched while no index is built",
+    )
+    note: str | None = Field(
+        default=None,
+        description="What was searched, when it was the demo set; tell the user",
+    )
     n_candidates: int = Field(
         description="Compounds that passed the fingerprint screen: an upper bound on matches"
     )
@@ -146,6 +164,16 @@ class IndexStatus(BaseModel):
     substructure_size_bytes: int = 0
     substructure_memory_bytes: int = Field(
         default=0, description="RAM needed to screen substructures in memory"
+    )
+    search_scope: str = Field(
+        default="none",
+        description="What similarity_search and substructure_search search now: "
+        "'index' (this index), 'demo' (the built-in demo set of FDA-approved drugs, "
+        "built on first use) or 'none'",
+    )
+    demo_compounds: int = Field(
+        default=0,
+        description="Compounds in the built-in demo set (0 when PUBCHEM_FINDER_DEMO=0)",
     )
     hint: str | None = None
 
