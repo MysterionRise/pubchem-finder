@@ -14,6 +14,7 @@ from platformdirs import user_data_dir
 HOME_ENV = "PUBCHEM_FINDER_HOME"
 INDEX_MODE_ENV = "PUBCHEM_FINDER_INDEX_MODE"
 CACHE_ENV = "PUBCHEM_FINDER_CACHE"
+DEMO_ENV = "PUBCHEM_FINDER_DEMO"
 
 
 def resolve_home(explicit: Path | str | None = None) -> Path:
@@ -34,12 +35,17 @@ def default_home() -> Path:
 
 def cache_enabled() -> bool:
     """The PubChem response cache is on unless ``PUBCHEM_FINDER_CACHE`` is 0/false/off."""
-    return os.environ.get(CACHE_ENV, "1").strip().lower() not in {
-        "0",
-        "false",
-        "no",
-        "off",
-    }
+    return _flag(CACHE_ENV)
+
+
+def demo_enabled() -> bool:
+    """Local searches fall back to the built-in demo index when no PubChem index is
+    built, unless ``PUBCHEM_FINDER_DEMO`` is 0/false/off."""
+    return _flag(DEMO_ENV)
+
+
+def _flag(name: str) -> bool:
+    return os.environ.get(name, "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def cache_path(home: Path | str | None = None) -> Path:

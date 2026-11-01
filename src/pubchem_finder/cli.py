@@ -588,6 +588,16 @@ def index_build(
             help="Index local SDF/SDF.gz files instead of downloading (repeatable).",
         ),
     ] = None,
+    demo: Annotated[
+        bool,
+        typer.Option(
+            "--demo",
+            help=(
+                "Build the built-in demo index of FDA-approved drugs (a second, no "
+                "download). Searches use it while no PubChem index is built."
+            ),
+        ),
+    ] = False,
     workers: Annotated[
         int, typer.Option(min=1, help="Parallel fingerprinting processes.")
     ] = _default_workers(),
@@ -619,10 +629,14 @@ def index_build(
     from .index.builder import BuildReport, SdfSource, build_chunks, finalize
     from .index.layout import IndexPaths, chunk_name
 
-    chosen = sum([limit is not None, all_chunks, bool(sdf)])
-    if chosen > 1 or (chosen == 0 and with_substructure is None):
+    chosen = sum([limit is not None, all_chunks, bool(sdf), demo])
+    if (
+        chosen > 1
+        or (chosen == 0 and with_substructure is None)
+        or (demo and with_substructure is not None)
+    ):
         typer.echo(
-            "error: pass exactly one of --limit N, --all or --sdf FILE "
+            "error: pass exactly one of --limit N, --all, --sdf FILE or --demo "
             "(or only --with-substructure / --without-substructure)",
             err=True,
         )
@@ -633,6 +647,10 @@ def index_build(
 
     def say(msg: str) -> None:
         typer.echo(msg, err=True)
+
+    if demo:
+        _build_demo(paths.home, say)
+        return
 
     try:
         if chosen == 0:
@@ -676,6 +694,21 @@ def index_build(
         f"Index ready: {manifest.n_compounds:,} compounds from "
         f"{len(manifest.chunks)} chunk(s){extra}, {len(report.built)} built this run, "
         f"in {paths.home}"
+    )
+
+
+def _build_demo(home: Path, say: Callable[[str], None]) -> None:
+    from .index import demo
+
+    try:
+        demo_home = demo.ensure_built(home, say)
+    except (PubChemFinderError, OSError) as exc:
+        _fail(exc)
+        return
+    info = demo.provenance()
+    typer.echo(
+        f"Demo index ready: {info['n_compounds']:,} {info['name']} with substructure "
+        f"search, in {demo_home}"
     )
 
 

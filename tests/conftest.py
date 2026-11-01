@@ -288,12 +288,14 @@ def substructure_home(tmp_path_factory, sample_sdfs):
 
 
 def pytest_configure(config):
-    """Keep tests away from the user's real data directory and response cache."""
+    """Keep tests away from the user's real data directory, response cache and demo."""
     import os
     import tempfile
 
     os.environ["PUBCHEM_FINDER_HOME"] = tempfile.mkdtemp(prefix="pubchem-finder-tests-")
     os.environ["PUBCHEM_FINDER_CACHE"] = "0"
+    # Tests of "no index" behaviour expect no index; demo tests turn it back on.
+    os.environ["PUBCHEM_FINDER_DEMO"] = "0"
 
 
 @pytest.fixture
