@@ -96,13 +96,22 @@ mcp = MCPServer(
 )
 
 
-def _tool(title: str, *, calls_pubchem: bool) -> Callable[[F], F]:
+# Claude Code saves a text result longer than 50,000 characters to a file instead of
+# showing it, unless the tool raises its own limit (up to 500,000). Searches with many
+# hits and long annotation sections can pass 50,000; this lets them through whole.
+LARGE_RESULTS = {"anthropic/maxResultSizeChars": 100_000}
+
+
+def _tool(
+    title: str, *, calls_pubchem: bool, large_results: bool = False
+) -> Callable[[F], F]:
     """Register a tool with a title and annotations, as directory policies require.
 
     Every tool only reads: its arguments, the local index or PubChem. The response
     cache and the demo index (built on the first local search when no index
     exists) are internal state, not the tool's environment. ``calls_pubchem`` marks
-    the tools that reach an external service (the open world).
+    the tools that reach an external service (the open world); ``large_results``
+    the ones whose results can pass Claude Code's default size limit.
     """
     return mcp.tool(
         title=title,
@@ -113,6 +122,7 @@ def _tool(title: str, *, calls_pubchem: bool) -> Callable[[F], F]:
             idempotent_hint=True,
             open_world_hint=calls_pubchem,
         ),
+        meta=dict(LARGE_RESULTS) if large_results else None,
     )
 
 
@@ -202,7 +212,7 @@ async def compare(smiles_a: str, smiles_b: str) -> Comparison:
     return await _run(service.compare, smiles_a, smiles_b)
 
 
-@_tool("Similarity search (local index)", calls_pubchem=False)
+@_tool("Similarity search (local index)", calls_pubchem=False, large_results=True)
 async def similarity_search(
     smiles: str,
     threshold: float = 0.7,
@@ -232,7 +242,7 @@ async def similarity_search(
     )
 
 
-@_tool("Substructure search (local index)", calls_pubchem=False)
+@_tool("Substructure search (local index)", calls_pubchem=False, large_results=True)
 async def substructure_search(
     query: str,
     query_type: Literal["smiles", "smarts"] = "smiles",
@@ -336,7 +346,7 @@ async def pubchem_description(cid: int) -> Description:
     return await _run(service.pubchem_description, cid)
 
 
-@_tool("PubChem page section", calls_pubchem=True)
+@_tool("PubChem page section", calls_pubchem=True, large_results=True)
 async def pubchem_annotations(
     cid: int, heading: AnnotationHeading, max_chars: int = 6000
 ) -> AnnotationSection:

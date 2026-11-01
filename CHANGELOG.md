@@ -38,6 +38,10 @@ All notable changes to this project are documented here. The format follows
   what it costs (PubChem's first chunk is now a 323 MB download). Plugin and MCP users
   have no `pubchem-finder` command on their PATH, so the old hint didn't run for them.
   `index build` shows download progress.
+- `similarity_search`, `substructure_search` and `pubchem_annotations` ask Claude Code to
+  show results of up to 100,000 characters inline (`anthropic/maxResultSizeChars`); by
+  default it saves results over 50,000 characters to a file instead, which large searches
+  can pass.
 - The Claude plugin runs 2.1.1 and passes `--python=3.14` to uvx, like the other
   documented launch commands, so plugin users get the tool annotations and stay off
   Python 3.15.

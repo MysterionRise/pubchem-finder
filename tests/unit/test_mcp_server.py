@@ -396,3 +396,14 @@ async def test_resource_failures_name_the_cause(monkeypatch):
     async with Client(mcp) as client:
         with pytest.raises(MCPError, match=r"Unexpected error \(OSError"):
             await client.read_resource("pubchem://index/status")
+
+
+async def test_large_result_tools_raise_claude_codes_size_limit():
+    async with Client(mcp) as client:
+        tools = (await client.list_tools()).tools
+    raised = {t.name: t.meta["anthropic/maxResultSizeChars"] for t in tools if t.meta}
+    assert raised == {
+        "similarity_search": 100_000,
+        "substructure_search": 100_000,
+        "pubchem_annotations": 100_000,
+    }
