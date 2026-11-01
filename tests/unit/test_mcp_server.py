@@ -333,3 +333,66 @@ async def test_triage_structures_prompt():
     assert "medchem_profile" in listed
     empty = await text_of("triage_structures", {})
     assert "ask me for them as SMILES" in empty
+
+
+# --- Resources ----------------------------------------------------------------
+
+
+async def test_resources_are_listed():
+    async with Client(mcp) as client:
+        templates = (await client.list_resource_templates()).resource_templates
+        resources = (await client.list_resources()).resources
+    assert [(t.uri_template, t.mime_type) for t in templates] == [
+        ("pubchem://compound/{cid}", "application/json")
+    ]
+    assert [str(r.uri) for r in resources] == ["pubchem://index/status"]
+
+
+async def test_compound_resource(pubchem_api):
+    import json
+
+    async with Client(mcp) as client:
+        result = await client.read_resource("pubchem://compound/2244")
+    record = json.loads(result.contents[0].text)
+    assert (record["cid"], record["title"]) == (2244, "Aspirin")
+    assert result.contents[0].mime_type == "application/json"
+
+
+@pytest.mark.parametrize("cid", ["999999999", "abc", "0"])
+async def test_missing_compound_resource_is_not_found(pubchem_api, cid):
+    from mcp.shared.exceptions import MCPError
+
+    from tests.conftest import fault
+
+    pubchem_api.get(path__regex=r"/compound/cid/999999999/property/.*").respond(
+        404, json=fault("PUGREST.NotFound", "No CID found")
+    )
+    async with Client(mcp) as client:
+        with pytest.raises(MCPError) as err:
+            await client.read_resource(f"pubchem://compound/{cid}")
+    assert err.value.error.code == -32602
+    assert "No CID found" in str(err.value) or "Not a PubChem CID" in str(err.value)
+
+
+async def test_index_status_resource(tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(tmp_path))
+    async with Client(mcp) as client:
+        result = await client.read_resource("pubchem://index/status")
+    status = json.loads(result.contents[0].text)
+    assert (status["state"], status["home"]) == ("not_built", str(tmp_path))
+
+
+async def test_resource_failures_name_the_cause(monkeypatch):
+    from mcp.shared.exceptions import MCPError
+
+    from pubchem_finder import service
+
+    def broken(*args, **kwargs):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(service, "index_status", broken)
+    async with Client(mcp) as client:
+        with pytest.raises(MCPError, match=r"Unexpected error \(OSError"):
+            await client.read_resource("pubchem://index/status")

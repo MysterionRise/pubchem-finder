@@ -36,6 +36,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 N_TOOLS = 17
+PROMPTS = {"compound_dossier", "find_analogues", "triage_structures"}
 ASPIRIN = "CC(=O)Oc1ccccc1C(=O)O"
 INDOLE = "c1ccc2[nH]ccc2c1"
 
@@ -174,6 +175,27 @@ async def run_mcp(
             ),
         )
         await check(
+            "mcp list_prompts",
+            session.list_prompts,
+            lambda r: expect(
+                {p.name for p in r.prompts} == PROMPTS,
+                ", ".join(sorted(p.name for p in r.prompts)),
+            ),
+        )
+        await check(
+            "mcp get_prompt",
+            lambda: session.get_prompt("find_analogues", {"compound": "aspirin"}),
+            lambda r: expect(
+                "similarity_search" in r.messages[0].content.text,
+                f"{len(r.messages[0].content.text)} characters",
+            ),
+        )
+        await check(
+            "mcp read_resource",
+            lambda: session.read_resource("pubchem://index/status"),
+            lambda r: expect('"state"' in r.contents[0].text, "pubchem://index/status"),
+        )
+        await check(
             "compound_properties",
             tool("compound_properties", {"smiles": ASPIRIN}),
             lambda r: expect(
@@ -254,6 +276,13 @@ async def run_mcp(
                     )
 
         if live:
+            await check(
+                "pubchem://compound/2244",
+                lambda: session.read_resource("pubchem://compound/2244"),
+                lambda r: expect(
+                    '"cid": 2244' in r.contents[0].text, "aspirin's record"
+                ),
+            )
             await check(
                 "pubchem_lookup",
                 tool("pubchem_lookup", {"query": "caffeine"}),

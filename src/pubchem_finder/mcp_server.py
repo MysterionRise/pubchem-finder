@@ -13,9 +13,14 @@ from typing import Any, Literal, TypeVar
 
 import anyio
 from mcp.server.mcpserver import Image, MCPServer
-from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import (
+    ResourceError,
+    ResourceNotFoundError,
+    ToolError,
+)
 from mcp.shared.exceptions import MCPError
 from mcp.types import INVALID_PARAMS, Icon, ToolAnnotations
+from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -32,6 +37,7 @@ from .models import (
     AnnotationSection,
     BioactivitySummary,
     Comparison,
+    CompoundRecord,
     CrossRefs,
     Description,
     IndexStatus,
@@ -392,6 +398,57 @@ async def medchem_profile(smiles: str) -> MedchemProfile:
     draw_molecules with the alert as SMARTS, or just describe them), and the
     Bemis-Murcko scaffold."""
     return await _run(service.medchem_profile, smiles)
+
+
+# --------------------------------------------------------------------------- #
+# Resources: data a client can attach to a conversation (in Claude Code,
+# @pubchem-finder:pubchem://compound/2244).
+# --------------------------------------------------------------------------- #
+
+
+async def _read(fn: Callable[..., BaseModel], *args: object) -> str:
+    """Run a service call off the event loop and return its result as JSON; every
+    failure becomes a ResourceError with the reason (the SDK's default hides it)."""
+    try:
+        result = await anyio.to_thread.run_sync(functools.partial(fn, *args))
+    except CompoundNotFound as exc:
+        raise ResourceNotFoundError(str(exc)) from exc
+    except PubChemFinderError as exc:
+        raise ResourceError(str(exc)) from exc
+    except Exception as exc:  # see _run
+        logger.exception("reading a resource failed")
+        raise ResourceError(
+            f"Unexpected error ({type(exc).__name__}: {exc})"[:300]
+        ) from exc
+    return result.model_dump_json(indent=2)
+
+
+@mcp.resource(
+    "pubchem://compound/{cid}",
+    title="PubChem compound",
+    description="A PubChem compound record by CID: names, SMILES, InChIKey, formula, "
+    "weight, XLogP, H-bond counts, TPSA and link (fetched live, then cached).",
+    mime_type="application/json",
+)
+async def compound_resource(cid: str) -> str:
+    if not cid.isdigit() or int(cid) < 1:
+        raise ResourceNotFoundError(f"Not a PubChem CID: {cid!r}")
+    return await _read(_compound, int(cid))
+
+
+def _compound(cid: int) -> CompoundRecord:
+    return service.lookup(str(cid), by="cid", limit=1).compounds[0]
+
+
+@mcp.resource(
+    "pubchem://index/status",
+    title="Local index status",
+    description="Whether the local index is built, what it holds and what local "
+    "searches cover now (the index, or the built-in demo set).",
+    mime_type="application/json",
+)
+async def index_status_resource() -> str:
+    return await _read(service.index_status)
 
 
 # --------------------------------------------------------------------------- #

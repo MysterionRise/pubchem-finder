@@ -22,6 +22,10 @@ All notable changes to this project are documented here. The format follows
   identity, structure, safety, pharmacology, bioassay targets), `find_analogues` (close
   analogues grouped by scaffold and drawn with what changed, optional `threshold`) and
   `triage_structures` (medicinal-chemistry triage of comma-separated SMILES, ranked).
+- Two MCP resources: `pubchem://compound/{cid}` (a PubChem compound record as JSON; in
+  Claude Code, `@pubchem-finder:pubchem://compound/2244`) and `pubchem://index/status`.
+  Errors say what went wrong: an unknown CID is "not found", other failures name their
+  cause.
 - The index manifest records an index format version. A pubchem-finder that meets an
   index written in a newer format says so and what to do, instead of misreading it.
   Indexes from 2.1 and earlier are format 1 and keep working.
