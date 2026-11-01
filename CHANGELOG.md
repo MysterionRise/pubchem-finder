@@ -17,6 +17,11 @@ All notable changes to this project are documented here. The format follows
   restart. `index build --demo` builds the demo index ahead of time and
   `PUBCHEM_FINDER_DEMO=0` turns the fallback off. `scripts/build_demo_set.py` regenerates
   the data.
+- Three MCP prompts start common workflows by name (in Claude Code,
+  `/pubchem-finder:compound_dossier aspirin`): `compound_dossier` (a cited profile:
+  identity, structure, safety, pharmacology, bioassay targets), `find_analogues` (close
+  analogues grouped by scaffold and drawn with what changed, optional `threshold`) and
+  `triage_structures` (medicinal-chemistry triage of comma-separated SMILES, ranked).
 - The index manifest records an index format version. A pubchem-finder that meets an
   index written in a newer format says so and what to do, instead of misreading it.
   Indexes from 2.1 and earlier are format 1 and keep working.

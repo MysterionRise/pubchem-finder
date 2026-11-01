@@ -273,3 +273,63 @@ async def test_medchem_profile_and_scaffold_grouping(built_home, monkeypatch):
     scaffolds = grouped.structured_content["scaffolds"]
     assert scaffolds[0]["scaffold"] == "c1ccccc1"
     assert 2244 in scaffolds[0]["cids"]
+
+
+# --- Prompts ------------------------------------------------------------------
+
+
+async def test_prompts_are_listed_with_titles_and_single_token_arguments():
+    async with Client(mcp) as client:
+        prompts = {p.name: p for p in (await client.list_prompts()).prompts}
+    assert set(prompts) == {"compound_dossier", "find_analogues", "triage_structures"}
+    assert prompts["compound_dossier"].title == "Compound dossier"
+    args = {p: [(a.name, a.required) for a in prompts[p].arguments] for p in prompts}
+    assert args == {
+        "compound_dossier": [("compound", True)],
+        "find_analogues": [("compound", True), ("threshold", False)],
+        "triage_structures": [("structures", False)],
+    }
+
+
+async def text_of(name, arguments):
+    async with Client(mcp) as client:
+        result = await client.get_prompt(name, arguments)
+    assert [m.role for m in result.messages] == ["user"]
+    return result.messages[0].content.text
+
+
+async def test_compound_dossier_prompt():
+    text = await text_of("compound_dossier", {"compound": "aspirin"})
+    assert text.startswith("Write a concise dossier on aspirin")
+    for tool in ("pubchem_lookup", "pubchem_annotations", "pubchem_bioactivity"):
+        assert tool in text
+    assert '"GHS Classification"' in text
+
+
+async def test_find_analogues_prompt():
+    text = await text_of(
+        "find_analogues", {"compound": "ibuprofen", "threshold": "0.70"}
+    )
+    assert "similarity_search with threshold=0.7 and group_by_scaffold=true" in text
+    assert 'search_scope is "demo"' in text
+    default = await text_of("find_analogues", {"compound": "ibuprofen"})
+    assert "threshold=0.6" in default
+
+
+@pytest.mark.parametrize("threshold", ["abc", "0", "1.5"])
+async def test_find_analogues_rejects_a_bad_threshold(threshold):
+    from mcp.shared.exceptions import MCPError
+
+    async with Client(mcp) as client:
+        with pytest.raises(MCPError, match="threshold must be a number"):
+            await client.get_prompt(
+                "find_analogues", {"compound": "aspirin", "threshold": threshold}
+            )
+
+
+async def test_triage_structures_prompt():
+    listed = await text_of("triage_structures", {"structures": "CCO,c1ccccc1,"})
+    assert "these structures:\n- CCO\n- c1ccccc1\n" in listed
+    assert "medchem_profile" in listed
+    empty = await text_of("triage_structures", {})
+    assert "ask me for them as SMILES" in empty

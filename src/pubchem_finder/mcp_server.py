@@ -14,7 +14,8 @@ from typing import Any, Literal, TypeVar
 import anyio
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import Icon, ToolAnnotations
+from mcp.shared.exceptions import MCPError
+from mcp.types import INVALID_PARAMS, Icon, ToolAnnotations
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -391,6 +392,83 @@ async def medchem_profile(smiles: str) -> MedchemProfile:
     draw_molecules with the alert as SMARTS, or just describe them), and the
     Bemis-Murcko scaffold."""
     return await _run(service.medchem_profile, smiles)
+
+
+# --------------------------------------------------------------------------- #
+# Prompts: workflows people start by name (in Claude Code,
+# /pubchem-finder:compound_dossier aspirin). Claude Code splits prompt arguments
+# on whitespace, so each one is a single token.
+# --------------------------------------------------------------------------- #
+
+
+@mcp.prompt(title="Compound dossier")
+def compound_dossier(compound: str) -> str:
+    """A cited profile of one compound: identity, structure, drug-likeness, safety,
+    pharmacology and bioassay targets. compound: a name, CID or SMILES."""
+    return (
+        f"Write a concise dossier on {compound} from PubChem, with a source for every "
+        "fact.\n"
+        '1. Resolve it to one PubChem compound with pubchem_lookup (by="cid" for a '
+        'number, by="smiles" for a structure); if several match, say which you chose.\n'
+        "2. Identity: pubchem_synonyms (common names, CAS numbers) and "
+        "pubchem_description.\n"
+        "3. Structure: draw_molecules, compound_properties and medchem_profile on its "
+        "SMILES.\n"
+        '4. Safety: pubchem_annotations with heading "GHS Classification".\n'
+        '5. Pharmacology: pubchem_annotations with "Pharmacology and Biochemistry" and '
+        '"Mechanism of Action", and pubchem_bioactivity for its assay targets.\n'
+        "When its PubChem page lacks a section, say so instead of filling it in from "
+        "memory. End with the PubChem link."
+    )
+
+
+@mcp.prompt(title="Find analogues")
+def find_analogues(compound: str, threshold: str = "0.6") -> str:
+    """Close structural analogues of a compound, grouped into series and drawn with
+    what changed. compound: a name, CID or SMILES; threshold: the minimum ECFP4
+    Tanimoto similarity, 0-1 (default 0.6)."""
+    try:
+        value = float(threshold)
+    except ValueError:
+        value = -1.0
+    if not 0.0 < value <= 1.0:
+        raise MCPError(
+            INVALID_PARAMS, f"threshold must be a number in (0, 1], not {threshold!r}"
+        )
+    return (
+        f"Find close analogues of {compound}.\n"
+        "1. Get its SMILES with pubchem_lookup unless it is one already.\n"
+        f"2. Run similarity_search with threshold={value:g} and group_by_scaffold=true. "
+        'If the result\'s search_scope is "demo", tell me that only the built-in demo '
+        "set of FDA-approved drugs was searched, and also run pubchem_similarity_search "
+        "to cover all of PubChem.\n"
+        "3. Draw the closest hits (up to 8, the query first) with draw_molecules, "
+        'highlight="diff" and the query as reference_smiles, with CIDs and similarities '
+        "as legends.\n"
+        "4. Summarize how many series (scaffolds) the hits span, what the closest "
+        "analogues change, and which are known drugs."
+    )
+
+
+@mcp.prompt(title="Triage structures")
+def triage_structures(structures: str = "") -> str:
+    """Medicinal-chemistry triage of a set of structures, ranked: drug-likeness,
+    synthetic accessibility and structural alerts. structures: SMILES separated by
+    commas without spaces, or empty to give them afterwards."""
+    items = [s.strip() for s in structures.split(",") if s.strip()]
+    target = (
+        "these structures:\n" + "\n".join(f"- {s}" for s in items)
+        if items
+        else "the structures I give you next (ask me for them as SMILES)."
+    )
+    return (
+        f"Triage {target}\n"
+        "For each one, standardize it (salts, charges), then run medchem_profile: QED, "
+        "synthetic accessibility, Lipinski and Veber rules, PAINS/Brenk/NIH alerts. Show "
+        "one table ranked from most to least promising, with the reason for each "
+        "rank. Then draw the structures that have alerts with draw_molecules, their "
+        "alert names as legends, and say what each alert is about."
+    )
 
 
 def main(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000) -> None:
