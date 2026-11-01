@@ -537,3 +537,32 @@ def test_metadata_reads_chunks_with_different_columns(tmp_path, built_home):
     rows = LocalIndex(home).metadata([2244, 2519])
     assert sorted(rows) == [2244, 2519]
     assert rows[2519]["iupac_name"] == "1,3,7-trimethylpurine-2,6-dione"
+
+
+# --- Chunks from any reader -------------------------------------------------------
+
+
+def test_write_chunk_indexes_records_from_any_reader(tmp_path):
+    """The demo set comes from a TSV, not an SDF: write_chunk takes any reader."""
+    from rdkit import Chem
+
+    from pubchem_finder.data.sdf import SdfRecord
+    from pubchem_finder.index.builder import write_chunk
+
+    class Records:
+        n_ok = 0
+        n_failed = 1
+
+        def __iter__(self):
+            for cid, smiles in [(2244, ASPIRIN), (702, "CCO")]:
+                self.n_ok += 1
+                yield SdfRecord(
+                    cid, Chem.MolFromSmiles(smiles), smiles, None, None, None, None
+                )
+
+    paths = IndexPaths(tmp_path)
+    stats = write_chunk(paths, "drugs", Records())
+    assert (stats.name, stats.n_records, stats.n_failed) == ("drugs", 2, 1)
+    finalize(paths)
+    found = service.similarity_search(ASPIRIN, home=tmp_path)
+    assert [h.cid for h in found.hits] == [2244]

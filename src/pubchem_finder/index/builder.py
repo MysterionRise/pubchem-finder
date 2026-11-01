@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 import pyarrow as pa
@@ -41,7 +41,7 @@ from rdkit import Chem, rdBase
 
 from .. import __version__
 from ..core.exceptions import IndexBuildError, PubChemFinderError
-from ..data.sdf import SdfReader
+from ..data.sdf import SdfReader, SdfRecord
 from .layout import (
     FORMAT_VERSION,
     PATTERN_FP_TYPE,
@@ -75,24 +75,44 @@ POPCNT_BLOCK = 1 << 22  # rows of popcount read at a time when sorting
 EventFn = Callable[[str], None]
 
 
+class RecordReader(Protocol):
+    """Compounds to index, counting the records it had to skip (see SdfReader)."""
+
+    n_ok: int
+    n_failed: int
+
+    def __iter__(self) -> Iterator[SdfRecord]: ...
+
+
 def build_chunk(
     sdf_path: str, home: str, fp_params: dict[str, Any] | None = None
 ) -> ChunkStats:
     """
-    Fingerprint one SDF file into ``<chunk>.h5`` + ``<chunk>.parquet`` and
-    write ``<chunk>.json`` last to mark it complete.
+    Fingerprint one SDF file into a chunk (see :func:`write_chunk`).
 
     Runs in worker processes, so it takes and returns plain picklable values.
     """
     rdBase.DisableLog("rdApp.*")
+    return write_chunk(
+        IndexPaths(Path(home)), chunk_name(sdf_path), SdfReader(sdf_path), fp_params
+    )
+
+
+def write_chunk(
+    paths: IndexPaths,
+    name: str,
+    reader: RecordReader,
+    fp_params: dict[str, Any] | None = None,
+) -> ChunkStats:
+    """
+    Fingerprint ``reader``'s compounds into ``<name>.h5`` + ``<name>.parquet``
+    in one pass and write ``<name>.json`` last to mark the chunk complete.
+    """
     params = dict(fp_params or DEFAULT_FP_PARAMS)
-    paths = IndexPaths(Path(home))
     paths.chunks.mkdir(parents=True, exist_ok=True)
-    name = chunk_name(sdf_path)
     h5_tmp = paths.chunk_h5(name).with_suffix(".h5.tmp")
     pq_tmp = paths.chunk_parquet(name).with_suffix(".parquet.tmp")
     start = time.perf_counter()
-    reader = SdfReader(sdf_path)
 
     with pq.ParquetWriter(pq_tmp, METADATA_SCHEMA, compression="zstd") as writer:
         rows: dict[str, list[Any]] = {col: [] for col in METADATA_SCHEMA.names}
@@ -162,19 +182,19 @@ def build_pattern_chunk(home: str, name: str) -> PatternChunkStats:
     counts = {"ok": 0, "failed": 0}
 
     def mols() -> Iterator[tuple[Chem.Mol, int]]:
-        meta = pq.ParquetFile(paths.chunk_parquet(name))
-        for batch in meta.iter_batches(
-            batch_size=METADATA_BATCH, columns=["cid", "smiles"]
-        ):
-            cids = batch.column("cid").to_pylist()
-            smiles = batch.column("smiles").to_pylist()
-            for cid, smi in zip(cids, smiles, strict=True):
-                mol = Chem.MolFromSmiles(smi) if smi else None
-                if mol is None:
-                    counts["failed"] += 1
-                    continue
-                counts["ok"] += 1
-                yield mol, cid
+        with pq.ParquetFile(paths.chunk_parquet(name)) as meta:
+            for batch in meta.iter_batches(
+                batch_size=METADATA_BATCH, columns=["cid", "smiles"]
+            ):
+                cids = batch.column("cid").to_pylist()
+                smiles = batch.column("smiles").to_pylist()
+                for cid, smi in zip(cids, smiles, strict=True):
+                    mol = Chem.MolFromSmiles(smi) if smi else None
+                    if mol is None:
+                        counts["failed"] += 1
+                        continue
+                    counts["ok"] += 1
+                    yield mol, cid
 
     records = _peek(mols())
     if records is not None:
