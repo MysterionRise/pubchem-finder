@@ -75,19 +75,54 @@ MCP over stdio (streamable HTTP optional), uv + hatchling + ruff, Python 3.11 to
 - [x] PyPI release through trusted publishing, CHANGELOG, citation file, issue templates,
       security policy, Dependabot
 
-## Next, driven by feedback
+## Phase 7: listed, hardened, 2.1 (done)
 
-- [ ] Tested setups for MCP clients beyond Claude (Cursor, VS Code, Windsurf, Zed,
-      JetBrains, Antigravity / Gemini CLI, Codex CLI, Cline, LM Studio) in
-      [docs/clients.md](docs/clients.md): #23, one good first issue per client
-- [x] List the server in the MCP registry (`server.json`, published by the release
-      workflow) and ship a Claude plugin (`plugins/pubchem-finder`) for Claude Code and Cowork
-- [ ] A `.mcpb` bundle for one-click install in Claude Desktop, if people ask: Anthropic's
-      directory no longer lists `.mcpb` files, so it would be a release asset only
-- [ ] A quick demo index (a few thousand well-known compounds via PUG REST), so the first
-      local search takes seconds instead of a 250 MB download
-- [ ] MCP prompts and resources: a compound dossier prompt, `pubchem://compound/{cid}`
-- [ ] Matched molecular pairs across a hit set (`rdMMPA`)
-- [ ] ADMET predictions as an optional extra (pulls in PyTorch)
 - [x] Streamable HTTP transport (#33): `pubchem-finder mcp --transport http`
-- [ ] A Docker image, and `--allowed-host` for the HTTP transport, if a shared server is wanted
+- [x] Listed in the MCP registry (`server.json`, published by the release workflow) and a
+      Claude plugin (`plugins/pubchem-finder`) for Claude Code and Cowork, submitted to
+      Anthropic's plugin directory
+- [x] 2.1.1: tool titles and annotations (read-only, open-world), `--python 3.14` in every
+      published launch command (Python 3.15 lacks FPSim2, numexpr and ndindex wheels), an
+      index that survives RDKit/FPSim2 upgrades, each CID once from overlapping chunks,
+      readable errors and a cache that falls back to the network
+- [x] Release workflow guarded (master only, CI-green commits, tag before PyPI, approval
+      for PyPI), `make release-prep`, the plugin bump prepared by each release
+      ([docs/releasing.md](docs/releasing.md))
+- [x] CI gates: SHA-pinned actions, zizmor and actionlint, ruff security rules, a 95%
+      coverage floor (branches and server subprocesses), the lowest allowed dependency
+      versions, a monthly real-data run, issues for failing scheduled runs, CodeQL
+- [x] Tested VS Code (GitHub Copilot) setup in [docs/clients.md](docs/clients.md), the
+      first from an outside contributor (#37)
+
+## 2.2: the first five minutes (next)
+
+- [ ] A demo index of about 2,500 FDA-approved drugs shipped with the package: local
+      similarity and substructure search work on first use, in seconds, and say they
+      searched the demo set until a PubChem index is built (`index build --demo`)
+- [ ] Hints that run where users are: `uvx pubchem-finder==<version> index build ...`
+      with honest sizes (PubChem's first chunk is now about 320 MB), and download progress
+- [ ] MCP prompts (compound dossier, find analogues, triage) and resources
+      (`pubchem://compound/{cid}`, index status)
+- [ ] A format version in the index manifest, checked on read
+
+## 2.3: a library to build on
+
+- [ ] A declared public API (`__all__` for `service` and `models`), documented
+- [ ] Damaged index files reported as such; responses checked before they are cached;
+      PubChem's `Retry-After` and throttling headers honoured; a size cap for the cache
+- [ ] A memory cap for very broad substructure screens and a time budget for verification
+- [ ] Python 3.15, once FPSim2, numexpr and ndindex publish wheels (a weekly job watches)
+
+## Ongoing
+
+- [ ] Tested setups for more MCP clients (Cursor, Windsurf, Zed, JetBrains, Antigravity /
+      Gemini CLI, Codex CLI, Cline, LM Studio): #23, one good first issue per client
+
+## If asked
+
+- A `.mcpb` bundle for one-click install in Claude Desktop (a release asset only:
+  Anthropic's directory no longer lists `.mcpb` files)
+- A Docker image, and `--allowed-host` for the HTTP transport, for shared servers
+- An MCP App that renders `draw_molecules` and search hits in clients that support it
+- Matched molecular pairs across a hit set (`rdMMPA`)
+- ADMET predictions as an optional extra (pulls in PyTorch)

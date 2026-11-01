@@ -23,10 +23,10 @@ from it highlighted, then hits for an aryl sulfonamide SMARTS with the match hig
 
 ## Why this one
 
-Other PubChem tools, MCP servers included, forward questions to PubChem's web API. That
-works for looking compounds up, but structure search through the API is rate-limited,
-times out on generic queries and returns unscored samples. PubChem Finder also keeps a
-local index:
+Other PubChem tools, MCP servers and hosted connectors included, forward questions to
+PubChem's web API. That works for looking compounds up, but structure search through the
+API is rate-limited, times out on generic queries and returns unscored samples. PubChem
+Finder also keeps a local index:
 
 - **Exact, scored similarity search** over every indexed compound (ECFP4 Tanimoto by
   default) in milliseconds, using [FPSim2](https://github.com/chembl/FPSim2), the engine
