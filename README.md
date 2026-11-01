@@ -4,9 +4,11 @@ Search [PubChem](https://pubchem.ncbi.nlm.nih.gov/) by chemical structure from y
 terminal or from Claude. PubChem Finder builds a local fingerprint index of PubChem (all
 of it, or the slice you need) for exact similarity and substructure search with no rate
 limits, wraps PubChem's live services for names, safety data and bioassays, and adds RDKit
-chemistry: structure drawings, med-chem triage and descriptors. It runs as a command-line
-tool, a Python library and an [MCP](https://modelcontextprotocol.io/) server for Claude
-Desktop, Claude Code and other MCP clients.
+chemistry: structure drawings, med-chem triage and descriptors. Local search works from the
+first question, on a built-in set of 1,932 FDA-approved drugs, until you build a PubChem
+index. It runs as a command-line tool, a Python library and an
+[MCP](https://modelcontextprotocol.io/) server for Claude Desktop, Claude Code and other MCP
+clients.
 
 [![PyPI](https://img.shields.io/pypi/v/pubchem-finder.svg)](https://pypi.org/project/pubchem-finder/)
 [![Python](https://img.shields.io/pypi/pyversions/pubchem-finder.svg)](https://pypi.org/project/pubchem-finder/)
@@ -120,9 +122,9 @@ before binding it to anything but `127.0.0.1`.
 | `compare(smiles_a, smiles_b)` | Tanimoto similarity on ECFP4 and MACCS fingerprints. Offline. |
 | `medchem_profile(smiles)` | QED, synthetic accessibility, Lipinski/Veber, PAINS/Brenk/NIH alerts with atoms, Murcko scaffold. Offline. |
 | `draw_molecules(smiles, legends, highlight, smarts, reference_smiles)` | Structures as an inline image, highlighting a SMARTS match, what changed relative to a reference, or a similarity map. Offline. |
-| `similarity_search(smiles, threshold, top_k, metric, group_by_scaffold)` | Most similar compounds in the local index, optionally grouped by Murcko scaffold. |
+| `similarity_search(smiles, threshold, top_k, metric, group_by_scaffold)` | Most similar compounds in the local index (the demo set until one is built), optionally grouped by Murcko scaffold. |
 | `substructure_search(query, query_type, max_hits)` | Indexed compounds containing a SMILES or SMARTS fragment, lowest CID first. |
-| `index_status()` | Whether the local index is built, what it holds, and how to build what is missing. |
+| `index_status()` | Whether the local index is built, what it holds, what local searches cover now, and how to build what is missing. |
 | `pubchem_similarity_search(smiles, threshold, max_records)` | Similar compounds across all of PubChem, live, re-scored with ECFP4. |
 | `pubchem_substructure_search(smiles, max_records)` | Compounds across all of PubChem that contain a fragment, live. |
 | `pubchem_exact_match(smiles, identity_type)` | The PubChem record(s) for exactly this structure, optionally ignoring stereo or isotopes. |
@@ -131,6 +133,22 @@ before binding it to anything but `127.0.0.1`.
 | `pubchem_description(cid)` | Curated descriptions, with sources. |
 | `pubchem_annotations(cid, heading, max_chars)` | One section of the compound page: GHS classification, hazards, pharmacology, mechanism of action, drug information, experimental properties, toxicity, use, food additives. Every item names its source. |
 | `pubchem_bioactivity(cid)` | Bioassay summary: assay count, outcomes, top targets, most potent active results. |
+
+### Prompts and resources
+
+Prompts start a whole workflow by name. In Claude Code they are slash commands, such as
+`/pubchem-finder:compound_dossier aspirin`; each argument is one word (a SMILES works, and
+a list is comma-separated without spaces).
+
+| Prompt | What it does |
+|---|---|
+| `compound_dossier(compound)` | A cited profile of a compound (name, CID or SMILES): identity, structure, drug-likeness, GHS safety, pharmacology, bioassay targets. |
+| `find_analogues(compound, threshold)` | Close analogues grouped by scaffold and drawn with what changed; also asks PubChem when only the demo set was searched. |
+| `triage_structures(structures)` | Medicinal-chemistry triage of `SMILES,SMILES,...`, ranked, with the structural alerts drawn. |
+
+Resources are data a client can attach to a conversation: `pubchem://compound/{cid}` (a
+PubChem compound record as JSON; in Claude Code, `@pubchem-finder:pubchem://compound/2244`)
+and `pubchem://index/status`.
 
 ## Use it from the command line
 
@@ -239,6 +257,9 @@ with `--with-substructure` in the project's
 runner, which then runs every command and MCP tool against the result. The full-PubChem column
 scales those numbers to PubChem's roughly 120 million compounds and is an estimate.
 
+The built-in demo index (1,932 FDA-approved drugs, with substructure search) builds in
+about a second on first use and takes 5.4 MB.
+
 | | First PubChem chunk (measured) | All of PubChem (estimated) |
 |---|---|---|
 | Compounds indexed | 444,794 (29 skipped by RDKit) | ~120 million |
@@ -273,7 +294,8 @@ service.properties("CC(=O)Oc1ccccc1C(=O)O").molecular_weight  # 180.16
 service.standardize("CC(=O)[O-].[Na+]").smiles  # 'CC(=O)O'
 service.compare("CCO", "CCCO").ecfp4_tanimoto  # 0.556
 service.lookup("caffeine").compounds[0].cid  # 2519 (network)
-service.similarity_search("CC(=O)Oc1ccccc1C(=O)O", threshold=0.7)  # needs an index
+# Local searches use the demo set until an index is built.
+service.similarity_search("CC(=O)Oc1ccccc1C(=O)O", threshold=0.7)
 service.substructure_search("[NX3][SX4](=O)(=O)c", query_type="smarts")
 ```
 

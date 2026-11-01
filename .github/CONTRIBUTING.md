@@ -64,6 +64,11 @@ Python 3.11 to 3.14 are supported and tested in CI.
 fails. In short: `make release-prep VERSION=x.y.z`, a dry run, merge, then the release
 workflow from master, then the plugin PR it prepares.
 
+Before a minor release, refresh the demo set: `uv run python
+scripts/build_demo_set.py` rewrites `src/pubchem_finder/index/demo_data/` from PubChem
+(about ten requests). Review the diff: a changed TSV makes every user's demo index
+rebuild once, in about a second, so skip it when the drugs are the same.
+
 ## Code style
 
 - `ruff format` decides formatting; `ruff check` decides lint. Both run in CI and as

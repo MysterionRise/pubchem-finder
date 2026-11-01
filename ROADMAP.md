@@ -94,18 +94,19 @@ MCP over stdio (streamable HTTP optional), uv + hatchling + ruff, Python 3.11 to
 - [x] Tested VS Code (GitHub Copilot) setup in [docs/clients.md](docs/clients.md), the
       first from an outside contributor (#37)
 
-## 2.2: the first five minutes (next)
+## 2.2: the first five minutes (done)
 
-- [ ] A demo index of about 2,500 FDA-approved drugs shipped with the package: local
-      similarity and substructure search work on first use, in seconds, and say they
-      searched the demo set until a PubChem index is built (`index build --demo`)
-- [ ] Hints that run where users are: `uvx pubchem-finder==<version> index build ...`
-      with honest sizes (PubChem's first chunk is now about 320 MB), and download progress
-- [ ] MCP prompts (compound dossier, find analogues, triage) and resources
+- [x] A demo index of 1,932 FDA-approved drugs shipped with the package: local
+      similarity and substructure search work on first use, in about a second, and say
+      they searched the demo set until a PubChem index is built (`index build --demo`)
+- [x] Hints that run where users are: `uvx --python 3.14 pubchem-finder==<version> index
+      build ...` with honest sizes (PubChem's first chunk is a 323 MB download), and
+      download progress
+- [x] MCP prompts (compound dossier, find analogues, triage) and resources
       (`pubchem://compound/{cid}`, index status)
-- [ ] A format version in the index manifest, checked on read
+- [x] A format version in the index manifest, checked on read
 
-## 2.3: a library to build on
+## 2.3: a library to build on (next)
 
 - [ ] A declared public API (`__all__` for `service` and `models`), documented
 - [ ] Damaged index files reported as such; responses checked before they are cached;
