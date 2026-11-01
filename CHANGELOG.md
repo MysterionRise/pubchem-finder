@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-01
+
 ### Added
 
 - Local similarity and substructure search work on first use: until an index is built,
@@ -212,7 +214,8 @@ with a local index you can build on a laptop.
 An Indigo + Elasticsearch indexer for PubChem SDF dumps. It was never released as a
 package.
 
-[Unreleased]: https://github.com/MysterionRise/pubchem-finder/compare/v2.1.1...HEAD
+[Unreleased]: https://github.com/MysterionRise/pubchem-finder/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.2.0
 [2.1.1]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.1.1
 [2.1.0]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.1.0
 [2.0.1]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.0.1
