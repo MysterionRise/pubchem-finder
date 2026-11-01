@@ -566,3 +566,37 @@ def test_write_chunk_indexes_records_from_any_reader(tmp_path):
     finalize(paths)
     found = service.similarity_search(ASPIRIN, home=tmp_path)
     assert [h.cid for h in found.hits] == [2244]
+
+
+# --- FPSim2 threads ------------------------------------------------------------
+
+
+def test_in_memory_searches_run_in_one_thread(substructure_home, monkeypatch):
+    """FPSim2 0.7.4's threaded search updates the fingerprint arrays' reference
+    counts unsafely and can free them mid-search; with n_workers=1 it searches in
+    the calling thread."""
+    import sys
+
+    from rdkit import Chem
+
+    index = LocalIndex(substructure_home, mode="memory")
+    query = Chem.MolFromSmiles(ASPIRIN)
+    fragment = Chem.MolFromSmiles("c1ccccc1")
+    index.search(query, 0.1, 5)
+    index.screen(fragment)
+    engines = (index._engine, index._pattern_engine)
+    workers: list[int] = []
+    for engine, method in zip(engines, ("top_k", "substructure"), strict=True):
+        real = getattr(engine, method)
+
+        def spy(*args, _real=real, **kwargs):
+            workers.append(kwargs["n_workers"])
+            return _real(*args, **kwargs)
+
+        monkeypatch.setattr(engine, method, spy)
+    before = [sys.getrefcount(e.fps) for e in engines]
+    for _ in range(200):
+        index.search(query, 0.1, 5)
+        index.screen(fragment)
+    assert set(workers) == {1}
+    assert [sys.getrefcount(e.fps) for e in engines] == before

@@ -25,6 +25,13 @@ logger = logging.getLogger(__name__)
 
 Mode = Literal["auto", "memory", "disk"]
 Metric = Literal["tanimoto", "dice", "cosine"]
+# FPSim2 0.7.4 splits an in-memory search across threads, and its C++ search updates
+# the fingerprint array's reference count from those threads unsafely: the count
+# drifts, and when it drifts down the array is freed mid-search ("Chunk N worker
+# died: ... GenericSearch(): incompatible function arguments" with a string where
+# the array was, or a crash). FPSim2 runs the search in the calling thread when
+# n_workers is 1, so that is the default.
+SEARCH_WORKERS = 1
 METADATA_COLUMNS = (
     "cid",
     "smiles",
@@ -77,7 +84,8 @@ class LocalIndex:
 
     Each FPSim2 engine loads lazily on its first search (loading the full PubChem
     index takes tens of seconds and ~20 GB of RAM in memory mode), under a lock
-    so concurrent callers load it once.
+    so concurrent callers load it once. Searches run on one thread (see
+    SEARCH_WORKERS).
     """
 
     def __init__(
@@ -88,7 +96,7 @@ class LocalIndex:
         self.mode: Mode = mode or (
             env_mode if env_mode in ("memory", "disk") else "auto"
         )  # type: ignore[assignment]
-        self.n_workers = n_workers or max(1, min(4, (os.cpu_count() or 1)))
+        self.n_workers = n_workers or SEARCH_WORKERS
         self._lock = threading.Lock()
         self._engine: Any = None
         self._in_memory: bool | None = None

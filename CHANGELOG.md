@@ -35,6 +35,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- In-memory searches no longer risk failing with "Chunk N worker died: ...
+  GenericSearch(): incompatible function arguments" or crashing the server. FPSim2 0.7.4
+  updates the fingerprint arrays' reference counts unsafely when it splits a search
+  across threads, and can free them mid-search; searches now run in the calling thread.
+  Seen on Python 3.11, where it made long sessions and batch searches fail; reference
+  counts drift on 3.12 too.
 - The declared minimum versions work again: Pillow 10.1 (`draw_molecules` needs
   `ImageFont.load_default(size=...)`; with Pillow 10.0 it failed) and typer 0.16 (0.15
   crashed on usage errors with click 8.2 or later). CI now runs the tests against the
