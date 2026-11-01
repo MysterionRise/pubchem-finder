@@ -24,6 +24,11 @@ def resolve_home(explicit: Path | str | None = None) -> Path:
     env = os.environ.get(HOME_ENV)
     if env:
         return Path(env).expanduser().resolve()
+    return default_home()
+
+
+def default_home() -> Path:
+    """The platform's user data directory for pubchem-finder."""
     return Path(user_data_dir("pubchem-finder", appauthor=False))
 
 

@@ -16,6 +16,7 @@ import psutil
 from FPSim2 import FPSim2Engine
 from rdkit import Chem
 
+from .. import hints
 from ..config import INDEX_MODE_ENV
 from ..core.exceptions import IndexNotBuilt
 from .layout import IndexPaths, Manifest
@@ -103,9 +104,8 @@ class LocalIndex:
         manifest = self.paths.load_manifest()
         if manifest is None:
             raise IndexNotBuilt(
-                f"No local index in {self.paths.home}. Build one with "
-                "`pubchem-finder index build --limit 1` (a ~500k-compound sample, minutes) "
-                "or `pubchem-finder index build --all` (all of PubChem, an overnight job)."
+                f"No local index in {self.paths.home}. "
+                + hints.build_index(self.paths.home)
             )
         return manifest
 
@@ -179,8 +179,7 @@ class LocalIndex:
             if sub is None or not self.paths.pattern_fingerprints.exists():
                 raise IndexNotBuilt(
                     f"The local index in {self.paths.home} has no substructure search. "
-                    "Add it with `pubchem-finder index build --with-substructure` "
-                    "(uses the compounds already indexed; no download)."
+                    f"Add it with {hints.add_substructure(self.paths.home)}."
                 )
             if self._pattern_engine is None or self._pattern_manifest != manifest:
                 in_memory = choose_in_memory(sub.memory_bytes(), self.mode)

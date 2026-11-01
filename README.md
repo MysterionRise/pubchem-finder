@@ -157,9 +157,9 @@ pubchem-finder index status
 pubchem-finder index build --sdf my_library.sdf.gz         # or index your own SDF files
 ```
 
-`index build --limit N` downloads the first N of PubChem's ~350 SDF chunks (about 500,000
-CIDs each) from NCBI over HTTPS, verifies each file's MD5, fingerprints it, deletes the
-download and merges everything into one searchable index. Re-running is safe: finished
+`index build --limit N` downloads the first N of PubChem's 359 SDF chunks (up to 500,000
+CIDs each; the first is a 323 MB download) from NCBI over HTTPS, verifies each file's MD5,
+fingerprints it, deletes the download and merges everything into one searchable index. Re-running is safe: finished
 chunks are skipped, so an interrupted build resumes and a larger `--limit` extends an
 existing index. `--all` indexes all of PubChem. The default fingerprint is ECFP4 (Morgan
 radius 2, 1024 bits); `--radius` and `--fp-size` change it for a new index.
@@ -233,7 +233,7 @@ scales those numbers to PubChem's roughly 120 million compounds and is an estima
 |---|---|---|
 | Compounds indexed | 444,794 (29 skipped by RDKit) | ~120 million |
 | Fingerprinting | 80 s on one MacBook core, 169 s on a GitHub runner | ~1 h on 8 cores, plus download time |
-| Download | one SDF file, deleted after indexing | ~100 GB over HTTPS, streamed chunk by chunk |
+| Download | one 323 MB SDF file, deleted after indexing | 111 GB over HTTPS, chunk by chunk |
 | Similarity index file | 36 MB | ~10 GB |
 | RAM for in-memory similarity search | 64 MB | ~17 GB |
 | Substructure search (optional) | 169 s more to build, 88 MB file, 121 MB RAM | ~1.5 h on 8 cores, ~24 GB file, ~33 GB RAM |
@@ -282,8 +282,9 @@ API key). Examples for agent frameworks are welcome, see
   (run `which uvx`, typically `~/.local/bin/uvx`). The server's log is in Claude
   Desktop's MCP logs.
 - **"No local index"** from `similarity_search` or `substructure_search`: build one with
-  `pubchem-finder index build --limit 1` (add `--with-substructure` for substructure
-  search). `index_status` says what is missing.
+  `pubchem-finder index build --limit 1 --with-substructure`. The message (and
+  `index_status`) gives the exact command to paste into a terminal: it runs the server's
+  version through `uvx` and names the data directory if the server uses another one.
 - **PubChem is slow or busy.** Requests are throttled to PubChem's limit of 5 per second
   and retried when PubChem is busy. Structure searches across all of PubChem can time out
   on very generic fragments; use a more specific query, or the local index.

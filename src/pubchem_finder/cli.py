@@ -554,6 +554,22 @@ def _default_workers() -> int:
     return max(1, (os.cpu_count() or 2) - 1)
 
 
+def _download_progress(
+    say: Callable[[str], None],
+) -> Callable[[str, int, int | None], None]:
+    """Report a download every tenth of the way (every 50 MB if the size is unknown)."""
+    shown = [0]
+
+    def report(name: str, done: int, total: int | None) -> None:
+        step = done * 10 // total if total else done // 50_000_000
+        if step > shown[0]:
+            shown[0] = step
+            size = f" of {total / 1e6:,.0f}" if total else ""
+            say(f"  {done / 1e6:,.0f}{size} MB")
+
+    return report
+
+
 @index_app.command("build")
 def index_build(
     limit: Annotated[
@@ -638,7 +654,9 @@ def index_build(
                 def fetcher(name: str):  # type: ignore[no-untyped-def]
                     def fetch() -> Path:
                         say(f"downloading {name}")
-                        return mirror.download(name, paths.downloads)
+                        return mirror.download(
+                            name, paths.downloads, progress=_download_progress(say)
+                        )
 
                     return fetch
 

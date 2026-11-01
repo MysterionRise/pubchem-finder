@@ -142,7 +142,7 @@ async def test_similarity_search_without_index(tmp_path, monkeypatch):
         result = await client.call_tool("similarity_search", {"smiles": "CCO"})
     assert status.structured_content["state"] == "not_built"
     assert result.is_error is True
-    assert "pubchem-finder index build" in result.content[0].text
+    assert "index build --limit 1" in result.content[0].text
 
 
 async def test_substructure_search_tool(substructure_home, monkeypatch):

@@ -14,7 +14,7 @@ from typing import Literal
 import rdkit
 from rdkit import Chem, DataStructs, rdBase
 
-from . import drawing, medchem
+from . import drawing, hints, medchem
 from .chemistry import MoleculeStandardizer, calculate_properties, is_druglike
 from .config import cache_enabled, cache_path, resolve_home
 from .core.exceptions import MoleculeValidationError, PubChemFinderError
@@ -238,7 +238,7 @@ def substructure_search(
             f"The substructure index was built with RDKit {sub.rdkit_version}, but "
             f"RDKit {rdkit.__version__} is running. Pattern fingerprints can differ "
             "between releases, so matches may be missing. Rebuild it with "
-            "`pubchem-finder index build --with-substructure`."
+            f"{hints.add_substructure(index.paths.home)}."
         )
     return SubstructureResults(
         query=query,
@@ -263,10 +263,7 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
             state="not_built",
             home=str(paths.home),
             chunks_built=len(built),
-            hint=(
-                "Build with `pubchem-finder index build --limit 1` for a ~500k-compound "
-                "sample, or `--all` for all of PubChem."
-            ),
+            hint=hints.build_index(paths.home),
         )
     sub = manifest.substructure if paths.pattern_fingerprints.exists() else None
     return IndexStatus(
@@ -292,8 +289,7 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
         hint=None
         if sub is not None
         else (
-            "Substructure search is off; add it with "
-            "`pubchem-finder index build --with-substructure` (no download)."
+            f"Substructure search is off; add it with {hints.add_substructure(paths.home)}."
         ),
     )
 

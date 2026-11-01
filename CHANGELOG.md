@@ -14,6 +14,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- When there is no local index, the message (and `index_status`) gives a command that
+  runs from any terminal: `uvx --python 3.14 pubchem-finder==<version> index build --limit 1
+  --with-substructure`, with `--home` when the server uses another data directory, and
+  what it costs (PubChem's first chunk is now a 323 MB download). Plugin and MCP users
+  have no `pubchem-finder` command on their PATH, so the old hint didn't run for them.
+  `index build` shows download progress.
 - The Claude plugin runs 2.1.1 and passes `--python=3.14` to uvx, like the other
   documented launch commands, so plugin users get the tool annotations and stay off
   Python 3.15.
