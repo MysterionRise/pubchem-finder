@@ -6,8 +6,9 @@ MCP server, which gives Claude 17 tools: PubChem lookups by name, CID, SMILES or
 synonyms and CAS numbers; GHS safety, pharmacology and toxicity sections with their
 sources; bioassay summaries; PubChem's own similarity, substructure and exact-match
 searches; RDKit descriptors, standardization, med-chem triage and structure drawings;
-and, once you build a local index, exact similarity and substructure search over it with
-no rate limits.
+and exact local similarity and substructure search with no rate limits, over a built-in
+set of FDA-approved drugs from the start and over PubChem's compounds once you build an
+index.
 
 ## Install
 
@@ -35,13 +36,22 @@ records the exact dependency set Anthropic's directory verified. Then ask things
 - "Is ibuprofen hazardous? What does its GHS label say? Cite the sources."
 - "Show me the closest analogues of aspirin and highlight what changed."
 
-For local structure search, build an index once from a terminal:
+Local similarity and substructure search work from the first question: until you build
+an index they search a built-in demo set of about 1,900 FDA-approved drugs (set up in a
+few seconds on first use), and each answer says so. To search PubChem's compounds
+locally, build an index once from a terminal:
 `uvx --python 3.14 pubchem-finder index build --limit 1 --with-substructure` (PubChem's
-first 445,000 compounds; `--all` for everything). The server picks it up automatically.
+first 445,000 compounds: a 323 MB download and about 5 minutes; `--all` for
+everything). The server switches to it automatically.
+
+The server also offers three prompts in the `/` menu (`compound_dossier`,
+`find_analogues`, `triage_structures`) and PubChem compound records as resources
+(`pubchem://compound/<cid>`) that you can attach with `@`.
 
 ## Data
 
 The server runs on your machine. The `pubchem_*` tools send your queries (names,
 identifiers, structures) to PubChem's public web services at ncbi.nlm.nih.gov and cache
-the responses locally for 7 days; the RDKit tools and the local index work offline.
+the responses locally for 7 days; the RDKit tools, the demo set and the local index work
+offline.
 Nothing is sent anywhere else.
