@@ -6,7 +6,7 @@ authors:
   - family-names: Perikov
     given-names: Konstantin
 version: 2.2.0
-date-released: "2026-11-01"
+date-released: "2026-11-02"
 license: MIT
 repository-code: "https://github.com/MysterionRise/pubchem-finder"
 keywords:
