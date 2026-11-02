@@ -90,7 +90,10 @@ jobs:
 
       - name: Not released yet
         run: |
-          tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" --jq .object.sha 2> /dev/null || true)
+          # matching-refs answers [] when the tag doesn't exist (git/ref/tags/... answers
+          # 404 with the error JSON on stdout); any other API failure fails the step.
+          tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v$VERSION" \
+            --jq ".[] | select(.ref == \"refs/tags/v$VERSION\") | .object.sha")
           on_pypi=false
           if curl -fs -o /dev/null "https://pypi.org/pypi/pubchem-finder/$VERSION/json"; then on_pypi=true; fi
           problem=""
@@ -177,7 +180,9 @@ jobs:
 
       - name: Tag the commit
         run: |
-          tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" --jq .object.sha 2> /dev/null || true)
+          # Empty when the tag doesn't exist, as in "Not released yet".
+          tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v$VERSION" \
+            --jq ".[] | select(.ref == \"refs/tags/v$VERSION\") | .object.sha")
           if [ -z "$tag_sha" ]; then
             gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/v$VERSION" -f sha="$GITHUB_SHA"
           elif [ "$tag_sha" != "$GITHUB_SHA" ]; then
