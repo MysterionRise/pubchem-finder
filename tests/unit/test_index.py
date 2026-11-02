@@ -7,6 +7,7 @@ import pytest
 from pubchem_finder import service
 from pubchem_finder.core.exceptions import (
     IndexBuildError,
+    IndexIncompatible,
     IndexNotBuilt,
     MoleculeValidationError,
     PubChemFinderError,
@@ -475,3 +476,127 @@ def test_search_asks_for_more_when_duplicates_crowd_out_hits(built_home, monkeyp
         (4133, 0.7),
     ]
     assert asked == [3, 6]
+
+
+# --- Index format ------------------------------------------------------------
+
+
+def _copy_home(built_home, tmp_path):
+    import shutil
+
+    home = tmp_path / "home"
+    shutil.copytree(built_home, home)
+    return home
+
+
+def test_manifest_records_the_format_version(built_home):
+    from pubchem_finder.index.layout import FORMAT_VERSION
+
+    manifest = json.loads(IndexPaths(built_home).manifest.read_text())
+    assert manifest["format_version"] == FORMAT_VERSION
+
+
+def test_manifest_from_2_1_reads_as_format_1(tmp_path, built_home):
+    home = _copy_home(built_home, tmp_path)
+    paths = IndexPaths(home)
+    manifest = json.loads(paths.manifest.read_text())
+    del manifest["format_version"]
+    paths.manifest.write_text(json.dumps(manifest))
+    loaded = paths.load_manifest()
+    assert loaded is not None
+    assert loaded.format_version == 1
+    found = service.similarity_search(ASPIRIN, threshold=0.3, home=home)
+    assert found.hits[0].cid == 2244
+
+
+def test_index_in_a_newer_format_is_refused(tmp_path, built_home):
+    from pubchem_finder.index.layout import FORMAT_VERSION
+
+    home = _copy_home(built_home, tmp_path)
+    paths = IndexPaths(home)
+    manifest = json.loads(paths.manifest.read_text())
+    manifest["format_version"] = FORMAT_VERSION + 1
+    manifest["pubchem_finder_version"] = "9.0.0"
+    manifest["fp_params"] = "a shape this version can't validate"
+    paths.manifest.write_text(json.dumps(manifest))
+    with pytest.raises(IndexIncompatible, match=r"pubchem-finder 9\.0\.0") as err:
+        service.similarity_search(ASPIRIN, home=home)
+    assert "Upgrade pubchem-finder" in str(err.value)
+    with pytest.raises(IndexIncompatible):
+        service.index_status(home)
+
+
+def test_metadata_reads_chunks_with_different_columns(tmp_path, built_home):
+    """A later version may add Parquet columns; older chunks lack them."""
+    import pyarrow.parquet as pq
+
+    home = _copy_home(built_home, tmp_path)
+    path = IndexPaths(home).chunk_parquet(CHUNK_NAMES[1])
+    table = pq.read_table(path)
+    pq.write_table(table.append_column("title", [["x"] * table.num_rows]), path)
+    rows = LocalIndex(home).metadata([2244, 2519])
+    assert sorted(rows) == [2244, 2519]
+    assert rows[2519]["iupac_name"] == "1,3,7-trimethylpurine-2,6-dione"
+
+
+# --- Chunks from any reader -------------------------------------------------------
+
+
+def test_write_chunk_indexes_records_from_any_reader(tmp_path):
+    """The demo set comes from a TSV, not an SDF: write_chunk takes any reader."""
+    from rdkit import Chem
+
+    from pubchem_finder.data.sdf import SdfRecord
+    from pubchem_finder.index.builder import write_chunk
+
+    class Records:
+        n_ok = 0
+        n_failed = 1
+
+        def __iter__(self):
+            for cid, smiles in [(2244, ASPIRIN), (702, "CCO")]:
+                self.n_ok += 1
+                yield SdfRecord(
+                    cid, Chem.MolFromSmiles(smiles), smiles, None, None, None, None
+                )
+
+    paths = IndexPaths(tmp_path)
+    stats = write_chunk(paths, "drugs", Records())
+    assert (stats.name, stats.n_records, stats.n_failed) == ("drugs", 2, 1)
+    finalize(paths)
+    found = service.similarity_search(ASPIRIN, home=tmp_path)
+    assert [h.cid for h in found.hits] == [2244]
+
+
+# --- FPSim2 threads ------------------------------------------------------------
+
+
+def test_in_memory_searches_run_in_one_thread(substructure_home, monkeypatch):
+    """FPSim2 0.7.4's threaded search updates the fingerprint arrays' reference
+    counts unsafely and can free them mid-search; with n_workers=1 it searches in
+    the calling thread."""
+    import sys
+
+    from rdkit import Chem
+
+    index = LocalIndex(substructure_home, mode="memory")
+    query = Chem.MolFromSmiles(ASPIRIN)
+    fragment = Chem.MolFromSmiles("c1ccccc1")
+    index.search(query, 0.1, 5)
+    index.screen(fragment)
+    engines = (index._engine, index._pattern_engine)
+    workers: list[int] = []
+    for engine, method in zip(engines, ("top_k", "substructure"), strict=True):
+        real = getattr(engine, method)
+
+        def spy(*args, _real=real, **kwargs):
+            workers.append(kwargs["n_workers"])
+            return _real(*args, **kwargs)
+
+        monkeypatch.setattr(engine, method, spy)
+    before = [sys.getrefcount(e.fps) for e in engines]
+    for _ in range(200):
+        index.search(query, 0.1, 5)
+        index.screen(fragment)
+    assert set(workers) == {1}
+    assert [sys.getrefcount(e.fps) for e in engines] == before

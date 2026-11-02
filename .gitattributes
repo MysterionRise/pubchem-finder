@@ -1,0 +1,2 @@
+# The demo index is keyed by a hash of these bytes: keep them identical everywhere.
+src/pubchem_finder/index/demo_data/* text eol=lf

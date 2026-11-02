@@ -47,13 +47,22 @@ jobs:
           echo "PUBCHEM_FINDER_HOME=$RUNNER_TEMP/pubchem-finder" >> "$GITHUB_ENV"
           mkdir -p out
 
+      # What a fresh install does before anyone builds an index: the first search
+      # builds the demo index of FDA-approved drugs and searches it.
+      - name: First search on a fresh install (demo index)
+        run: |
+          start=$(date +%s%N)
+          uv run pubchem-finder search "$ASPIRIN" --threshold 0.5 --json > out/demo-search.json
+          echo "FIRST_SEARCH_MS=$(( ($(date +%s%N) - start) / 1000000 ))" >> "$GITHUB_ENV"
+          jq -e '.search_scope == "demo" and .hits[0].cid == 2244' out/demo-search.json
+
       - name: Build the index from PubChem (download, fingerprints, substructure)
         run: |
           start=$(date +%s)
           uv run pubchem-finder index build --limit "$CHUNKS" --with-substructure --workers 2 2>&1 | tee out/build.log
           echo "BUILD_SECONDS=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
           uv run pubchem-finder index status --json | tee out/status.json
-          jq -e '.state == "ready" and .substructure' out/status.json
+          jq -e '.state == "ready" and .substructure and .search_scope == "index"' out/status.json
 
       - name: Local similarity and substructure search
         run: |
@@ -107,6 +116,7 @@ jobs:
           mb = lambda n: f"{n / 1e6:,.0f} MB"
           print("### Real-data index\n")
           print("| | |\n|---|---|")
+          print(f"| First search on a fresh install (builds the demo index; process start included) | {int(os.environ['FIRST_SEARCH_MS']):,} ms |")
           print(f"| PubChem chunks | {os.environ['CHUNKS']} |")
           print(f"| Compounds indexed | {status['n_compounds']:,} ({status['n_failed']:,} skipped) |")
           print(f"| Build (download, fingerprints, substructure, merge) | {int(os.environ['BUILD_SECONDS'])} s on 2 workers |")

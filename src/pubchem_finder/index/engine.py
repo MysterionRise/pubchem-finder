@@ -16,6 +16,7 @@ import psutil
 from FPSim2 import FPSim2Engine
 from rdkit import Chem
 
+from .. import hints
 from ..config import INDEX_MODE_ENV
 from ..core.exceptions import IndexNotBuilt
 from .layout import IndexPaths, Manifest
@@ -24,6 +25,13 @@ logger = logging.getLogger(__name__)
 
 Mode = Literal["auto", "memory", "disk"]
 Metric = Literal["tanimoto", "dice", "cosine"]
+# FPSim2 0.7.4 splits an in-memory search across threads, and its C++ search updates
+# the fingerprint array's reference count from those threads unsafely: the count
+# drifts, and when it drifts down the array is freed mid-search ("Chunk N worker
+# died: ... GenericSearch(): incompatible function arguments" with a string where
+# the array was, or a crash). FPSim2 runs the search in the calling thread when
+# n_workers is 1, so that is the default.
+SEARCH_WORKERS = 1
 METADATA_COLUMNS = (
     "cid",
     "smiles",
@@ -76,7 +84,8 @@ class LocalIndex:
 
     Each FPSim2 engine loads lazily on its first search (loading the full PubChem
     index takes tens of seconds and ~20 GB of RAM in memory mode), under a lock
-    so concurrent callers load it once.
+    so concurrent callers load it once. Searches run on one thread (see
+    SEARCH_WORKERS).
     """
 
     def __init__(
@@ -87,7 +96,7 @@ class LocalIndex:
         self.mode: Mode = mode or (
             env_mode if env_mode in ("memory", "disk") else "auto"
         )  # type: ignore[assignment]
-        self.n_workers = n_workers or max(1, min(4, (os.cpu_count() or 1)))
+        self.n_workers = n_workers or SEARCH_WORKERS
         self._lock = threading.Lock()
         self._engine: Any = None
         self._in_memory: bool | None = None
@@ -103,9 +112,8 @@ class LocalIndex:
         manifest = self.paths.load_manifest()
         if manifest is None:
             raise IndexNotBuilt(
-                f"No local index in {self.paths.home}. Build one with "
-                "`pubchem-finder index build --limit 1` (a ~500k-compound sample, minutes) "
-                "or `pubchem-finder index build --all` (all of PubChem, an overnight job)."
+                f"No local index in {self.paths.home}. "
+                + hints.build_index(self.paths.home)
             )
         return manifest
 
@@ -179,8 +187,7 @@ class LocalIndex:
             if sub is None or not self.paths.pattern_fingerprints.exists():
                 raise IndexNotBuilt(
                     f"The local index in {self.paths.home} has no substructure search. "
-                    "Add it with `pubchem-finder index build --with-substructure` "
-                    "(uses the compounds already indexed; no download)."
+                    f"Add it with {hints.add_substructure(self.paths.home)}."
                 )
             if self._pattern_engine is None or self._pattern_manifest != manifest:
                 in_memory = choose_in_memory(sub.memory_bytes(), self.mode)
@@ -259,8 +266,11 @@ class LocalIndex:
             if self._db is None or self._db_files != files:
                 self._db = duckdb.connect(":memory:")
                 self._db_files = files
-                # A relation, not SQL text, so file paths need no quoting.
-                self._db.read_parquet([str(f) for f in files]).create_view("meta")
+                # A relation, not SQL text, so file paths need no quoting. By name:
+                # chunks written by different versions may not share every column.
+                self._db.read_parquet(
+                    [str(f) for f in files], union_by_name=True
+                ).create_view("meta")
             cursor = self._db.cursor()
         ids = ", ".join(str(int(c)) for c in cids)
         # Integers only; a literal IN list lets DuckDB push the filter into the scan.

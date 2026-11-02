@@ -6,14 +6,56 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-02
+
+### Added
+
+- Local similarity and substructure search work on first use: until an index is built,
+  they search a built-in demo set of 1,932 FDA-approved drugs (PubChem's parent compounds
+  of what it links to Drugs@FDA, public domain), built into the data directory in about a
+  second on the first search. Results say so with `search_scope: "demo"` and a `note`
+  that points to PubChem's live searches and the build command; `index_status` reports
+  `search_scope` and `demo_compounds`. Once an index is built, searches use it without a
+  restart. `index build --demo` builds the demo index ahead of time and
+  `PUBCHEM_FINDER_DEMO=0` turns the fallback off. `scripts/build_demo_set.py` regenerates
+  the data.
+- Three MCP prompts start common workflows by name (in Claude Code,
+  `/pubchem-finder:compound_dossier aspirin`): `compound_dossier` (a cited profile:
+  identity, structure, safety, pharmacology, bioassay targets), `find_analogues` (close
+  analogues grouped by scaffold and drawn with what changed, optional `threshold`) and
+  `triage_structures` (medicinal-chemistry triage of comma-separated SMILES, ranked).
+- Two MCP resources: `pubchem://compound/{cid}` (a PubChem compound record as JSON; in
+  Claude Code, `@pubchem-finder:pubchem://compound/2244`) and `pubchem://index/status`.
+  Errors say what went wrong: an unknown CID is "not found", other failures name their
+  cause.
+- The index manifest records an index format version. A pubchem-finder that meets an
+  index written in a newer format says so and what to do, instead of misreading it.
+  Indexes from 2.1 and earlier are format 1 and keep working.
+
 ### Changed
 
+- When there is no local index, the message (and `index_status`) gives a command that
+  runs from any terminal: `uvx --python 3.14 pubchem-finder==<version> index build --limit 1
+  --with-substructure`, with `--home` when the server uses another data directory, and
+  what it costs (PubChem's first chunk is now a 323 MB download). Plugin and MCP users
+  have no `pubchem-finder` command on their PATH, so the old hint didn't run for them.
+  `index build` shows download progress.
+- `similarity_search`, `substructure_search` and `pubchem_annotations` ask Claude Code to
+  show results of up to 100,000 characters inline (`anthropic/maxResultSizeChars`); by
+  default it saves results over 50,000 characters to a file instead, which large searches
+  can pass.
 - The Claude plugin runs 2.1.1 and passes `--python=3.14` to uvx, like the other
   documented launch commands, so plugin users get the tool annotations and stay off
   Python 3.15.
 
 ### Fixed
 
+- In-memory searches no longer risk failing with "Chunk N worker died: ...
+  GenericSearch(): incompatible function arguments" or crashing the server. FPSim2 0.7.4
+  updates the fingerprint arrays' reference counts unsafely when it splits a search
+  across threads, and can free them mid-search; searches now run in the calling thread.
+  Seen on Python 3.11, where it made long sessions and batch searches fail; reference
+  counts drift on 3.12 too.
 - The declared minimum versions work again: Pillow 10.1 (`draw_molecules` needs
   `ImageFont.load_default(size=...)`; with Pillow 10.0 it failed) and typer 0.16 (0.15
   crashed on usage errors with click 8.2 or later). CI now runs the tests against the
@@ -172,7 +214,8 @@ with a local index you can build on a laptop.
 An Indigo + Elasticsearch indexer for PubChem SDF dumps. It was never released as a
 package.
 
-[Unreleased]: https://github.com/MysterionRise/pubchem-finder/compare/v2.1.1...HEAD
+[Unreleased]: https://github.com/MysterionRise/pubchem-finder/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.2.0
 [2.1.1]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.1.1
 [2.1.0]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.1.0
 [2.0.1]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.0.1

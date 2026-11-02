@@ -261,7 +261,10 @@ def search(
     output: OutputOpt = None,
     as_json: JsonFlag = False,
 ) -> None:
-    """Find the most similar compounds in the local index (one query or a file)."""
+    """Find the most similar compounds in the local index (one query or a file).
+
+    With no index built, searches the built-in demo set of FDA-approved drugs.
+    """
     if _batch_requested(smiles, input_file):
 
         def one(row: batch.InputRow) -> list[dict[str, Any]]:
@@ -294,6 +297,8 @@ def search(
     if as_json:
         typer.echo(result.model_dump_json(indent=2))
         return
+    if result.note:
+        typer.echo(f"note: {result.note}", err=True)
     typer.echo(
         f"{len(result.hits)} hit(s) >= {result.threshold} {result.metric} "
         f"among {result.n_indexed:,} compounds ({result.fingerprint})"
@@ -337,7 +342,8 @@ def substructure(
 ) -> None:
     """Find indexed compounds that contain a fragment, lowest CID first.
 
-    Needs an index built with --with-substructure.
+    Needs an index built with --with-substructure; with no index built, searches
+    the built-in demo set of FDA-approved drugs.
     """
     query_type: service.QueryType = "smarts" if smarts else "smiles"
 
@@ -377,6 +383,8 @@ def substructure(
         f"{len(result.hits)} hit(s){more}; {result.n_candidates:,} of "
         f"{result.n_indexed:,} compounds passed the screen, {result.n_checked:,} checked"
     )
+    if result.note:
+        typer.echo(f"note: {result.note}", err=True)
     if result.warning:
         typer.echo(f"warning: {result.warning}", err=True)
     for hit in result.hits:
@@ -554,6 +562,22 @@ def _default_workers() -> int:
     return max(1, (os.cpu_count() or 2) - 1)
 
 
+def _download_progress(
+    say: Callable[[str], None],
+) -> Callable[[str, int, int | None], None]:
+    """Report a download every tenth of the way (every 50 MB if the size is unknown)."""
+    shown = [0]
+
+    def report(name: str, done: int, total: int | None) -> None:
+        step = done * 10 // total if total else done // 50_000_000
+        if step > shown[0]:
+            shown[0] = step
+            size = f" of {total / 1e6:,.0f}" if total else ""
+            say(f"  {done / 1e6:,.0f}{size} MB")
+
+    return report
+
+
 @index_app.command("build")
 def index_build(
     limit: Annotated[
@@ -572,6 +596,16 @@ def index_build(
             help="Index local SDF/SDF.gz files instead of downloading (repeatable).",
         ),
     ] = None,
+    demo: Annotated[
+        bool,
+        typer.Option(
+            "--demo",
+            help=(
+                "Build the built-in demo index of FDA-approved drugs (a second, no "
+                "download). Searches use it while no PubChem index is built."
+            ),
+        ),
+    ] = False,
     workers: Annotated[
         int, typer.Option(min=1, help="Parallel fingerprinting processes.")
     ] = _default_workers(),
@@ -603,10 +637,14 @@ def index_build(
     from .index.builder import BuildReport, SdfSource, build_chunks, finalize
     from .index.layout import IndexPaths, chunk_name
 
-    chosen = sum([limit is not None, all_chunks, bool(sdf)])
-    if chosen > 1 or (chosen == 0 and with_substructure is None):
+    chosen = sum([limit is not None, all_chunks, bool(sdf), demo])
+    if (
+        chosen > 1
+        or (chosen == 0 and with_substructure is None)
+        or (demo and with_substructure is not None)
+    ):
         typer.echo(
-            "error: pass exactly one of --limit N, --all or --sdf FILE "
+            "error: pass exactly one of --limit N, --all, --sdf FILE or --demo "
             "(or only --with-substructure / --without-substructure)",
             err=True,
         )
@@ -617,6 +655,10 @@ def index_build(
 
     def say(msg: str) -> None:
         typer.echo(msg, err=True)
+
+    if demo:
+        _build_demo(paths.home, say)
+        return
 
     try:
         if chosen == 0:
@@ -638,7 +680,9 @@ def index_build(
                 def fetcher(name: str):  # type: ignore[no-untyped-def]
                     def fetch() -> Path:
                         say(f"downloading {name}")
-                        return mirror.download(name, paths.downloads)
+                        return mirror.download(
+                            name, paths.downloads, progress=_download_progress(say)
+                        )
 
                     return fetch
 
@@ -658,6 +702,21 @@ def index_build(
         f"Index ready: {manifest.n_compounds:,} compounds from "
         f"{len(manifest.chunks)} chunk(s){extra}, {len(report.built)} built this run, "
         f"in {paths.home}"
+    )
+
+
+def _build_demo(home: Path, say: Callable[[str], None]) -> None:
+    from .index import demo
+
+    try:
+        demo_home = demo.ensure_built(home, say)
+    except (PubChemFinderError, OSError) as exc:
+        _fail(exc)
+        return
+    info = demo.provenance()
+    typer.echo(
+        f"Demo index ready: {info['n_compounds']:,} {info['name']} with substructure "
+        f"search, in {demo_home}"
     )
 
 

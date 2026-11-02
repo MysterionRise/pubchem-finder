@@ -61,9 +61,10 @@ settings. The sections below give the exact config for each client someone has t
 3. Ask *"Draw aspirin and ibuprofen side by side."* It should call `draw_molecules`, which
    returns a PNG. Note whether the client shows the picture: not every client renders
    images from tools.
-4. With a local index (`pubchem-finder index build --limit 1`, a few minutes), ask
-   *"Find close analogues of aspirin in the local index."* It should call
-   `similarity_search` and list CID 2244 first.
+4. Ask *"Find close analogues of aspirin in the local index."* It should call
+   `similarity_search` and list CID 2244 first. Without an index built
+   (`pubchem-finder index build --limit 1`, a few minutes), it searches the built-in demo
+   set of FDA-approved drugs, and the answer should say so.
 
 ## Clients
 

@@ -13,8 +13,14 @@ from typing import Any, Literal, TypeVar
 
 import anyio
 from mcp.server.mcpserver import Image, MCPServer
-from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import Icon, ToolAnnotations
+from mcp.server.mcpserver.exceptions import (
+    ResourceError,
+    ResourceNotFoundError,
+    ToolError,
+)
+from mcp.shared.exceptions import MCPError
+from mcp.types import INVALID_PARAMS, Icon, ToolAnnotations
+from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -31,6 +37,7 @@ from .models import (
     AnnotationSection,
     BioactivitySummary,
     Comparison,
+    CompoundRecord,
     CrossRefs,
     Description,
     IndexStatus,
@@ -55,10 +62,11 @@ Use pubchem_lookup to resolve names, CIDs, SMILES or InChIKeys to PubChem record
 (properties, identifiers, link). Use compound_properties for RDKit descriptors of any
 SMILES, standardize to normalize a structure (salts removed, charges neutralized),
 and compare for fingerprint similarity between two structures.
-similarity_search finds the most similar compounds in the local PubChem index, and
-substructure_search the indexed compounds containing a SMILES or SMARTS fragment
-(check index_status first; if the index or its substructure search is missing, tell the
-user the command it gives).
+similarity_search finds the most similar compounds in the local index, and
+substructure_search the indexed compounds containing a SMILES or SMARTS fragment.
+Until the user builds a local PubChem index, both search a built-in demo set of about
+1,900 FDA-approved drugs and say so in note: tell the user, and offer the pubchem_*
+searches (all of PubChem, live) or the build command index_status gives.
 The pubchem_* tools query PubChem live: structure searches over all of PubChem
 (similarity, substructure, exact match), synonyms and CAS numbers, cross-references
 (PubMed, patents, registry IDs), descriptions, curated page sections such as GHS
@@ -88,12 +96,22 @@ mcp = MCPServer(
 )
 
 
-def _tool(title: str, *, calls_pubchem: bool) -> Callable[[F], F]:
+# Claude Code saves a text result longer than 50,000 characters to a file instead of
+# showing it, unless the tool raises its own limit (up to 500,000). Searches with many
+# hits and long annotation sections can pass 50,000; this lets them through whole.
+LARGE_RESULTS = {"anthropic/maxResultSizeChars": 100_000}
+
+
+def _tool(
+    title: str, *, calls_pubchem: bool, large_results: bool = False
+) -> Callable[[F], F]:
     """Register a tool with a title and annotations, as directory policies require.
 
     Every tool only reads: its arguments, the local index or PubChem. The response
-    cache is internal state, not the tool's environment. ``calls_pubchem`` marks
-    the tools that reach an external service (the open world).
+    cache and the demo index (built on the first local search when no index
+    exists) are internal state, not the tool's environment. ``calls_pubchem`` marks
+    the tools that reach an external service (the open world); ``large_results``
+    the ones whose results can pass Claude Code's default size limit.
     """
     return mcp.tool(
         title=title,
@@ -104,6 +122,7 @@ def _tool(title: str, *, calls_pubchem: bool) -> Callable[[F], F]:
             idempotent_hint=True,
             open_world_hint=calls_pubchem,
         ),
+        meta=dict(LARGE_RESULTS) if large_results else None,
     )
 
 
@@ -193,7 +212,7 @@ async def compare(smiles_a: str, smiles_b: str) -> Comparison:
     return await _run(service.compare, smiles_a, smiles_b)
 
 
-@_tool("Similarity search (local index)", calls_pubchem=False)
+@_tool("Similarity search (local index)", calls_pubchem=False, large_results=True)
 async def similarity_search(
     smiles: str,
     threshold: float = 0.7,
@@ -206,9 +225,11 @@ async def similarity_search(
     Exact fingerprint similarity (ECFP4/Morgan by default) over every indexed
     compound, best first, with CID, SMILES, InChIKey, IUPAC name, formula, MW
     and PubChem link. threshold is the minimum similarity (0-1, 0.7 finds close
-    analogues; lower it to widen the search). Requires a local index built with
-    `pubchem-finder index build`; the first search loads it, which can take a
-    while for a full PubChem index. group_by_scaffold adds the hits grouped by
+    analogues; lower it to widen the search). Searches the index built with
+    `pubchem-finder index build` (the first search loads it, which takes a while
+    for a full PubChem index); until one is built, a demo set of about 1,900
+    FDA-approved drugs, with search_scope="demo" and a note to pass on to the
+    user. group_by_scaffold adds the hits grouped by
     Bemis-Murcko scaffold, to see how many chemical series the hits span.
     """
     return await _run(
@@ -221,7 +242,7 @@ async def similarity_search(
     )
 
 
-@_tool("Substructure search (local index)", calls_pubchem=False)
+@_tool("Substructure search (local index)", calls_pubchem=False, large_results=True)
 async def substructure_search(
     query: str,
     query_type: Literal["smiles", "smarts"] = "smiles",
@@ -233,11 +254,12 @@ async def substructure_search(
     query_type="smarts", a SMARTS pattern (e.g. '[NX3][SX4](=O)(=O)c' for aryl
     sulfonamides). Offline, exact (every hit is verified atom by atom; stereo is
     ignored) and not rate-limited, so prefer it over pubchem_substructure_search
-    when index_status shows substructure: true. Hits come lowest CID first, which
-    puts long-known compounds first. n_candidates bounds how many matches exist;
-    exhaustive=false means more matches may exist beyond max_hits (1-1000) or the
-    candidate limit. To show where the fragment sits, pass hits to draw_molecules
-    with highlight="smarts" and the query as smarts.
+    when index_status shows substructure: true. Without a local index it
+    searches the demo set of FDA-approved drugs (search_scope="demo"). Hits come
+    lowest CID first, which puts long-known compounds first. n_candidates bounds
+    how many matches exist; exhaustive=false means more matches may exist beyond
+    max_hits (1-1000) or the candidate limit. To show where the fragment sits,
+    pass hits to draw_molecules with highlight="smarts" and the query as smarts.
     """
     return await _run(
         service.substructure_search, query, query_type=query_type, max_hits=max_hits
@@ -247,8 +269,9 @@ async def substructure_search(
 @_tool("Local index status", calls_pubchem=False)
 async def index_status() -> IndexStatus:
     """Report whether the local PubChem index is built, how many compounds it
-    holds, its fingerprint, size, whether substructure search is available, and
-    how to build what is missing."""
+    holds, its fingerprint, size, whether substructure search is available, what
+    local searches cover now (search_scope: the index, or the built-in demo set of
+    FDA-approved drugs) and how to build what is missing."""
     return await _run(service.index_status)
 
 
@@ -323,7 +346,7 @@ async def pubchem_description(cid: int) -> Description:
     return await _run(service.pubchem_description, cid)
 
 
-@_tool("PubChem page section", calls_pubchem=True)
+@_tool("PubChem page section", calls_pubchem=True, large_results=True)
 async def pubchem_annotations(
     cid: int, heading: AnnotationHeading, max_chars: int = 6000
 ) -> AnnotationSection:
@@ -385,6 +408,134 @@ async def medchem_profile(smiles: str) -> MedchemProfile:
     draw_molecules with the alert as SMARTS, or just describe them), and the
     Bemis-Murcko scaffold."""
     return await _run(service.medchem_profile, smiles)
+
+
+# --------------------------------------------------------------------------- #
+# Resources: data a client can attach to a conversation (in Claude Code,
+# @pubchem-finder:pubchem://compound/2244).
+# --------------------------------------------------------------------------- #
+
+
+async def _read(fn: Callable[..., BaseModel], *args: object) -> str:
+    """Run a service call off the event loop and return its result as JSON; every
+    failure becomes a ResourceError with the reason (the SDK's default hides it)."""
+    try:
+        result = await anyio.to_thread.run_sync(functools.partial(fn, *args))
+    except CompoundNotFound as exc:
+        raise ResourceNotFoundError(str(exc)) from exc
+    except PubChemFinderError as exc:
+        raise ResourceError(str(exc)) from exc
+    except Exception as exc:  # see _run
+        logger.exception("reading a resource failed")
+        raise ResourceError(
+            f"Unexpected error ({type(exc).__name__}: {exc})"[:300]
+        ) from exc
+    return result.model_dump_json(indent=2)
+
+
+@mcp.resource(
+    "pubchem://compound/{cid}",
+    title="PubChem compound",
+    description="A PubChem compound record by CID: names, SMILES, InChIKey, formula, "
+    "weight, XLogP, H-bond counts, TPSA and link (fetched live, then cached).",
+    mime_type="application/json",
+)
+async def compound_resource(cid: str) -> str:
+    if not cid.isdigit() or int(cid) < 1:
+        raise ResourceNotFoundError(f"Not a PubChem CID: {cid!r}")
+    return await _read(_compound, int(cid))
+
+
+def _compound(cid: int) -> CompoundRecord:
+    return service.lookup(str(cid), by="cid", limit=1).compounds[0]
+
+
+@mcp.resource(
+    "pubchem://index/status",
+    title="Local index status",
+    description="Whether the local index is built, what it holds and what local "
+    "searches cover now (the index, or the built-in demo set).",
+    mime_type="application/json",
+)
+async def index_status_resource() -> str:
+    return await _read(service.index_status)
+
+
+# --------------------------------------------------------------------------- #
+# Prompts: workflows people start by name (in Claude Code,
+# /pubchem-finder:compound_dossier aspirin). Claude Code splits prompt arguments
+# on whitespace, so each one is a single token.
+# --------------------------------------------------------------------------- #
+
+
+@mcp.prompt(title="Compound dossier")
+def compound_dossier(compound: str) -> str:
+    """A cited profile of one compound: identity, structure, drug-likeness, safety,
+    pharmacology and bioassay targets. compound: a name, CID or SMILES."""
+    return (
+        f"Write a concise dossier on {compound} from PubChem, with a source for every "
+        "fact.\n"
+        '1. Resolve it to one PubChem compound with pubchem_lookup (by="cid" for a '
+        'number, by="smiles" for a structure); if several match, say which you chose.\n'
+        "2. Identity: pubchem_synonyms (common names, CAS numbers) and "
+        "pubchem_description.\n"
+        "3. Structure: draw_molecules, compound_properties and medchem_profile on its "
+        "SMILES.\n"
+        '4. Safety: pubchem_annotations with heading "GHS Classification".\n'
+        '5. Pharmacology: pubchem_annotations with "Pharmacology and Biochemistry" and '
+        '"Mechanism of Action", and pubchem_bioactivity for its assay targets.\n'
+        "When its PubChem page lacks a section, say so instead of filling it in from "
+        "memory. End with the PubChem link."
+    )
+
+
+@mcp.prompt(title="Find analogues")
+def find_analogues(compound: str, threshold: str = "0.6") -> str:
+    """Close structural analogues of a compound, grouped into series and drawn with
+    what changed. compound: a name, CID or SMILES; threshold: the minimum ECFP4
+    Tanimoto similarity, 0-1 (default 0.6)."""
+    try:
+        value = float(threshold)
+    except ValueError:
+        value = -1.0
+    if not 0.0 < value <= 1.0:
+        raise MCPError(
+            INVALID_PARAMS, f"threshold must be a number in (0, 1], not {threshold!r}"
+        )
+    return (
+        f"Find close analogues of {compound}.\n"
+        "1. Get its SMILES with pubchem_lookup unless it is one already.\n"
+        f"2. Run similarity_search with threshold={value:g} and group_by_scaffold=true. "
+        'If the result\'s search_scope is "demo", tell me that only the built-in demo '
+        "set of FDA-approved drugs was searched, and also run pubchem_similarity_search "
+        "to cover all of PubChem.\n"
+        "3. Draw the closest hits (up to 8, the query first) with draw_molecules, "
+        'highlight="diff" and the query as reference_smiles, with CIDs and similarities '
+        "as legends.\n"
+        "4. Summarize how many series (scaffolds) the hits span, what the closest "
+        "analogues change, and which are known drugs."
+    )
+
+
+@mcp.prompt(title="Triage structures")
+def triage_structures(structures: str = "") -> str:
+    """Medicinal-chemistry triage of a set of structures, ranked: drug-likeness,
+    synthetic accessibility and structural alerts. structures: SMILES separated by
+    commas without spaces, or empty to give them afterwards."""
+    items = [s.strip() for s in structures.split(",") if s.strip()]
+    target = (
+        "these structures:\n" + "\n".join(f"- {s}" for s in items)
+        if items
+        else "the structures I give you next (ask me for them as SMILES)."
+    )
+    return (
+        f"Triage {target}\n"
+        "For each one, standardize it (salts, charges), then run medchem_profile: QED, "
+        "synthetic accessibility, Lipinski and Veber rules, PAINS/Brenk/NIH alerts. Show "
+        "one table ranked from most to least promising, with the reason for each "
+        "rank. Then draw the structures that have alerts with draw_molecules, their "
+        "alert names as legends, and say what each alert is about."
+    )
 
 
 def main(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000) -> None:

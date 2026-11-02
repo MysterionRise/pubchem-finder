@@ -1,0 +1,12 @@
+{
+  "name": "FDA-approved drugs",
+  "description": "PubChem parent compounds of the 2531 compounds PubChem links to Drugs@FDA under its 'FDA Approved Drugs' heading (single-component compounds without a parent kept as listed), with structures and properties computed by PubChem",
+  "source": "Drugs@FDA, U.S. Food and Drug Administration, via PubChem",
+  "license": "Unless otherwise noted, the contents of the FDA website (www.fda.gov), both text and graphics, are not copyrighted. They are in the public domain and may be republished, reprinted and otherwise used freely by anyone without the need to obtain permission from FDA. Credit to the U.S. Food and Drug Administration as the source is appreciated but not required.",
+  "license_url": "https://www.fda.gov/about-fda/about-website/website-policies#linking",
+  "source_url": "https://www.accessdata.fda.gov/scripts/cder/daf/",
+  "pubchem_heading": "FDA Approved Drugs",
+  "retrieved": "2026-11-01",
+  "n_compounds": 1932,
+  "generator": "scripts/build_demo_set.py"
+}

@@ -14,9 +14,9 @@ from typing import Literal
 import rdkit
 from rdkit import Chem, DataStructs, rdBase
 
-from . import drawing, medchem
+from . import drawing, hints, medchem
 from .chemistry import MoleculeStandardizer, calculate_properties, is_druglike
-from .config import cache_enabled, cache_path, resolve_home
+from .config import cache_enabled, cache_path, demo_enabled, resolve_home
 from .core.exceptions import MoleculeValidationError, PubChemFinderError
 from .data import parsers
 from .data.cache import CacheStats, ResponseCache
@@ -32,6 +32,7 @@ from .data.pug_rest import (
     PubChemError,
 )
 from .fingerprints import MACCSFingerprint, MorganFingerprint
+from .index import demo
 from .index.builder import DEFAULT_FP_PARAMS
 from .index.engine import LocalIndex, Metric
 from .models import (
@@ -179,6 +180,31 @@ def get_index(home: Path | str | None = None) -> LocalIndex:
         return _indexes[path]
 
 
+DEMO_NOTE = (
+    "Searched the built-in demo set of {n:,} FDA-approved drugs, not PubChem. "
+    "pubchem_similarity_search and pubchem_substructure_search (`pubchem-finder "
+    "pubchem` in a terminal) search all of PubChem live. No local index is built yet. "
+    "{build}"
+)
+
+
+def _search_index(home: Path | str | None) -> tuple[LocalIndex, str, str | None]:
+    """The index a local search uses, its scope and the note for the results.
+
+    The local index once one is built. Until then the built-in demo index (built
+    on first use, in about a second), unless PUBCHEM_FINDER_DEMO=0; then the
+    local index anyway, whose search says how to build it.
+    """
+    index = get_index(home)
+    if not demo_enabled() or index.paths.load_manifest() is not None:
+        return index, "index", None
+    demo_index = get_index(demo.ensure_built(index.paths.home))
+    note = DEMO_NOTE.format(
+        n=demo_index.manifest.n_compounds, build=hints.build_index(index.paths.home)
+    )
+    return demo_index, "demo", note
+
+
 def similarity_search(
     smiles: str,
     threshold: float = 0.7,
@@ -195,7 +221,7 @@ def similarity_search(
     if metric not in ("tanimoto", "dice", "cosine"):
         raise PubChemFinderError(f"Unknown metric {metric!r}")
     mol = parse_smiles(smiles)
-    index = get_index(home)
+    index, scope, note = _search_index(home)
     manifest = index.manifest
     pairs = index.search(mol, threshold=threshold, top_k=top_k, metric=metric)
     meta = index.metadata([cid for cid, _ in pairs])
@@ -211,6 +237,8 @@ def similarity_search(
         metric=metric,
         fingerprint=manifest.fingerprint,
         n_indexed=manifest.n_compounds,
+        search_scope=scope,
+        note=note,
         hits=hits,
         scaffolds=medchem.group_by_scaffold(hits) if group_by_scaffold else None,
     )
@@ -229,7 +257,7 @@ def substructure_search(
     if max_candidates < 1:
         raise PubChemFinderError("max_candidates must be at least 1")
     mol = parse_query(query, query_type)
-    index = get_index(home)
+    index, scope, note = _search_index(home)
     found = index.substructure(mol, max_hits=max_hits, max_candidates=max_candidates)
     sub = index.manifest.substructure
     warning = None
@@ -238,12 +266,14 @@ def substructure_search(
             f"The substructure index was built with RDKit {sub.rdkit_version}, but "
             f"RDKit {rdkit.__version__} is running. Pattern fingerprints can differ "
             "between releases, so matches may be missing. Rebuild it with "
-            "`pubchem-finder index build --with-substructure`."
+            f"{hints.add_substructure(index.paths.home)}."
         )
     return SubstructureResults(
         query=query,
         query_type=query_type,
         n_indexed=sub.n_compounds if sub is not None else 0,
+        search_scope=scope,
+        note=note,
         n_candidates=found.n_candidates,
         n_checked=found.n_checked,
         exhaustive=found.exhaustive,
@@ -258,15 +288,21 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
     paths = index.paths
     built = paths.completed_chunks()
     manifest = paths.load_manifest()
+    demo_compounds = int(demo.provenance()["n_compounds"]) if demo_enabled() else 0
     if manifest is None:
+        until_then = (
+            f" Until then, similarity_search and substructure_search search the "
+            f"built-in demo set of {demo_compounds:,} FDA-approved drugs."
+            if demo_compounds
+            else ""
+        )
         return IndexStatus(
             state="not_built",
             home=str(paths.home),
             chunks_built=len(built),
-            hint=(
-                "Build with `pubchem-finder index build --limit 1` for a ~500k-compound "
-                "sample, or `--all` for all of PubChem."
-            ),
+            search_scope="demo" if demo_compounds else "none",
+            demo_compounds=demo_compounds,
+            hint=hints.build_index(paths.home) + until_then,
         )
     sub = manifest.substructure if paths.pattern_fingerprints.exists() else None
     return IndexStatus(
@@ -289,11 +325,12 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
         if sub is not None
         else 0,
         substructure_memory_bytes=sub.memory_bytes() if sub is not None else 0,
+        search_scope="index",
+        demo_compounds=demo_compounds,
         hint=None
         if sub is not None
         else (
-            "Substructure search is off; add it with "
-            "`pubchem-finder index build --with-substructure` (no download)."
+            f"Substructure search is off; add it with {hints.add_substructure(paths.home)}."
         ),
     )
 

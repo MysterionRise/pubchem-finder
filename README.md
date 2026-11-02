@@ -4,9 +4,11 @@ Search [PubChem](https://pubchem.ncbi.nlm.nih.gov/) by chemical structure from y
 terminal or from Claude. PubChem Finder builds a local fingerprint index of PubChem (all
 of it, or the slice you need) for exact similarity and substructure search with no rate
 limits, wraps PubChem's live services for names, safety data and bioassays, and adds RDKit
-chemistry: structure drawings, med-chem triage and descriptors. It runs as a command-line
-tool, a Python library and an [MCP](https://modelcontextprotocol.io/) server for Claude
-Desktop, Claude Code and other MCP clients.
+chemistry: structure drawings, med-chem triage and descriptors. Local search works from the
+first question, on a built-in set of 1,932 FDA-approved drugs, until you build a PubChem
+index. It runs as a command-line tool, a Python library and an
+[MCP](https://modelcontextprotocol.io/) server for Claude Desktop, Claude Code and other MCP
+clients.
 
 [![PyPI](https://img.shields.io/pypi/v/pubchem-finder.svg)](https://pypi.org/project/pubchem-finder/)
 [![Python](https://img.shields.io/pypi/pyversions/pubchem-finder.svg)](https://pypi.org/project/pubchem-finder/)
@@ -77,16 +79,19 @@ Then ask things like:
 - "What are the main targets of celecoxib in PubChem bioassays?"
 - "Show me the closest analogues of aspirin and highlight what changed."
 - "Does this compound have any PAINS alerts? `O=C1C(=Cc2ccccc2)SC(=S)N1`"
-- With a local index: "Find the 20 compounds most similar to ibuprofen" or "Which indexed
-  compounds contain an aryl sulfonamide? Draw a few with the group highlighted."
+- "Find the 20 compounds most similar to ibuprofen" or "Which indexed compounds contain an
+  aryl sulfonamide? Draw a few with the group highlighted." (local search: the demo set of
+  FDA-approved drugs until you build an index)
 
 ![Sulfonamide drugs with the aryl sulfonamide SMARTS match highlighted](https://raw.githubusercontent.com/MysterionRise/pubchem-finder/master/docs/images/sulfonamides-smarts.png)
 
 *`draw_molecules` with `highlight="smarts"`: eight sulfonamide drugs with the match for
 `[NX3][SX4](=O)(=O)c` highlighted, as Claude shows it inline.*
 
-The local-index tools need an index; build one from the command line (below) and the
-server picks it up. To use a non-default data directory, add
+Local similarity and substructure search work from the first question: until you build
+an index, they search a built-in demo set of 1,932 FDA-approved drugs (built in about a
+second on first use) and say so. Build a PubChem index from the command line (below) and
+the server switches to it, no restart needed. To use a non-default data directory, add
 `"env": {"PUBCHEM_FINDER_HOME": "/path"}` to the Claude Desktop entry, or
 `--env PUBCHEM_FINDER_HOME=/path` to `claude mcp add`.
 
@@ -117,9 +122,9 @@ before binding it to anything but `127.0.0.1`.
 | `compare(smiles_a, smiles_b)` | Tanimoto similarity on ECFP4 and MACCS fingerprints. Offline. |
 | `medchem_profile(smiles)` | QED, synthetic accessibility, Lipinski/Veber, PAINS/Brenk/NIH alerts with atoms, Murcko scaffold. Offline. |
 | `draw_molecules(smiles, legends, highlight, smarts, reference_smiles)` | Structures as an inline image, highlighting a SMARTS match, what changed relative to a reference, or a similarity map. Offline. |
-| `similarity_search(smiles, threshold, top_k, metric, group_by_scaffold)` | Most similar compounds in the local index, optionally grouped by Murcko scaffold. |
+| `similarity_search(smiles, threshold, top_k, metric, group_by_scaffold)` | Most similar compounds in the local index (the demo set until one is built), optionally grouped by Murcko scaffold. |
 | `substructure_search(query, query_type, max_hits)` | Indexed compounds containing a SMILES or SMARTS fragment, lowest CID first. |
-| `index_status()` | Whether the local index is built, what it holds, and how to build what is missing. |
+| `index_status()` | Whether the local index is built, what it holds, what local searches cover now, and how to build what is missing. |
 | `pubchem_similarity_search(smiles, threshold, max_records)` | Similar compounds across all of PubChem, live, re-scored with ECFP4. |
 | `pubchem_substructure_search(smiles, max_records)` | Compounds across all of PubChem that contain a fragment, live. |
 | `pubchem_exact_match(smiles, identity_type)` | The PubChem record(s) for exactly this structure, optionally ignoring stereo or isotopes. |
@@ -128,6 +133,22 @@ before binding it to anything but `127.0.0.1`.
 | `pubchem_description(cid)` | Curated descriptions, with sources. |
 | `pubchem_annotations(cid, heading, max_chars)` | One section of the compound page: GHS classification, hazards, pharmacology, mechanism of action, drug information, experimental properties, toxicity, use, food additives. Every item names its source. |
 | `pubchem_bioactivity(cid)` | Bioassay summary: assay count, outcomes, top targets, most potent active results. |
+
+### Prompts and resources
+
+Prompts start a whole workflow by name. In Claude Code they are slash commands, such as
+`/pubchem-finder:compound_dossier aspirin`; each argument is one word (a SMILES works, and
+a list is comma-separated without spaces).
+
+| Prompt | What it does |
+|---|---|
+| `compound_dossier(compound)` | A cited profile of a compound (name, CID or SMILES): identity, structure, drug-likeness, GHS safety, pharmacology, bioassay targets. |
+| `find_analogues(compound, threshold)` | Close analogues grouped by scaffold and drawn with what changed; also asks PubChem when only the demo set was searched. |
+| `triage_structures(structures)` | Medicinal-chemistry triage of `SMILES,SMILES,...`, ranked, with the structural alerts drawn. |
+
+Resources are data a client can attach to a conversation: `pubchem://compound/{cid}` (a
+PubChem compound record as JSON; in Claude Code, `@pubchem-finder:pubchem://compound/2244`)
+and `pubchem://index/status`.
 
 ## Use it from the command line
 
@@ -157,9 +178,16 @@ pubchem-finder index status
 pubchem-finder index build --sdf my_library.sdf.gz         # or index your own SDF files
 ```
 
-`index build --limit N` downloads the first N of PubChem's ~350 SDF chunks (about 500,000
-CIDs each) from NCBI over HTTPS, verifies each file's MD5, fingerprints it, deletes the
-download and merges everything into one searchable index. Re-running is safe: finished
+Before any index is built, `search` and `substructure` use the built-in demo set: 1,932
+FDA-approved drugs (PubChem's parent compounds of what it links to Drugs@FDA), built into
+`<data directory>/demo` in about a second on first use, and the results say so
+(`search_scope: "demo"` in JSON). `index build --demo` builds it ahead of time;
+`PUBCHEM_FINDER_DEMO=0` turns the fallback off. Once a PubChem or SDF index is built,
+searches use it.
+
+`index build --limit N` downloads the first N of PubChem's 359 SDF chunks (up to 500,000
+CIDs each; the first is a 323 MB download) from NCBI over HTTPS, verifies each file's MD5,
+fingerprints it, deletes the download and merges everything into one searchable index. Re-running is safe: finished
 chunks are skipped, so an interrupted build resumes and a larger `--limit` extends an
 existing index. `--all` indexes all of PubChem. The default fingerprint is ECFP4 (Morgan
 radius 2, 1024 bits); `--radius` and `--fp-size` change it for a new index.
@@ -229,11 +257,14 @@ with `--with-substructure` in the project's
 runner, which then runs every command and MCP tool against the result. The full-PubChem column
 scales those numbers to PubChem's roughly 120 million compounds and is an estimate.
 
+The built-in demo index (1,932 FDA-approved drugs, with substructure search) builds in
+about a second on first use and takes 5.4 MB.
+
 | | First PubChem chunk (measured) | All of PubChem (estimated) |
 |---|---|---|
 | Compounds indexed | 444,794 (29 skipped by RDKit) | ~120 million |
 | Fingerprinting | 80 s on one MacBook core, 169 s on a GitHub runner | ~1 h on 8 cores, plus download time |
-| Download | one SDF file, deleted after indexing | ~100 GB over HTTPS, streamed chunk by chunk |
+| Download | one 323 MB SDF file, deleted after indexing | 111 GB over HTTPS, chunk by chunk |
 | Similarity index file | 36 MB | ~10 GB |
 | RAM for in-memory similarity search | 64 MB | ~17 GB |
 | Substructure search (optional) | 169 s more to build, 88 MB file, 121 MB RAM | ~1.5 h on 8 cores, ~24 GB file, ~33 GB RAM |
@@ -263,7 +294,8 @@ service.properties("CC(=O)Oc1ccccc1C(=O)O").molecular_weight  # 180.16
 service.standardize("CC(=O)[O-].[Na+]").smiles  # 'CC(=O)O'
 service.compare("CCO", "CCCO").ecfp4_tanimoto  # 0.556
 service.lookup("caffeine").compounds[0].cid  # 2519 (network)
-service.similarity_search("CC(=O)Oc1ccccc1C(=O)O", threshold=0.7)  # needs an index
+# Local searches use the demo set until an index is built.
+service.similarity_search("CC(=O)Oc1ccccc1C(=O)O", threshold=0.7)
 service.substructure_search("[NX3][SX4](=O)(=O)c", query_type="smarts")
 ```
 
@@ -281,9 +313,14 @@ API key). Examples for agent frameworks are welcome, see
   your shell's `PATH`, so `uvx` may not be found. Use its full path as the `command`
   (run `which uvx`, typically `~/.local/bin/uvx`). The server's log is in Claude
   Desktop's MCP logs.
-- **"No local index"** from `similarity_search` or `substructure_search`: build one with
-  `pubchem-finder index build --limit 1` (add `--with-substructure` for substructure
-  search). `index_status` says what is missing.
+- **"Searched the built-in demo set"** in search results: no index is built yet, so local
+  searches cover the 1,932 FDA-approved drugs shipped with pubchem-finder. Build an index
+  as below; the pubchem_* tools search all of PubChem meanwhile.
+- **"No local index"** from `similarity_search` or `substructure_search` (with
+  `PUBCHEM_FINDER_DEMO=0`): build one with
+  `pubchem-finder index build --limit 1 --with-substructure`. The message (and
+  `index_status`) gives the exact command to paste into a terminal: it runs the server's
+  version through `uvx` and names the data directory if the server uses another one.
 - **PubChem is slow or busy.** Requests are throttled to PubChem's limit of 5 per second
   and retried when PubChem is busy. Structure searches across all of PubChem can time out
   on very generic fragments; use a more specific query, or the local index.
@@ -309,7 +346,10 @@ and cite PubChem when you use its data:
 > [doi:10.1093/nar/gkae1059](https://doi.org/10.1093/nar/gkae1059)
 
 Annotations (safety, pharmacology, toxicity...) are deposited by other organisations;
-each one names its source, and some carry their own license terms.
+each one names its source, and some carry their own license terms. The demo set comes from
+[Drugs@FDA](https://www.accessdata.fda.gov/scripts/cder/daf/) (U.S. Food and Drug
+Administration, public domain) via PubChem, with PubChem's structures; see
+`src/pubchem_finder/index/demo_data/fda_approved_drugs.json`.
 
 PubChem Finder is built on [RDKit](https://www.rdkit.org/),
 [FPSim2](https://github.com/chembl/FPSim2), [DuckDB](https://duckdb.org/),

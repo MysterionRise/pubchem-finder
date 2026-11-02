@@ -135,6 +135,22 @@ def test_index_status_reports_a_damaged_manifest(tmp_path, built_home):
     assert isinstance(result.exception, SystemExit)
 
 
+def test_index_status_explains_a_newer_index_format(tmp_path, built_home):
+    import json
+    import shutil
+
+    home = tmp_path / "home"
+    shutil.copytree(built_home, home)
+    manifest_file = home / "index" / "manifest.json"
+    manifest = json.loads(manifest_file.read_text())
+    manifest["format_version"] += 1
+    manifest_file.write_text(json.dumps(manifest))
+    result = runner.invoke(app, ["index", "status", "--home", str(home)])
+    assert result.exit_code == 1
+    assert "Upgrade pubchem-finder" in result.output
+    assert isinstance(result.exception, SystemExit)
+
+
 def test_index_build_downloads_with_limit(tmp_path, sample_sdfs, monkeypatch):
     """--limit N lists the mirror, fetches the first N chunks and deletes them after."""
     import shutil
@@ -153,10 +169,12 @@ def test_index_build_downloads_with_limit(tmp_path, sample_sdfs, monkeypatch):
         def list_chunks(self):
             return [p.name for p in sample_sdfs]
 
-        def download(self, name, dest_dir):
+        def download(self, name, dest_dir, progress=None):
             fetched.append(name)
             dest_dir.mkdir(parents=True, exist_ok=True)
             src = next(p for p in sample_sdfs if p.name == name)
+            for done in range(0, 323_000_001, 1_000_000):
+                progress(name, done, 323_000_000)
             return shutil.copy(src, dest_dir / name)
 
     monkeypatch.setattr(downloads, "SdfMirror", FakeMirror)
@@ -166,8 +184,22 @@ def test_index_build_downloads_with_limit(tmp_path, sample_sdfs, monkeypatch):
     )
     assert result.exit_code == 0, result.output
     assert fetched == [sample_sdfs[0].name]
+    progress = [line for line in result.output.splitlines() if line.endswith(" MB")]
+    assert progress[0] == "  33 of 323 MB"
+    assert progress[-1] == "  323 of 323 MB"
+    assert len(progress) == 10
     assert "Index ready: 5 compounds" in result.output
     assert not list((home / "downloads").glob("*.sdf.gz"))  # cleaned up
+
+
+def test_download_progress_without_a_size():
+    from pubchem_finder.cli import _download_progress
+
+    lines: list[str] = []
+    report = _download_progress(lines.append)
+    for done in range(0, 120_000_001, 10_000_000):
+        report("Compound_x.sdf.gz", done, None)
+    assert lines == ["  50 MB", "  100 MB"]
 
 
 def test_index_build_reports_errors(tmp_path, monkeypatch):
