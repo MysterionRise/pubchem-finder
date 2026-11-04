@@ -24,6 +24,7 @@ from rdkit.Chem import QED, FilterCatalog
 from rdkit.Chem.Scaffolds import MurckoScaffold
 
 from .chemistry import calculate_properties
+from .core.limits import MAX_ATOMS
 from .models import MedchemProfile, ScaffoldGroup, SimilarityHit, StructuralAlert
 
 logger = logging.getLogger(__name__)
@@ -134,7 +135,10 @@ def group_by_scaffold(hits: Sequence[SimilarityHit]) -> list[ScaffoldGroup]:
     groups: dict[str, ScaffoldGroup] = {}
     for hit in hits:
         mol = Chem.MolFromSmiles(hit.smiles) if hit.smiles else None
-        key = murcko_scaffold(mol) if mol is not None else "?"
+        # A hit can be a polymer-sized PubChem record; Murcko scaffolds of those
+        # take tens of seconds, so they group under "?" like unparsable ones.
+        too_big = mol is not None and mol.GetNumAtoms() > MAX_ATOMS
+        key = murcko_scaffold(mol) if mol is not None and not too_big else "?"
         group = groups.get(key)
         if group is None:
             groups[key] = ScaffoldGroup(

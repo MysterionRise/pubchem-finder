@@ -61,3 +61,44 @@ def test_lookup_uses_shared_client(pubchem_api, monkeypatch):
     assert result.by == "name"
     assert result.compounds[0].cid == 2519
     assert service.get_client() is service.get_client()
+
+
+# Oversized structures (hardening audit C1): RDKit's recursive SMILES writer overflows
+# a thread's stack on long chains, which took the whole MCP server down.
+
+
+def test_oversized_smiles_are_refused_before_rdkit_sees_them(monkeypatch):
+    def parse(*_args, **_kwargs):
+        raise AssertionError("parsed an oversized SMILES")
+
+    monkeypatch.setattr(service.Chem, "MolFromSmiles", parse)
+    with pytest.raises(MoleculeValidationError, match="80,000 characters"):
+        service.properties("C" * 80_000)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda s: service.properties(s),
+        lambda s: service.standardize(s),
+        lambda s: service.compare(s, "CCO"),
+        lambda s: service.compare("CCO", s),
+        lambda s: service.medchem_profile(s),
+    ],
+)
+def test_structures_over_the_atom_limit_are_refused(call):
+    with pytest.raises(
+        MoleculeValidationError, match="1,001 atoms; the limit is 1,000"
+    ):
+        call("C" * 1_001)
+
+
+def test_structures_at_the_limits_are_accepted():
+    assert service.properties("C" * 1_000).num_heavy_atoms == 1_000
+
+
+def test_oversized_smarts_queries_are_refused():
+    with pytest.raises(MoleculeValidationError, match="SMARTS is 10,001 characters"):
+        service.parse_query("C" * 10_001, "smarts")
+    with pytest.raises(MoleculeValidationError, match="SMARTS has 1,001 atoms"):
+        service.parse_query("[#6]" * 1_001, "smarts")

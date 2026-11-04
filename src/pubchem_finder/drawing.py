@@ -21,19 +21,28 @@ from rdkit.Chem import Draw, rdDepictor, rdFingerprintGenerator, rdFMCS
 from rdkit.Chem.Draw import SimilarityMaps, rdMolDraw2D
 
 from .core.exceptions import InvalidInput, MoleculeValidationError
+from .core.limits import check_atoms, check_length
 
 Highlight = Literal["none", "smarts", "diff", "similarity_map"]
 MAX_MOLECULES = 24
 MCS_TIMEOUT_S = 2
+# Laying a long chain out along the shared core makes its similarity map cost grow
+# with the cube of its size while holding the GIL (18 s at 456 atoms, 0.8 s with
+# RDKit's own layout); larger molecules keep their own layout.
+ALIGN_MAX_ATOMS = 100
+# Even unaligned, a map costs about the square of a molecule's size (5 s at 1,000
+# atoms), so one similarity-map request draws at most this many atoms in total.
+MAX_SIMILARITY_MAP_ATOMS = 2_500
 
 
 def _parse(smiles: Sequence[str]) -> list[Chem.Mol]:
     mols: list[Chem.Mol] = []
     for i, s in enumerate(smiles):
+        check_length(s.strip(), f"SMILES at position {i + 1}")
         mol = Chem.MolFromSmiles(s.strip()) if s.strip() else None
         if mol is None:
             raise MoleculeValidationError(f"Invalid SMILES at position {i + 1}: {s!r}")
-        mols.append(mol)
+        mols.append(check_atoms(mol, f"The molecule at position {i + 1}"))
     return mols
 
 
@@ -57,9 +66,11 @@ def smarts_highlights(
     mols: Sequence[Chem.Mol], smarts: str
 ) -> tuple[list[list[int]], list[list[int]]]:
     """Atoms and bonds of every match of ``smarts`` in each molecule."""
+    check_length(smarts, "SMARTS")
     pattern = Chem.MolFromSmarts(smarts)
     if pattern is None:
         raise InvalidInput(f"Invalid SMARTS: {smarts!r}")
+    check_atoms(pattern, "SMARTS")
     atom_lists: list[list[int]] = []
     bond_lists: list[list[int]] = []
     for mol in mols:
@@ -221,7 +232,14 @@ def draw_grid(
         raise InvalidInput("highlight='smarts' needs a SMARTS pattern")
 
     if highlight == "similarity_map":
-        diff_highlights(mols, ref)  # only to align depictions to the shared core
+        total = sum(m.GetNumAtoms() for m in mols)
+        if total > MAX_SIMILARITY_MAP_ATOMS:
+            raise InvalidInput(
+                f"Similarity maps of {total:,} atoms in one request; the limit is "
+                f"{MAX_SIMILARITY_MAP_ATOMS:,}. Draw fewer or smaller molecules."
+            )
+        # Only to align depictions to the shared core.
+        diff_highlights([m for m in mols if m.GetNumAtoms() <= ALIGN_MAX_ATOMS], ref)
         panels = [
             _similarity_map_png(ref, mol, size, label)
             for mol, label in zip(mols, labels, strict=True)

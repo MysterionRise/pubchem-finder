@@ -49,6 +49,7 @@ from .layout import (
     IndexPaths,
     Manifest,
     PatternChunkStats,
+    SourceFile,
     SubstructureInfo,
     chunk_name,
     write_json_atomic,
@@ -85,7 +86,10 @@ class RecordReader(Protocol):
 
 
 def build_chunk(
-    sdf_path: str, home: str, fp_params: dict[str, Any] | None = None
+    sdf_path: str,
+    home: str,
+    fp_params: dict[str, Any] | None = None,
+    source: SourceFile | None = None,
 ) -> ChunkStats:
     """
     Fingerprint one SDF file into a chunk (see :func:`write_chunk`).
@@ -94,7 +98,11 @@ def build_chunk(
     """
     rdBase.DisableLog("rdApp.*")
     return write_chunk(
-        IndexPaths(Path(home)), chunk_name(sdf_path), SdfReader(sdf_path), fp_params
+        IndexPaths(Path(home)),
+        chunk_name(sdf_path),
+        SdfReader(sdf_path),
+        fp_params,
+        source,
     )
 
 
@@ -103,6 +111,7 @@ def write_chunk(
     name: str,
     reader: RecordReader,
     fp_params: dict[str, Any] | None = None,
+    source: SourceFile | None = None,
 ) -> ChunkStats:
     """
     Fingerprint ``reader``'s compounds into ``<name>.h5`` + ``<name>.parquet``
@@ -162,6 +171,7 @@ def write_chunk(
         fp_params=params,
         rdkit_version=rdkit.__version__,
         fpsim2_version=version("fpsim2"),
+        source=source,
     )
     write_json_atomic(paths.chunk_stats(name), stats)
     return stats
@@ -279,6 +289,13 @@ class SdfSource:
     fetch: Callable[[], Path] | None = None
     delete_after: bool = False
 
+    def source(self) -> SourceFile | None:
+        """The local file's identity, or None for a PubChem chunk."""
+        return SourceFile.of(self.local_path) if self.local_path is not None else None
+
+    def label(self) -> str:
+        return str(self.local_path) if self.local_path is not None else self.name
+
     def path(self) -> Path:
         if self.local_path is not None:
             return self.local_path
@@ -291,6 +308,8 @@ class SdfSource:
 class BuildReport:
     built: list[ChunkStats] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    # Chunks replaced under their old name: finalize must merge again (force=True).
+    rebuilt: list[str] = field(default_factory=list)
 
 
 def build_chunks(
@@ -301,23 +320,39 @@ def build_chunks(
     on_event: EventFn | None = None,
 ) -> BuildReport:
     """
-    Build every source that has no completed chunk yet.
+    Build every source that has no completed chunk yet, and rebuild local files
+    that changed since their chunk was built.
 
     Downloads happen in this process, one at a time; fingerprinting runs in up to
     ``workers`` processes. At most ``2 * workers`` SDF files are on disk at once,
-    and downloaded files are deleted as soon as their chunk is complete.
+    and downloaded files are deleted as soon as their chunk is complete. A chunk is
+    named after its file, so two files with one name are refused rather than
+    written over each other.
     """
     params = dict(fp_params or DEFAULT_FP_PARAMS)
     emit = on_event or (lambda msg: logger.info(msg))
+    _check_unique_names(sources)
     paths.chunks.mkdir(parents=True, exist_ok=True)
     _check_params(paths, params)
     report = BuildReport()
     todo = []
-    for src in sources:
-        if paths.chunk_stats(src.name).exists():
+    rebuild: list[tuple[SdfSource, str]] = []
+    for src in sources:  # check everything before changing anything
+        stats_path = paths.chunk_stats(src.name)
+        if not stats_path.exists():
+            todo.append(src)
+            continue
+        stats = ChunkStats.model_validate_json(stats_path.read_text(encoding="utf-8"))
+        reason = _outdated(src, stats)
+        if reason is None:
             report.skipped.append(src.name)
         else:
-            todo.append(src)
+            rebuild.append((src, reason))
+    for src, reason in rebuild:
+        emit(f"rebuilding {src.name}: {reason}")
+        _discard_chunk(paths, src.name)
+        report.rebuilt.append(src.name)
+        todo.append(src)
     if report.skipped:
         emit(f"{len(report.skipped)} chunk(s) already built, skipping")
     if todo:
@@ -337,7 +372,7 @@ def build_chunks(
         for src in todo:
             path = src.path()
             try:
-                stats = build_chunk(str(path), str(paths.home), params)
+                stats = build_chunk(str(path), str(paths.home), params, src.source())
             except PubChemFinderError:
                 raise
             except Exception as exc:
@@ -364,11 +399,56 @@ def build_chunks(
         for src in todo:
             path = src.path()
             emit(f"fingerprinting {src.name}")
-            fut = pool.submit(build_chunk, str(path), str(paths.home), params)
+            fut = pool.submit(
+                build_chunk, str(path), str(paths.home), params, src.source()
+            )
             pending[fut] = (src, path)
             drain(2 * workers - 1)
         drain(0)
     return report
+
+
+def _check_unique_names(sources: Sequence[SdfSource]) -> None:
+    seen: dict[str, SdfSource] = {}
+    for src in sources:
+        other = seen.setdefault(src.name, src)
+        if other is not src:
+            raise IndexBuildError(
+                f"{other.label()} and {src.label()} would both be chunk {src.name!r}: "
+                "each file becomes a chunk named after it. Rename one of them."
+            )
+
+
+def _outdated(src: SdfSource, stats: ChunkStats) -> str | None:
+    """Why a complete chunk must be rebuilt for ``src``, or None if it is current."""
+    current = src.source()
+    if current is None:  # a PubChem chunk: its name pins its content
+        return None
+    recorded = stats.source
+    if recorded is None:
+        return "built by an earlier version, which did not record its file"
+    if recorded.path != current.path:
+        raise IndexBuildError(
+            f"Chunk {src.name!r} already holds {recorded.path}, and {current.path} "
+            "would replace it: each file becomes a chunk named after it. Rename one "
+            "of them."
+        )
+    if (recorded.size, recorded.mtime_ns) != (current.size, current.mtime_ns):
+        return f"{current.path} changed since it was indexed"
+    return None
+
+
+def _discard_chunk(paths: IndexPaths, name: str) -> None:
+    # The stats file marks a chunk complete, so it goes first: an interrupted
+    # rebuild then reads as unbuilt. Pattern fingerprints derive from the chunk.
+    for path in (
+        paths.chunk_stats(name),
+        paths.pattern_stats(name),
+        paths.chunk_h5(name),
+        paths.chunk_parquet(name),
+        paths.pattern_h5(name),
+    ):
+        path.unlink(missing_ok=True)
 
 
 def _check_params(paths: IndexPaths, params: dict[str, Any]) -> None:

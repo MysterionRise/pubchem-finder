@@ -106,3 +106,33 @@ def test_atom_contributions_identical_molecule_is_all_non_negative():
 def test_validation(kwargs, error, match):
     with pytest.raises(error, match=match):
         drawing.draw_grid(**kwargs)
+
+
+def test_oversized_molecules_and_patterns_are_refused():
+    with pytest.raises(MoleculeValidationError, match="position 2 has 1,001 atoms"):
+        drawing.draw_grid(["CCO", "C" * 1_001])
+    with pytest.raises(MoleculeValidationError, match="position 1 is 10,001"):
+        drawing.draw_grid(["C" * 10_001])
+    with pytest.raises(MoleculeValidationError, match="SMARTS has 1,001 atoms"):
+        drawing.draw_grid(["CCO"], highlight="smarts", smarts="[#6]" * 1_001)
+
+
+def test_similarity_maps_are_bounded(monkeypatch):
+    # Hardening audit C3: aligning a 606-atom chain to the core made its similarity
+    # map take 41 s with the GIL held, freezing an HTTP server for every client.
+    big = "c1ccccc1" + "CCO" * 150  # 456 atoms
+    aligned: list[int] = []
+    real = drawing.diff_highlights
+
+    def spy(mols, reference):
+        aligned.extend(m.GetNumAtoms() for m in mols)
+        return real(mols, reference)
+
+    monkeypatch.setattr(drawing, "diff_highlights", spy)
+    png = drawing.draw_grid(
+        ["c1ccccc1CCO", big], highlight="similarity_map", reference="c1ccccc1CO"
+    )
+    assert png.startswith(b"\x89PNG")
+    assert aligned == [9]  # the long chain keeps RDKit's own layout
+    with pytest.raises(InvalidInput, match="2,700 atoms in one request"):
+        drawing.draw_grid(["C" * 900] * 3, highlight="similarity_map", reference="CCO")

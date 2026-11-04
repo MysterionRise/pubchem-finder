@@ -95,6 +95,90 @@ def test_index_build_from_sdf_then_status_and_search(tmp_path, sample_sdfs):
     assert "2-acetyloxybenzoic acid" in text.output
 
 
+# Hardening audit D1/B5: chunks are named after their file, so vendor exports that
+# share a name overwrote each other, and a changed file was skipped as built.
+
+
+def _sdf_build(home, *files):
+    args = ["index", "build", "--home", str(home), "--workers", "1"]
+    for f in files:
+        args += ["--sdf", str(f)]
+    return runner.invoke(app, args)
+
+
+def _cids(home):
+    found = runner.invoke(
+        app,
+        ["search", "c1ccccc1", "--home", str(home), "--threshold", "0.01", "--json"],
+    )
+    return {hit["cid"] for hit in json.loads(found.output)["hits"]}
+
+
+@pytest.fixture
+def same_named(tmp_path, sample_sdfs):
+    import shutil
+
+    a = tmp_path / "vendor_a" / "library.sdf.gz"
+    b = tmp_path / "vendor_b" / "library.sdf.gz"
+    for path, src in ((a, sample_sdfs[0]), (b, sample_sdfs[1])):
+        path.parent.mkdir()
+        shutil.copyfile(src, path)
+    return a, b
+
+
+def test_index_build_refuses_two_files_with_one_name(tmp_path, same_named):
+    result = _sdf_build(tmp_path / "home", *same_named)
+    assert result.exit_code == 1
+    assert "would both be chunk 'library'" in result.output
+    assert not (tmp_path / "home" / "chunks").exists()
+
+
+def test_index_build_refuses_a_file_that_would_replace_another(tmp_path, same_named):
+    home = tmp_path / "home"
+    assert _sdf_build(home, same_named[0]).exit_code == 0
+    result = _sdf_build(home, same_named[1])
+    assert result.exit_code == 1
+    assert "already holds" in result.output
+    assert 2244 in _cids(home)  # vendor A's compounds are still there
+
+
+def test_index_build_rebuilds_a_changed_file(tmp_path, same_named, sample_sdfs):
+    import shutil
+
+    home = tmp_path / "home"
+    library = same_named[0]
+    assert _sdf_build(home, library).exit_code == 0
+    again = _sdf_build(home, library)
+    assert "already built, skipping" in again.output
+    assert "0 built this run" in again.output
+
+    shutil.copyfile(sample_sdfs[1], library)  # the vendor ships a new export
+    result = _sdf_build(home, library)
+    assert result.exit_code == 0, result.output
+    assert "rebuilding library: " in result.output
+    assert "changed since it was indexed" in result.output
+    assert "Index ready: 6 compounds" in result.output
+    cids = _cids(home)
+    assert 1983 in cids  # from the new file
+    assert 2244 not in cids  # gone with the old one
+
+
+def test_index_build_rebuilds_chunks_that_did_not_record_their_file(
+    tmp_path, same_named
+):
+    home = tmp_path / "home"
+    library = same_named[0]
+    assert _sdf_build(home, library).exit_code == 0
+    stats = home / "chunks" / "library.json"
+    data = json.loads(stats.read_text())
+    del data["source"]  # as 2.2.0 wrote it
+    stats.write_text(json.dumps(data))
+    result = _sdf_build(home, library)
+    assert result.exit_code == 0, result.output
+    assert "built by an earlier version" in result.output
+    assert "source" in json.loads(stats.read_text())
+
+
 def test_search_without_index(tmp_path):
     result = runner.invoke(app, ["search", "CCO", "--home", str(tmp_path)])
     assert result.exit_code == 1
@@ -406,6 +490,40 @@ def test_batch_to_stdout_and_argument_checks(tmp_path):
     no_column = tmp_path / "bad.csv"
     no_column.write_text("name\nx\n")
     assert runner.invoke(app, ["props", "-i", str(no_column)]).exit_code == 1
+
+
+# Hardening audit D2: the output was opened (and emptied) before the input was read,
+# so writing results back over the input destroyed it.
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        ("compounds.csv", "id,smiles\naspirin,CC(=O)Oc1ccccc1C(=O)O\n"),
+        ("compounds.smi", "CCO ethanol\nc1ccccc1 benzene\n"),
+    ],
+)
+def test_batch_refuses_to_write_over_its_input(tmp_path, name, content):
+    src = tmp_path / name
+    src.write_text(content)
+    same = tmp_path / "sub" / ".." / name  # the same file, spelled differently
+    (tmp_path / "sub").mkdir()
+    for output in (src, same):
+        result = runner.invoke(app, ["props", "-i", str(src), "-o", str(output)])
+        assert result.exit_code == 2
+        assert "is the input file" in result.output
+    assert src.read_text() == content
+
+
+def test_batch_checks_the_input_before_emptying_the_output(tmp_path):
+    out = tmp_path / "out.csv"
+    out.write_text("precious,data\n")
+    bad = tmp_path / "bad.csv"
+    bad.write_text("id,structure\n1,CCO\n")
+    result = runner.invoke(app, ["props", "-i", str(bad), "-o", str(out)])
+    assert result.exit_code == 1
+    assert "No SMILES column" in result.output
+    assert out.read_text() == "precious,data\n"
 
 
 def test_search_batch_and_scaffolds(tmp_path, built_home):

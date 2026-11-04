@@ -38,6 +38,20 @@ field were written by 2.1 or earlier: format 1.
 """
 
 
+class SourceFile(BaseModel):
+    """The local SDF file a chunk was built from, so a changed file is noticed."""
+
+    path: str = Field(description="Resolved path")
+    size: int
+    mtime_ns: int
+
+    @classmethod
+    def of(cls, path: Path) -> "SourceFile":
+        resolved = path.resolve()
+        stat = resolved.stat()
+        return cls(path=str(resolved), size=stat.st_size, mtime_ns=stat.st_mtime_ns)
+
+
 class ChunkStats(BaseModel):
     """Result of fingerprinting one SDF file."""
 
@@ -56,6 +70,11 @@ class ChunkStats(BaseModel):
     )
     fpsim2_version: str | None = Field(
         default=None, description="FPSim2 that wrote the chunk's .h5"
+    )
+    source: SourceFile | None = Field(
+        default=None,
+        description="The file given with --sdf (None: a PubChem chunk, or a chunk "
+        "built by 2.2.0 or earlier)",
     )
 
 

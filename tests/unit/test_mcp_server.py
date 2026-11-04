@@ -435,3 +435,14 @@ async def test_large_result_tools_raise_claude_codes_size_limit():
         "substructure_search": 100_000,
         "pubchem_annotations": 100_000,
     }
+
+
+async def test_oversized_smiles_get_a_tool_error_not_a_crash():
+    # Hardening audit C1: 'C' * 80,000 overflowed RDKit's recursive SMILES writer
+    # and killed the server process, dropping every session.
+    async with Client(mcp) as client:
+        result = await client.call_tool("compound_properties", {"smiles": "C" * 80_000})
+        after = await client.call_tool("compound_properties", {"smiles": "CCO"})
+    assert result.is_error is True
+    assert "the limit is 10,000" in result.content[0].text
+    assert after.is_error is False

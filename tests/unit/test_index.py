@@ -600,3 +600,46 @@ def test_in_memory_searches_run_in_one_thread(substructure_home, monkeypatch):
         index.screen(fragment)
     assert set(workers) == {1}
     assert [sys.getrefcount(e.fps) for e in engines] == before
+
+
+def test_in_memory_searches_of_one_array_never_overlap(substructure_home, monkeypatch):
+    """FPSim2 drops its reference to the fingerprint array without the GIL, so two
+    threads searching one in-memory array race on its reference count even with
+    n_workers=1. Parallel MCP tool calls do exactly that; LocalIndex serializes them
+    per engine."""
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from rdkit import Chem
+
+    index = LocalIndex(substructure_home, mode="memory")
+    query = Chem.MolFromSmiles(ASPIRIN)
+    fragment = Chem.MolFromSmiles("c1ccccc1")
+    index.search(query, 0.1, 5)
+    index.screen(fragment)
+    guard = threading.Lock()
+    active = {"top_k": 0, "substructure": 0}
+    peak = dict(active)
+    engines = (index._engine, index._pattern_engine)
+    for engine, method in zip(engines, active, strict=True):
+        real = getattr(engine, method)
+
+        def spy(*args, _real=real, _method=method, **kwargs):
+            with guard:
+                active[_method] += 1
+                peak[_method] = max(peak[_method], active[_method])
+            try:
+                time.sleep(0.01)
+                return _real(*args, **kwargs)
+            finally:
+                with guard:
+                    active[_method] -= 1
+
+        monkeypatch.setattr(engine, method, spy)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        jobs = [pool.submit(index.search, query, 0.1, 5) for _ in range(8)]
+        jobs += [pool.submit(index.screen, fragment) for _ in range(8)]
+        for job in jobs:
+            job.result()
+    assert peak == {"top_k": 1, "substructure": 1}

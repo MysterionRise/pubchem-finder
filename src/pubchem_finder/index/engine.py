@@ -30,7 +30,10 @@ Metric = Literal["tanimoto", "dice", "cosine"]
 # drifts, and when it drifts down the array is freed mid-search ("Chunk N worker
 # died: ... GenericSearch(): incompatible function arguments" with a string where
 # the array was, or a crash). FPSim2 runs the search in the calling thread when
-# n_workers is 1, so that is the default.
+# n_workers is 1, so that is the default. That is not enough on its own: the binding
+# also drops its reference to the array without the GIL, so two searches of one
+# in-memory array from different threads (parallel MCP tool calls) race the same way.
+# LocalIndex therefore lets one in-memory search per array run at a time.
 SEARCH_WORKERS = 1
 METADATA_COLUMNS = (
     "cid",
@@ -84,8 +87,9 @@ class LocalIndex:
 
     Each FPSim2 engine loads lazily on its first search (loading the full PubChem
     index takes tens of seconds and ~20 GB of RAM in memory mode), under a lock
-    so concurrent callers load it once. Searches run on one thread (see
-    SEARCH_WORKERS).
+    so concurrent callers load it once. In-memory searches run on one thread and one
+    at a time per engine (see SEARCH_WORKERS); on-disk searches read fresh arrays
+    and need neither.
     """
 
     def __init__(
@@ -98,6 +102,10 @@ class LocalIndex:
         )  # type: ignore[assignment]
         self.n_workers = n_workers or SEARCH_WORKERS
         self._lock = threading.Lock()
+        # One per engine, so a long substructure screen doesn't hold up similarity
+        # searches; separate from _lock, so a search doesn't block loading.
+        self._search_lock = threading.Lock()
+        self._pattern_search_lock = threading.Lock()
         self._engine: Any = None
         self._in_memory: bool | None = None
         self._manifest: Manifest | None = None
@@ -170,9 +178,14 @@ class LocalIndex:
         self, engine: Any, query: Chem.Mol, threshold: float, k: int, metric: Metric
     ) -> Any:
         if self._in_memory:
-            return engine.top_k(
-                query, k=k, threshold=threshold, metric=metric, n_workers=self.n_workers
-            )
+            with self._search_lock:
+                return engine.top_k(
+                    query,
+                    k=k,
+                    threshold=threshold,
+                    metric=metric,
+                    n_workers=self.n_workers,
+                )
         # FPSim2 parallelizes on-disk search with forked processes, which can
         # deadlock when called from a threaded server (the MCP server runs
         # searches on worker threads), so on-disk search stays single-process.
@@ -212,7 +225,8 @@ class LocalIndex:
         # SMARTS query molecules work too.
         pattern_fp = Chem.PatternFingerprint(query)
         if self._pattern_in_memory:
-            cids = engine.substructure(pattern_fp, n_workers=self.n_workers)
+            with self._pattern_search_lock:
+                cids = engine.substructure(pattern_fp, n_workers=self.n_workers)
         else:  # single process on disk, see search()
             cids = engine.on_disk_substructure(pattern_fp, n_workers=1)
         return np.unique(np.asarray(cids, dtype=np.int64))

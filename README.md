@@ -192,6 +192,11 @@ chunks are skipped, so an interrupted build resumes and a larger `--limit` exten
 existing index. `--all` indexes all of PubChem. The default fingerprint is ECFP4 (Morgan
 radius 2, 1024 bits); `--radius` and `--fp-size` change it for a new index.
 
+`--sdf FILE` (repeatable) indexes your own files, alongside PubChem's chunks or on their
+own. Each file becomes a chunk named after it, so two files with the same name (two
+vendors' `library.sdf`) are refused rather than merged; rename one. Running the command
+again after a file changed rebuilds that file's chunk.
+
 Substructure search is optional because it needs a second fingerprint database. It is
 built from the SMILES already in the index, so `index build --with-substructure` adds it to
 an existing index without downloading anything, and later builds keep it up to date
