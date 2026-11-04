@@ -8,6 +8,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Oversized structures are refused with an error that names the limit instead of
+  crashing or stalling the server: SMILES and SMARTS are capped at 10,000 characters
+  and 1,000 atoms (the largest drug in the demo set has 492). An 80,000-character chain
+  overflowed RDKit's recursive SMILES writer and killed the MCP server process. A
+  similarity map request draws at most 2,500 atoms, and molecules over 100 atoms keep
+  RDKit's own layout instead of being aligned to the shared core. A 600-atom chain took 41 s
+  with the GIL held, which stalled every client of an HTTP server. Scaffold
+  grouping skips polymer-sized hits.
 - Parallel local searches no longer risk corrupting memory. FPSim2 releases its reference
   to an in-memory fingerprint array without holding the GIL, so two threads searching the
   same index at once (parallel MCP tool calls, or several clients over HTTP) raced on the

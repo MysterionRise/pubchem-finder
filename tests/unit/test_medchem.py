@@ -75,3 +75,13 @@ def test_group_by_scaffold():
     assert [g.scaffold for g in groups] == ["c1ccccc1", "c1ccc2ccccc2c1", "", "?"]
     assert groups[0].cids == [1, 2]
     assert groups[0].best_similarity == 0.9
+
+
+def test_polymer_sized_hits_group_without_a_scaffold(monkeypatch):
+    # Murcko scaffolds of PubChem's polymer-sized records take tens of seconds.
+    def scaffold(_mol):
+        raise AssertionError("computed the scaffold of an oversized hit")
+
+    monkeypatch.setattr(medchem, "murcko_scaffold", scaffold)
+    hits = [SimilarityHit(cid=1, similarity=0.5, smiles="c1ccccc1" + "C" * 1_000)]
+    assert [g.scaffold for g in medchem.group_by_scaffold(hits)] == ["?"]

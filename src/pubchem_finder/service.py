@@ -18,6 +18,7 @@ from . import drawing, hints, medchem
 from .chemistry import MoleculeStandardizer, calculate_properties, is_druglike
 from .config import cache_enabled, cache_path, demo_enabled, resolve_home
 from .core.exceptions import MoleculeValidationError, PubChemFinderError
+from .core.limits import check_atoms, check_length
 from .data import parsers
 from .data.cache import CacheStats, ResponseCache
 from .data.pug_rest import (
@@ -94,13 +95,15 @@ def get_client() -> PubChemClient:
 
 
 def parse_smiles(smiles: str) -> Chem.Mol:
-    """Parse SMILES or raise ``MoleculeValidationError``."""
+    """Parse SMILES or raise ``MoleculeValidationError``, also for oversized input
+    (see :mod:`pubchem_finder.core.limits`)."""
+    check_length(smiles.strip())
     mol: Chem.Mol | None = (
         Chem.MolFromSmiles(smiles.strip()) if smiles.strip() else None
     )
     if mol is None:
         raise MoleculeValidationError(f"Invalid SMILES: {smiles!r}")
-    return mol
+    return check_atoms(mol)
 
 
 def parse_query(query: str, query_type: QueryType = "smiles") -> Chem.Mol:
@@ -109,9 +112,11 @@ def parse_query(query: str, query_type: QueryType = "smiles") -> Chem.Mol:
         return parse_smiles(query)
     if query_type != "smarts":
         raise PubChemFinderError(f"Unknown query_type {query_type!r}")
+    check_length(query.strip(), "SMARTS")
     mol: Chem.Mol | None = Chem.MolFromSmarts(query.strip()) if query.strip() else None
     if mol is None:
         raise MoleculeValidationError(f"Invalid SMARTS: {query!r}")
+    check_atoms(mol, "SMARTS")
     # Pattern fingerprints need ring information, which SMARTS parsing skips.
     mol.UpdatePropertyCache(strict=False)
     Chem.FastFindRings(mol)
