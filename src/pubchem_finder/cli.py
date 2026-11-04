@@ -1,5 +1,6 @@
 """Command-line interface: ``pubchem-finder``."""
 
+import itertools
 import os
 import sys
 from collections.abc import Callable
@@ -539,8 +540,17 @@ def _run_batch(
 ) -> None:
     if input_file is None:  # callers check _batch_requested() first
         raise typer.BadParameter("an input file is required", param_hint="'--input'")
+    if output is not None and str(output) != "-" and _same_file(input_file, output):
+        raise typer.BadParameter(
+            f"{output} is the input file; write the results to a new file",
+            param_hint="'--output'",
+        )
     try:
-        rows = batch.read_inputs(input_file)
+        reader = batch.read_inputs(input_file)
+        # Read the first row now: that opens the input and checks its header before
+        # the output file is opened, and so emptied.
+        first = next(reader, None)
+        rows = itertools.chain([] if first is None else [first], reader)
         if output is None or str(output) == "-":
             report = batch.run(rows, sys.stdout, columns, fn)
             where = "stdout"
@@ -556,6 +566,15 @@ def _run_batch(
         f"{report.errors} error(s)",
         err=True,
     )
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    if str(a) == "-" or not b.exists():
+        return False
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
 
 
 def _default_workers() -> int:

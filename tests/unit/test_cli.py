@@ -492,6 +492,40 @@ def test_batch_to_stdout_and_argument_checks(tmp_path):
     assert runner.invoke(app, ["props", "-i", str(no_column)]).exit_code == 1
 
 
+# Hardening audit D2: the output was opened (and emptied) before the input was read,
+# so writing results back over the input destroyed it.
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        ("compounds.csv", "id,smiles\naspirin,CC(=O)Oc1ccccc1C(=O)O\n"),
+        ("compounds.smi", "CCO ethanol\nc1ccccc1 benzene\n"),
+    ],
+)
+def test_batch_refuses_to_write_over_its_input(tmp_path, name, content):
+    src = tmp_path / name
+    src.write_text(content)
+    same = tmp_path / "sub" / ".." / name  # the same file, spelled differently
+    (tmp_path / "sub").mkdir()
+    for output in (src, same):
+        result = runner.invoke(app, ["props", "-i", str(src), "-o", str(output)])
+        assert result.exit_code == 2
+        assert "is the input file" in result.output
+    assert src.read_text() == content
+
+
+def test_batch_checks_the_input_before_emptying_the_output(tmp_path):
+    out = tmp_path / "out.csv"
+    out.write_text("precious,data\n")
+    bad = tmp_path / "bad.csv"
+    bad.write_text("id,structure\n1,CCO\n")
+    result = runner.invoke(app, ["props", "-i", str(bad), "-o", str(out)])
+    assert result.exit_code == 1
+    assert "No SMILES column" in result.output
+    assert out.read_text() == "precious,data\n"
+
+
 def test_search_batch_and_scaffolds(tmp_path, built_home):
     src = tmp_path / "queries.smi"
     src.write_text("CC(=O)Oc1ccccc1C(=O)O aspirin\nCCO ethanol\n")

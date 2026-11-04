@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Batch mode no longer destroys its input. `props -i compounds.csv -o compounds.csv`
+  (and `standardize`, `triage`, `search`, `substructure`) emptied the file before reading
+  it. Writing over the input is now refused, and the input is opened and its header
+  checked before the output file is touched, so a bad input leaves an existing output
+  file as it was.
 - `index build --sdf` no longer loses compounds when files share a name. Each file becomes
   a chunk named after it, so `--sdf vendor_a/library.sdf --sdf vendor_b/library.sdf`
   kept only one of them, while reporting both as built, and a file with the same name
