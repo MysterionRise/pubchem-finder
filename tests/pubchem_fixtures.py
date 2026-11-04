@@ -72,6 +72,24 @@ XREFS = {
     }
 }
 
+# pubchem_xrefs asks for patents separately; PubChem answers with the requested types only.
+XREFS_IDS = {
+    "InformationList": {
+        "Information": [
+            {
+                "CID": 2244,
+                "RegistryID": ["50-78-2", "CHEMBL25", "DB00945"],
+                "PubMedID": [123, 456, 456],
+            }
+        ]
+    }
+}
+XREFS_PATENTS = {
+    "InformationList": {
+        "Information": [{"CID": 2244, "PatentID": ["US-1234567-A", "EP-0000001-B1"]}]
+    }
+}
+
 DESCRIPTION = {
     "InformationList": {
         "Information": [
@@ -320,8 +338,12 @@ def mock_pubchem(router: respx.Router) -> respx.Router:
         200, json=SYNONYMS
     )
     router.get(
-        rx_url(REST + "/compound/cid/2244/xrefs/RegistryID,PubMedID,PatentID/JSON")
-    ).respond(200, json=XREFS)
+        rx_url(REST + "/compound/cid/2244/xrefs/RegistryID,PubMedID/JSON"),
+        name="xrefs_ids",
+    ).respond(200, json=XREFS_IDS)
+    router.get(
+        rx_url(REST + "/compound/cid/2244/xrefs/PatentID/JSON"), name="xrefs_patents"
+    ).respond(200, json=XREFS_PATENTS)
     router.get(rx_url(REST + "/compound/cid/2244/description/JSON")).respond(
         200, json=DESCRIPTION
     )
@@ -329,7 +351,12 @@ def mock_pubchem(router: respx.Router) -> respx.Router:
         200, json=ASSAY_SUMMARY
     )
     for cid in (5, 6):  # untested / unlinked compounds
-        for op in ("assaysummary", "xrefs/RegistryID,PubMedID,PatentID", "synonyms"):
+        for op in (
+            "assaysummary",
+            "xrefs/RegistryID,PubMedID",
+            "xrefs/PatentID",
+            "synonyms",
+        ):
             router.get(rx_url(f"{REST}/compound/cid/{cid}/{op}/JSON")).respond(
                 404, json=NOT_FOUND
             )

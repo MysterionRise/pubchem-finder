@@ -114,7 +114,7 @@ class PubChemUnavailable(PubChemError):
 
 
 class PubChemTimeout(PubChemError):
-    """A PubChem search ran past the server's time limit."""
+    """PubChem ran past its time limit, or did not answer within the client timeout."""
 
 
 class AnnotationNotFound(PubChemError):
@@ -417,7 +417,7 @@ class PubChemClient:
             return data
         message = _fault_message(response)
         if status == 504 or _is_timeout(response):
-            raise PubChemTimeout(f"PubChem search timed out: {message}")
+            raise PubChemTimeout(f"PubChem timed out: {message}")
         if status == 404:
             raise CompoundNotFound(message)
         if status == 400:

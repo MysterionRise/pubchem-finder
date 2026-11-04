@@ -141,6 +141,13 @@ async def _health(_: Request) -> Response:
 mcp.custom_route("/health", methods=["GET"], include_in_schema=False)(_health)
 
 
+# PubChem structure searches that time out because the query matches too much; for
+# these, narrowing the query helps, while for lookups only a retry does.
+_NARROWABLE_SEARCHES = frozenset(
+    {"pubchem_similarity_search", "pubchem_substructure_search"}
+)
+
+
 async def _run(fn: Callable[..., T], *args: object, **kwargs: object) -> T:
     """Run blocking RDKit/HTTP work off the event loop, mapping errors to ToolError."""
     try:
@@ -152,10 +159,12 @@ async def _run(fn: Callable[..., T], *args: object, **kwargs: object) -> T:
     except PubChemUnavailable as exc:
         raise ToolError(f"{exc}. Wait a moment and retry.") from exc
     except PubChemTimeout as exc:
-        raise ToolError(
-            f"{exc}. Retry in a moment; for structure searches, use a more specific "
-            "query, a higher threshold or fewer max_records."
-        ) from exc
+        hint = "Retry in a moment"
+        if getattr(fn, "__name__", "") in _NARROWABLE_SEARCHES:
+            hint += (
+                "; use a more specific query, a higher threshold or fewer max_records"
+            )
+        raise ToolError(f"{exc}. {hint}.") from exc
     except PubChemFinderError as exc:
         raise ToolError(str(exc)) from exc
     except Exception as exc:  # a damaged cache or index file, a disk error, or a bug

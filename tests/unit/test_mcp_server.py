@@ -230,6 +230,34 @@ async def test_annotation_and_timeout_errors_are_actionable(pubchem_knowledge_ap
     assert "more specific query" in slow.content[0].text
 
 
+async def test_lookup_timeouts_suggest_a_retry_not_a_narrower_query(
+    pubchem_knowledge_api,
+):
+    import httpx
+
+    pubchem_knowledge_api["xrefs_ids"].mock(
+        return_value=httpx.Response(504, text="Gateway Timeout")
+    )
+    async with Client(mcp) as client:
+        slow = await client.call_tool("pubchem_xrefs", {"cid": 2244})
+    assert slow.is_error is True
+    assert "Retry in a moment" in slow.content[0].text
+    assert "max_records" not in slow.content[0].text
+
+
+async def test_xrefs_tool_reports_patents_it_could_not_get(pubchem_knowledge_api):
+    import httpx
+
+    pubchem_knowledge_api["xrefs_patents"].mock(
+        return_value=httpx.Response(504, text="Gateway Timeout")
+    )
+    async with Client(mcp) as client:
+        result = await client.call_tool("pubchem_xrefs", {"cid": 2244})
+    assert result.is_error is False
+    assert result.structured_content["unavailable"] == ["PatentID"]
+    assert "PatentID" not in result.structured_content["counts"]
+
+
 async def test_draw_molecules_returns_png_image():
     import base64
 
