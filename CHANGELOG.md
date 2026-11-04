@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Parallel local searches no longer risk corrupting memory. FPSim2 releases its reference
+  to an in-memory fingerprint array without holding the GIL, so two threads searching the
+  same index at once (parallel MCP tool calls, or several clients over HTTP) raced on the
+  array's reference count, the same fault as chembl/FPSim2#140. In-memory similarity
+  searches and substructure screens now run one at a time per index.
 - `pubchem_xrefs` no longer fails for well-studied compounds when PubChem runs out of
   time listing their patents (#90): patents, most of the response (3.1 of 3.6 MB for
   aspirin), are fetched on their own, and if that request times out the registry IDs and
