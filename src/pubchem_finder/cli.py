@@ -693,7 +693,13 @@ def index_build(
                     for n in names
                 ]
                 report = build_chunks(paths, sources, workers, params, say)
-        manifest = finalize(paths, say, substructure=with_substructure, workers=workers)
+        manifest = finalize(
+            paths,
+            say,
+            force=bool(report.rebuilt),
+            substructure=with_substructure,
+            workers=workers,
+        )
     except (PubChemFinderError, OSError) as exc:
         _fail(exc)
         return

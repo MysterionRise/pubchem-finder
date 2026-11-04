@@ -8,6 +8,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- `index build --sdf` no longer loses compounds when files share a name. Each file becomes
+  a chunk named after it, so `--sdf vendor_a/library.sdf --sdf vendor_b/library.sdf`
+  kept only one of them, while reporting both as built, and a file with the same name
+  in a later run replaced the first. Both are now refused with a message that says to
+  rename one. Chunks record the file they were built from, and running the command
+  again after a file changed rebuilds its chunk instead of skipping it as already built.
 - Oversized structures are refused with an error that names the limit instead of
   crashing or stalling the server: SMILES and SMARTS are capped at 10,000 characters
   and 1,000 atoms (the largest drug in the demo set has 492). An 80,000-character chain
