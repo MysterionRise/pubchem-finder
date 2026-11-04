@@ -6,8 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-11-04
+
 ### Fixed
 
+- Parallel local searches no longer risk corrupting memory. FPSim2 releases its reference
+  to an in-memory fingerprint array without holding the GIL, so two threads searching the
+  same index at once (parallel MCP tool calls, or several clients over HTTP) raced on the
+  array's reference count, the same fault as chembl/FPSim2#140. In-memory similarity
+  searches and substructure screens now run one at a time per index.
+- Oversized structures are refused with an error that names the limit, instead of
+  crashing or stalling the server: SMILES and SMARTS are capped at 10,000 characters and
+  1,000 atoms (the largest drug in the demo set has 492). An 80,000-character chain
+  overflowed RDKit's recursive SMILES writer and killed the MCP server process. A
+  similarity-map request draws at most 2,500 atoms, and molecules over 100 atoms keep
+  RDKit's own layout instead of being aligned to the shared core: a 600-atom chain took
+  41 s with the GIL held, which stalled every client of an HTTP server. Scaffold grouping
+  skips polymer-sized hits.
 - Batch mode no longer destroys its input. `props -i compounds.csv -o compounds.csv`
   (and `standardize`, `triage`, `search`, `substructure`) emptied the file before reading
   it. Writing over the input is now refused, and the input is opened and its header
@@ -19,19 +34,6 @@ All notable changes to this project are documented here. The format follows
   in a later run replaced the first. Both are now refused with a message that says to
   rename one. Chunks record the file they were built from, and running the command
   again after a file changed rebuilds its chunk instead of skipping it as already built.
-- Oversized structures are refused with an error that names the limit instead of
-  crashing or stalling the server: SMILES and SMARTS are capped at 10,000 characters
-  and 1,000 atoms (the largest drug in the demo set has 492). An 80,000-character chain
-  overflowed RDKit's recursive SMILES writer and killed the MCP server process. A
-  similarity map request draws at most 2,500 atoms, and molecules over 100 atoms keep
-  RDKit's own layout instead of being aligned to the shared core. A 600-atom chain took 41 s
-  with the GIL held, which stalled every client of an HTTP server. Scaffold
-  grouping skips polymer-sized hits.
-- Parallel local searches no longer risk corrupting memory. FPSim2 releases its reference
-  to an in-memory fingerprint array without holding the GIL, so two threads searching the
-  same index at once (parallel MCP tool calls, or several clients over HTTP) raced on the
-  array's reference count, the same fault as chembl/FPSim2#140. In-memory similarity
-  searches and substructure screens now run one at a time per index.
 - `pubchem_xrefs` no longer fails for well-studied compounds when PubChem runs out of
   time listing their patents (#90): patents, most of the response (3.1 of 3.6 MB for
   aspirin), are fetched on their own, and if that request times out the registry IDs and
@@ -248,7 +250,8 @@ with a local index you can build on a laptop.
 An Indigo + Elasticsearch indexer for PubChem SDF dumps. It was never released as a
 package.
 
-[Unreleased]: https://github.com/MysterionRise/pubchem-finder/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/MysterionRise/pubchem-finder/compare/v2.2.1...HEAD
+[2.2.1]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.2.1
 [2.2.0]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.2.0
 [2.1.1]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.1.1
 [2.1.0]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.1.0
