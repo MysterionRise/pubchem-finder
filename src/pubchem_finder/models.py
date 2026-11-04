@@ -232,6 +232,14 @@ class CrossRefs(BaseModel):
         description="First few identifiers of each type"
     )
     pubmed_urls: list[str] = Field(default_factory=list)
+    unavailable: list[str] = Field(
+        default_factory=list,
+        description="Identifier types PubChem did not return in time; they are left out "
+        "of counts and samples, so their number is unknown, not zero",
+    )
+    note: str | None = Field(
+        default=None, description="Why some types are missing; tell the user"
+    )
 
 
 class SourcedText(BaseModel):

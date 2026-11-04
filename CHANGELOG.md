@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `pubchem_xrefs` no longer fails for well-studied compounds when PubChem runs out of
+  time listing their patents (#90): patents, most of the response (3.1 of 3.6 MB for
+  aspirin), are fetched on their own, and if that request times out the registry IDs and
+  PubMed articles are still returned, with `unavailable: ["PatentID"]` and a `note`.
+- A PubChem timeout on a lookup suggests a retry; only similarity and substructure
+  searches suggest a narrower query. Timeout messages no longer call every request a
+  search.
+
 ## [2.2.0] - 2026-11-02
 
 ### Added

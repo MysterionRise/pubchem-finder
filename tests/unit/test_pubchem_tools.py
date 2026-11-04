@@ -185,11 +185,50 @@ def test_xrefs(pubchem_knowledge_api):
     result = service.pubchem_xrefs(2244, sample=1)
     assert result.counts == {"RegistryID": 3, "PubMedID": 2, "PatentID": 2}
     assert result.samples["RegistryID"] == ["50-78-2"]
+    assert result.samples["PatentID"] == ["US-1234567-A"]
     assert result.pubmed_urls == ["https://pubmed.ncbi.nlm.nih.gov/123/"]
+    assert result.unavailable == []
+    assert result.note is None
     none = service.pubchem_xrefs(5)
     assert none.counts == {"RegistryID": 0, "PubMedID": 0, "PatentID": 0}
     with pytest.raises(BadQuery):
         service.pubchem_xrefs(2244, sample=0)
+
+
+SLOW_PATENTS = [
+    httpx.Response(503, json=fx.fault("PUGREST.Timeout", "Request timed out")),
+    httpx.Response(504, text="Gateway Timeout"),
+    httpx.ReadTimeout("slow"),
+    httpx.Response(503, json=fx.fault("PUGREST.ServerBusy", "Too many requests")),
+]
+
+
+@pytest.mark.parametrize("answer", SLOW_PATENTS)
+def test_xrefs_without_patents_when_pubchem_cannot_list_them(
+    pubchem_knowledge_api, answer
+):
+    # Issue #90: PubChem timed out listing aspirin's patents (3.1 of its 3.6 MB of
+    # cross-references), and the whole tool failed with it.
+    route = pubchem_knowledge_api["xrefs_patents"]
+    if isinstance(answer, Exception):
+        route.mock(side_effect=answer)
+    else:
+        route.mock(return_value=answer)
+    result = service.pubchem_xrefs(2244)
+    assert result.counts == {"RegistryID": 3, "PubMedID": 2}
+    assert "PatentID" not in result.samples
+    assert result.unavailable == ["PatentID"]
+    assert result.note is not None
+    assert "patent" in result.note
+
+
+def test_xrefs_fail_when_pubchem_cannot_list_the_identifiers(pubchem_knowledge_api):
+    pubchem_knowledge_api["xrefs_ids"].mock(
+        return_value=httpx.Response(504, text="Gateway Timeout")
+    )
+    with pytest.raises(PubChemTimeout, match="PubChem timed out"):
+        service.pubchem_xrefs(2244)
+    assert pubchem_knowledge_api["xrefs_patents"].call_count == 0
 
 
 def test_description(pubchem_knowledge_api):

@@ -30,6 +30,8 @@ from .data.pug_rest import (
     Namespace,
     PubChemClient,
     PubChemError,
+    PubChemTimeout,
+    PubChemUnavailable,
 )
 from .fingerprints import MACCSFingerprint, MorganFingerprint
 from .index import demo
@@ -452,17 +454,37 @@ def pubchem_synonyms(cid: int, limit: int = 25) -> Synonyms:
     )
 
 
-def pubchem_xrefs(cid: int, sample: int = 10) -> CrossRefs:
-    """Registry IDs, PubMed articles and patents linked to a CID."""
-    if not 1 <= sample <= 100:
-        raise BadQuery("sample must be between 1 and 100")
+# Patents get a request of their own: for well-studied compounds they are most of the
+# response (3.1 of 3.6 MB for aspirin) and the part PubChem runs out of time on.
+_XREF_PATENTS = ("PatentID",)
+_XREF_OTHERS = tuple(t for t in XREF_TYPES if t not in _XREF_PATENTS)
+
+
+def _xrefs(cid: int, types: tuple[str, ...]) -> dict[str, list[str]]:
     try:
-        payload = get_client().compound_json(cid, "xrefs/" + ",".join(XREF_TYPES))
-        refs = parsers.parse_xrefs(payload, XREF_TYPES)
-    except CompoundNotFound:
-        refs = {t: [] for t in XREF_TYPES}
+        payload = get_client().compound_json(cid, "xrefs/" + ",".join(types))
+        return parsers.parse_xrefs(payload, types)
+    except CompoundNotFound:  # PubChem's answer when a compound has none of these
+        return {t: [] for t in types}
     except parsers.PayloadError as exc:
         raise PubChemError(f"Unexpected xrefs response: {exc}") from exc
+
+
+def pubchem_xrefs(cid: int, sample: int = 10) -> CrossRefs:
+    """Registry IDs, PubMed articles and patents linked to a CID.
+
+    When only the patent request times out or PubChem is busy, the other types are
+    still returned and patents are listed in ``unavailable``.
+    """
+    if not 1 <= sample <= 100:
+        raise BadQuery("sample must be between 1 and 100")
+    refs = _xrefs(cid, _XREF_OTHERS)
+    unavailable: list[str] = []
+    try:
+        refs |= _xrefs(cid, _XREF_PATENTS)
+    except (PubChemTimeout, PubChemUnavailable) as exc:
+        logger.warning("patents for CID %d left out: %s", cid, exc)
+        unavailable = list(_XREF_PATENTS)
     return CrossRefs(
         cid=cid,
         counts={t: len(v) for t, v in refs.items()},
@@ -470,6 +492,14 @@ def pubchem_xrefs(cid: int, sample: int = 10) -> CrossRefs:
         pubmed_urls=[
             f"https://pubmed.ncbi.nlm.nih.gov/{p}/" for p in refs["PubMedID"][:sample]
         ],
+        unavailable=unavailable,
+        note=(
+            "PubChem did not return the patent list in time (it is very long for "
+            "well-studied compounds); the other identifiers are complete. Ask again "
+            "later for patents."
+            if unavailable
+            else None
+        ),
     )
 
 

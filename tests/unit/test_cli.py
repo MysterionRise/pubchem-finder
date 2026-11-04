@@ -297,6 +297,19 @@ def test_pubchem_commands(pubchem_knowledge_api):
         json.loads(out.output)
 
 
+def test_pubchem_xrefs_says_which_types_are_missing(pubchem_knowledge_api):
+    import httpx
+
+    pubchem_knowledge_api["xrefs_patents"].mock(
+        return_value=httpx.Response(504, text="Gateway Timeout")
+    )
+    result = runner.invoke(app, ["pubchem", "xrefs", "2244"])
+    assert result.exit_code == 0
+    assert "CHEMBL25" in result.output
+    assert "PatentID" in result.output
+    assert "did not answer in time" in result.output
+
+
 def test_pubchem_command_errors(pubchem_knowledge_api):
     missing = runner.invoke(
         app, ["pubchem", "annotations", "2244", "--heading", "Toxicity"]
