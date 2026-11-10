@@ -2,11 +2,50 @@
 
 import csv
 import io
+from pathlib import Path
 
 import pytest
 
 from pubchem_finder import batch, service
 from pubchem_finder.core.exceptions import InvalidInput
+
+FIXTURES = Path(__file__).parents[1] / "fixtures" / "batch"
+
+
+@pytest.mark.parametrize("name", ["utf8_bom_smiles_first.csv", "utf8_bom_id_first.csv"])
+def test_read_csv_with_utf8_bom(name):
+    rows = list(batch.read_inputs(FIXTURES / name))
+    assert rows == [batch.InputRow(line=2, id="ethanol", smiles="CCO")]
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "line"),
+    [("in.tsv", "id\tsmiles\r\nethanol\tCCO\r\n", 2), ("in.smi", "CCO ethanol\n", 1)],
+)
+def test_read_other_formats_with_utf8_bom(tmp_path, name, text, line):
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8-sig")
+    assert list(batch.read_inputs(path)) == [
+        batch.InputRow(line=line, id="ethanol", smiles="CCO")
+    ]
+
+
+def test_read_non_utf8_input_has_actionable_error():
+    path = FIXTURES / "windows_1252.csv"
+    with pytest.raises(InvalidInput, match="UTF-8") as exc:
+        list(batch.read_inputs(path))
+    assert str(path) in str(exc.value)
+    assert "save" in str(exc.value).lower()
+
+
+def test_read_non_utf8_error_after_first_row(tmp_path):
+    path = tmp_path / "late.csv"
+    # Put the bad byte past the decoder's first buffer, after valid rows.
+    path.write_bytes(b"id,smiles\n" + b"ethanol,CCO\n" * 1000 + b"caf\xe9,CCO\n")
+    rows = batch.read_inputs(path)
+    assert next(rows).smiles == "CCO"
+    with pytest.raises(InvalidInput, match="UTF-8"):
+        list(rows)
 
 
 def write(tmp_path, name, text):
