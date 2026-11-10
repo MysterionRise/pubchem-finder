@@ -283,6 +283,22 @@ def test_bioactivity(pubchem_knowledge_api):
     assert untested.outcomes == {}
 
 
+def test_a_cid_pubchem_does_not_have_is_not_found_rather_than_empty(
+    pubchem_knowledge_api,
+):
+    """PubChem answers "no assay data" and "no such compound" with the same 404, and
+    a property request for a missing CID with 200 and a row holding only the CID. An
+    assistant was told "not tested" and "no references" about compounds that do not
+    exist."""
+    with pytest.raises(CompoundNotFound):
+        service.pubchem_bioactivity(fx.MISSING_CID)
+    with pytest.raises(CompoundNotFound):
+        service.pubchem_xrefs(fx.MISSING_CID)
+    with pytest.raises(CompoundNotFound, match="cid='8'"):
+        service.lookup(str(fx.MISSING_CID), by="cid")
+    assert service.pubchem_xrefs(5).counts["PubMedID"] == 0  # real, just unlinked
+
+
 def test_annotations(pubchem_knowledge_api):
     result = service.pubchem_annotations(2244, "GHS Classification")
     request = pubchem_knowledge_api.calls.last.request

@@ -257,17 +257,22 @@ class Description(BaseModel):
 
 
 class TargetActivity(BaseModel):
-    target_accession: str | None
-    target_gene_id: str | None
-    active_assays: int
+    """One target: a gene, however many protein accessions PubChem lists it under."""
+
+    target_accession: str | None = Field(
+        description="A protein accession of the target (UniProt's when PubChem has one)"
+    )
+    target_gene_id: str | None = Field(description="NCBI Gene ID")
+    active_assays: int = Field(description="Distinct assays with an active result")
 
 
 class PotentResult(BaseModel):
     aid: int
     assay_name: str | None
-    activity_name: str | None
+    activity_name: str | None = Field(description="What was measured, e.g. IC50, Ki")
     value_um: float
     target_accession: str | None
+    target_gene_id: str | None = None
 
 
 class BioactivitySummary(BaseModel):
@@ -276,12 +281,18 @@ class BioactivitySummary(BaseModel):
     cid: int
     tested: bool
     n_assays: int = Field(description="Distinct BioAssay AIDs")
-    outcomes: dict[str, int] = Field(description="Result counts by outcome")
+    outcomes: dict[str, int] = Field(
+        description="Result counts by outcome. Results, not assays: one assay can "
+        "report several"
+    )
     top_targets: list[TargetActivity] = Field(
-        description="Targets with the most active results"
+        description="Targets with the most active assays, one row per gene"
     )
     most_potent: list[PotentResult] = Field(
-        description="Active results with the lowest activity values (µM)"
+        description="Active results with the lowest potency-type values in µM (IC50, "
+        "EC50, AC50, Potency, Ki, Kd, ID50, ED50, MIC, GI50). Other measurements "
+        "(Vmax, Km, plasma levels, solubility) and unnamed values are left out. The "
+        "lowest value is not always the most meaningful: check the assay"
     )
 
     @computed_field  # type: ignore[prop-decorator]

@@ -75,6 +75,55 @@ def test_summarize_assays():
     assert summary.pubchem_url.endswith("/2244#section=BioAssay-Results")
 
 
+def _assays(*rows):
+    return {"Table": {"Columns": {"Column": fx.ASSAY_COLUMNS}, "Row": list(rows)}}
+
+
+def test_most_potent_ranks_only_potency_measures():
+    """The micromolar column also holds enzyme rates, plasma levels and solubilities.
+    For quercetin, two Vmax values of a rate assay were listed as its 4th and 5th
+    most potent activities."""
+    summary = parsers.summarize_assays(
+        _assays(
+            fx.assay("200", "Active", "P1", "1", "0.006", "Vmax", "LOX-1 rate"),
+            fx.assay("201", "Active", "P1", "1", "0.052", "Cp", "Plasma level"),
+            fx.assay("202", "Active", "P1", "1", "2.3", "Solubility", "Solubility"),
+            fx.assay("203", "Active", "P1", "1", "0.001", "", "Unnamed value"),
+            fx.assay("204", "Active", "P1", "1", "0.5", "IC50", "X inhibition"),
+            fx.assay("205", "Active", "P1", "1", "0.02", "ki", "X binding"),
+        ),
+        cid=1,
+        top_n=10,
+    )
+    assert [(p.activity_name, p.value_um) for p in summary.most_potent] == [
+        ("ki", 0.02),
+        ("IC50", 0.5),
+    ]
+    assert summary.most_potent[0].target_gene_id == "1"
+    assert summary.top_targets[0].active_assays == 6  # every active assay still counts
+
+
+def test_targets_are_counted_per_gene_across_accessions():
+    """PubChem lists one gene under a UniProt accession, NCBI protein IDs, or none.
+    Each used to be its own target: ESR1 showed 11 active assays of quercetin's 14."""
+    summary = parsers.summarize_assays(
+        _assays(
+            fx.assay("300", "Active", "NP_000116", "2099"),
+            fx.assay("301", "Active", "P03372", "2099"),
+            fx.assay("302", "Active", "", "2099"),
+            fx.assay("302", "Active", "P03372", "2099"),  # one assay, two rows
+            fx.assay("303", "Active", "P04637", "7157"),
+            fx.assay("304", "Active", "P04637", "7157"),
+            fx.assay("305", "Active", "XP_1", ""),  # no gene: the accession is the key
+        ),
+        cid=1,
+    )
+    assert [
+        (t.target_gene_id, t.target_accession, t.active_assays)
+        for t in summary.top_targets
+    ] == [("2099", "P03372", 3), ("7157", "P04637", 2), (None, "XP_1", 1)]
+
+
 def test_summarize_assays_empty_and_malformed():
     empty = {"Table": {"Columns": {"Column": fx.ASSAY_COLUMNS}, "Row": []}}
     summary = parsers.summarize_assays(empty, cid=1)

@@ -132,7 +132,7 @@ before binding it to anything but `127.0.0.1`.
 | `pubchem_xrefs(cid)` | Registry IDs (CAS, ChEMBL, DrugBank...), PubMed articles and patents. |
 | `pubchem_description(cid)` | Curated descriptions, with sources. |
 | `pubchem_annotations(cid, heading, max_chars)` | One section of the compound page: GHS classification, hazards, pharmacology, mechanism of action, drug information, experimental properties, toxicity, use, food additives. Every item names its source. |
-| `pubchem_bioactivity(cid)` | Bioassay summary: assay count, outcomes, top targets, most potent active results. |
+| `pubchem_bioactivity(cid)` | Bioassay summary: assay count, outcomes, top targets (one per gene), lowest potency values (IC50, Ki...) among active results. |
 
 ### Prompts and resources
 
@@ -219,7 +219,7 @@ pubchem-finder pubchem synonyms 2244          # names and CAS numbers
 pubchem-finder pubchem xrefs 2244             # registry IDs, PubMed articles, patents
 pubchem-finder pubchem describe 2244          # curated descriptions with sources
 pubchem-finder pubchem annotations 2244 --heading "GHS Classification"
-pubchem-finder pubchem bioactivity 2244       # assay outcomes, top targets, most potent results
+pubchem-finder pubchem bioactivity 2244       # assay outcomes, top targets, lowest IC50/Ki values
 ```
 
 PubChem's similarity search uses its own fingerprint and does not report scores, so each

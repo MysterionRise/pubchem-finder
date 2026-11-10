@@ -432,7 +432,9 @@ def _property_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = list(payload["PropertyTable"]["Properties"])
     except (KeyError, TypeError) as exc:
         raise PubChemError(f"Unexpected PubChem response shape: {exc}") from exc
-    return rows
+    # For a CID it does not have, PubChem answers 200 with a row that holds only
+    # the CID: no compound, not a compound without properties.
+    return [row for row in rows if row.keys() - {"CID"}]
 
 
 def _is_timeout(response: httpx.Response) -> bool:

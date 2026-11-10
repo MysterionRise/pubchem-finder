@@ -319,6 +319,7 @@ VIEW_INDEX = {
 }
 
 NOT_FOUND = fault("PUGREST.NotFound", "No data found")
+MISSING_CID = 8  # PubChem has no such compound
 
 
 def mock_pubchem(router: respx.Router) -> respx.Router:
@@ -350,7 +351,9 @@ def mock_pubchem(router: respx.Router) -> respx.Router:
     router.get(rx_url(REST + "/compound/cid/2244/assaysummary/JSON")).respond(
         200, json=ASSAY_SUMMARY
     )
-    for cid in (5, 6):  # untested / unlinked compounds
+    # 5 and 6 are untested, unlinked compounds; 8 is not a compound at all. PubChem
+    # answers the three alike here, and differs only in the property request.
+    for cid in (5, 6, MISSING_CID):
         for op in (
             "assaysummary",
             "xrefs/RegistryID,PubMedID",
@@ -360,6 +363,14 @@ def mock_pubchem(router: respx.Router) -> respx.Router:
             router.get(rx_url(f"{REST}/compound/cid/{cid}/{op}/JSON")).respond(
                 404, json=NOT_FOUND
             )
+    for cid in (5, 6):
+        router.get(url__regex=rx(REST) + rf"/compound/cid/{cid}/property/.*").respond(
+            200, json=table(row(cid, "Untested", "CCO", "C2H6O", "46.07"))
+        )
+    router.get(
+        url__regex=rx(REST) + rf"/compound/cid/{MISSING_CID}/property/.*",
+        name="missing_cid",
+    ).respond(200, json=table({"CID": MISSING_CID}))
     router.get(
         rx_url(VIEW + "/data/compound/2244/JSON"),
         params={"heading": "GHS Classification"},

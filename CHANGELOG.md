@@ -8,6 +8,21 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- `pubchem_bioactivity` listed measurements that are not potencies among a compound's
+  "most potent" results (#103). PubChem puts every value reported in micromolar into
+  one column, so enzyme rates (Vmax, Km), plasma concentrations and solubilities were
+  ranked with IC50 and Ki values: for quercetin, two Vmax values came 4th and 5th. Only
+  IC50, EC50, AC50, Potency, Ki, Kd, ID50, ED50, MIC and GI50 are ranked now, each
+  result carries its gene ID, and the descriptions say "lowest potency-type values"
+  and to check the assay. Which measures belong on that list is open in #101.
+- `top_targets` counts each gene once (#103). PubChem lists a gene under a UniProt
+  accession, NCBI protein IDs or none, and each spelling was a separate target, so
+  counts were too low and real top targets dropped out: for quercetin, ESR1 now has
+  14 active assays (was 11) and CYP1A2 is back in the top five.
+- A CID that PubChem does not have is "not found" (#104). `pubchem_lookup` by CID and
+  `pubchem://compound/{cid}` returned an empty record, `pubchem_bioactivity` said "not
+  tested" and `pubchem_xrefs` reported zero references, because PubChem answers a
+  missing compound and a compound without data alike.
 - `index build --sdf` could leave an index that searched an old version of a file while
   reporting it ready. 2.2.1 rebuilt the chunk of a changed file but decided whether to
   merge from what the same run had done, so a rebuild that failed part-way (a full disk,

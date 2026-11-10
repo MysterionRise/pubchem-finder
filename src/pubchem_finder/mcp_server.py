@@ -375,8 +375,10 @@ async def pubchem_annotations(
 @_tool("PubChem bioactivity summary", calls_pubchem=True)
 async def pubchem_bioactivity(cid: int) -> BioactivitySummary:
     """Summary of PubChem BioAssay results for a compound: how many assays,
-    outcome counts, the targets with the most active results (UniProt
-    accession, NCBI gene ID) and the most potent active measurements (µM)."""
+    outcome counts, the targets with the most active assays (one per gene, with
+    its NCBI gene ID and a protein accession) and the lowest potency-type values
+    among active results (IC50, EC50, AC50, Ki, Kd and similar, in µM). The lowest
+    value is not always the most meaningful one: name the assay when you quote it."""
     return await _run(service.pubchem_bioactivity, cid)
 
 

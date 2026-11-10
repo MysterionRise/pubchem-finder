@@ -465,6 +465,15 @@ _XREF_PATENTS = ("PatentID",)
 _XREF_OTHERS = tuple(t for t in XREF_TYPES if t not in _XREF_PATENTS)
 
 
+def _require_compound(cid: int) -> None:
+    """Raise ``CompoundNotFound`` unless PubChem has ``cid``.
+
+    PubChem answers "no such compound" and "a compound without this data" with the
+    same 404, so an empty result is checked once; the answer is cached.
+    """
+    get_client().lookup(str(cid), by="cid", limit=1)
+
+
 def _xrefs(cid: int, types: tuple[str, ...]) -> dict[str, list[str]]:
     try:
         payload = get_client().compound_json(cid, "xrefs/" + ",".join(types))
@@ -495,6 +504,8 @@ def pubchem_xrefs(cid: int, sample: int = 10) -> CrossRefs:
         logger.warning("patents for CID %d left out: %s", cid, exc)
         unavailable = list(_XREF_PATENTS)
         note = _patents_note(exc)
+    if not any(refs.values()):
+        _require_compound(cid)
     return CrossRefs(
         cid=cid,
         counts={t: len(v) for t, v in refs.items()},
@@ -535,6 +546,7 @@ def pubchem_bioactivity(cid: int) -> BioactivitySummary:
     try:
         payload = get_client().compound_json(cid, "assaysummary")
     except CompoundNotFound:
+        _require_compound(cid)  # untested, or not a compound at all?
         return BioactivitySummary(
             cid=cid,
             tested=False,
