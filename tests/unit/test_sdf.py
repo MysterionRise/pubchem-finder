@@ -79,7 +79,124 @@ def test_ids_that_are_not_plain_numbers_are_failed_records(tmp_path, title):
     reader = SdfReader(path)
     assert list(reader) == []
     assert reader.n_failed == 1
-    if title.isascii() and title.isdigit():
-        assert reader.skipped_id == "9" * 21 + "..."  # shortened for the message
+    # The first unusable ID is kept for the build's message, shortened.
+    assert reader.skipped_id == (title if len(title) <= 24 else "9" * 21 + "...")
+
+
+@pytest.mark.parametrize(
+    ("text", "cid"),
+    [("000000002244", 2244), ("0" * 40 + "7", 7), ("04294967295", 2**32 - 1)],
+)
+def test_zero_padded_ids_are_read_as_their_number(tmp_path, text, cid):
+    """The length guard used to run before the zeros came off, so a registry that
+    pads its numbers to 11 or more digits lost every record."""
+    mol = Chem.MolFromSmiles("CCO")
+    mol.SetProp("_Name", text)
+    path = tmp_path / "padded.sdf"
+    with Chem.SDWriter(str(path)) as writer:
+        writer.write(mol)
+    reader = SdfReader(path)
+    assert [r.cid for r in reader] == [cid]
+    assert reader.skipped_id is None
+
+
+@pytest.mark.parametrize("text", ["0", "0000", "04294967296"])
+def test_zero_and_padded_out_of_range_ids_are_skipped(tmp_path, text):
+    mol = Chem.MolFromSmiles("CCO")
+    mol.SetProp("_Name", text)
+    path = tmp_path / "zeros.sdf"
+    with Chem.SDWriter(str(path)) as writer:
+        writer.write(mol)
+    reader = SdfReader(path)
+    assert list(reader) == []
+    assert reader.skipped_id == text
+
+
+def _tagged(path, tag, title, smiles="CCO"):
+    mol = Chem.MolFromSmiles(smiles)
+    mol.SetProp("_Name", title)
+    mol.SetProp("PUBCHEM_COMPOUND_CID", tag)
+    with Chem.SDWriter(str(path)) as writer:
+        writer.write(mol)
+    return path
+
+
+def test_out_of_range_tag_is_not_replaced_by_a_numeric_title(tmp_path):
+    """A registry number above 32 bits in the tag and a row counter as the title:
+    the record was indexed as compound 7, with nothing said."""
+    reader = SdfReader(_tagged(tmp_path / "t.sdf", str(2**32 + 702), "7"))
+    assert list(reader) == []
+    assert reader.n_failed == 1
+    assert reader.skipped_id == str(2**32 + 702)
+
+
+def test_title_stands_in_for_a_tag_that_is_not_a_number(tmp_path):
+    reader = SdfReader(_tagged(tmp_path / "t.sdf", "REG-0007", "7"))
+    assert [r.cid for r in reader] == [7]
+    assert reader.skipped_id is None
+
+
+def test_text_ids_are_named_as_the_reason(tmp_path):
+    """ChEMBL, ZINC and vendor files: every record was skipped with no reason given."""
+    mol = Chem.MolFromSmiles("CC(=O)Oc1ccccc1C(=O)O")
+    mol.SetProp("_Name", "CHEMBL25")
+    path = tmp_path / "chembl.sdf"
+    with Chem.SDWriter(str(path)) as writer:
+        writer.write(mol)
+    reader = SdfReader(path)
+    assert list(reader) == []
+    assert reader.skipped_id == "CHEMBL25"
+
+
+def test_title_that_is_not_utf8_does_not_stop_the_file(tmp_path):
+    """A Windows-1252 name such as "(±)-Ibuprofen" as the title raised
+    UnicodeDecodeError and ended the build, although the ID was in the tag."""
+    path = _tagged(tmp_path / "latin.sdf", "3672", "PLACEHOLDER")
+    path.write_bytes(
+        path.read_bytes().replace(b"PLACEHOLDER", "(\u00b1)-Ibuprofen".encode("cp1252"))
+    )
+    reader = SdfReader(path)
+    assert [r.cid for r in reader] == [3672]
+
+    # With the ID only in the unreadable title, the record is a counted skip.
+    mol = Chem.MolFromSmiles("CCO")
+    mol.SetProp("_Name", "PLACEHOLDER")
+    bare = tmp_path / "bare.sdf"
+    with Chem.SDWriter(str(bare)) as writer:
+        writer.write(mol)
+    bare.write_bytes(bare.read_bytes().replace(b"PLACEHOLDER", b"\xb1 702"))
+    reader = SdfReader(bare)
+    assert list(reader) == []
+    assert (reader.n_failed, reader.skipped_id) == (1, None)
+
+
+def _many(path, n=400):
+    records = [
+        (i, "CCO" if i % 2 else "CCN", f"compound {i}", "new") for i in range(1, n + 1)
+    ]
+    return write_sdf(path, records)
+
+
+@pytest.mark.parametrize("damage", ["cut", "not gzip", "corrupt"])
+def test_damaged_gzip_is_named_as_the_problem(tmp_path, damage):
+    """It was reported as "<Boost.Python.function object at 0x...> returned a result
+    with an exception set"."""
+    from pubchem_finder.core.exceptions import IndexBuildError
+
+    path = _many(tmp_path / "lib.sdf.gz")
+    data = bytearray(path.read_bytes())
+    if damage == "cut":
+        data = data[: len(data) // 2]
+    elif damage == "not gzip":
+        data = bytearray(b"<html>404 Not Found</html>")
     else:
-        assert reader.skipped_id is None
+        data[len(data) // 2] ^= 0xFF
+        data[len(data) // 2 + 1] ^= 0xFF
+    path.write_bytes(bytes(data))
+    reader = SdfReader(path)
+    with pytest.raises(IndexBuildError) as err:
+        list(reader)
+    message = str(err.value)
+    assert str(path) in message
+    assert "damaged or incomplete" in message
+    assert "Boost" not in message

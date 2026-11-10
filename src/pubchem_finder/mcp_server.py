@@ -33,6 +33,7 @@ from .data.pug_rest import (
     PubChemTimeout,
     PubChemUnavailable,
 )
+from .data.sdf import parse_id
 from .models import (
     AnnotationSection,
     BioactivitySummary,
@@ -452,10 +453,10 @@ async def _read(fn: Callable[..., BaseModel], *args: object) -> str:
     mime_type="application/json",
 )
 async def compound_resource(cid: str) -> str:
-    # ASCII digits only: str.isdigit also accepts "²", which int() rejects.
-    if not (cid.isascii() and cid.isdigit()) or len(cid) > 10 or int(cid) < 1:
+    number = parse_id(cid)  # ASCII digits, leading zeros allowed, at most 32 bits
+    if number is None:
         raise ResourceNotFoundError(f"Not a PubChem CID: {cid[:20]!r}")
-    return await _read(_compound, int(cid))
+    return await _read(_compound, number)
 
 
 def _compound(cid: int) -> CompoundRecord:

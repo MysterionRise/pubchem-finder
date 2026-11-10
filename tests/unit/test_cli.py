@@ -114,6 +114,24 @@ def _cids(home):
     return {hit["cid"] for hit in json.loads(found.output)["hits"]}
 
 
+def test_build_says_when_ids_are_why_records_were_skipped(tmp_path):
+    """A ChEMBL or vendor file (IDs like CHEMBL25) built 0 compounds and the only
+    explanation was "No built chunks"."""
+    from rdkit import Chem
+
+    lib = tmp_path / "chembl.sdf"
+    with Chem.SDWriter(str(lib)) as writer:
+        for i, smiles in enumerate(["CCO", "CCN"], 1):
+            mol = Chem.MolFromSmiles(smiles)
+            mol.SetProp("_Name", f"CHEMBL{i}")
+            writer.write(mol)
+    result = _sdf_build(tmp_path / "home", lib)
+    assert result.exit_code == 1
+    assert "built chembl: 0 compounds (2 skipped)" in result.output
+    assert "record IDs must be whole numbers from 1 to 4,294,967,295" in result.output
+    assert "skipped 'CHEMBL1' and any others like it" in result.output
+
+
 @pytest.fixture
 def same_named(tmp_path, sample_sdfs):
     import shutil

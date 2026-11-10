@@ -43,10 +43,20 @@ All notable changes to this project are documented here. The format follows
 - `index build --sdf` skips records whose ID the index cannot hold (#105). FPSim2 keeps
   IDs as 32-bit numbers, so an in-house registry number above 4,294,967,295 was indexed
   under that number modulo 2^32: a search returned another compound's ID, with its
-  PubChem link, at similarity 1.0. Such records are now counted as skipped and the
-  build says so, naming the first one. IDs must be plain digits: `²` and other
-  non-ASCII digits are no longer read as numbers, here or in `pubchem://compound/{cid}`.
-  An index built from a file with such IDs has to be rebuilt in a new `--home`.
+  PubChem link, at similarity 1.0. Such records are now counted as skipped, also when
+  the title line holds another number. IDs must be plain digits: `²` and other
+  non-ASCII digits are no longer read as numbers, here or in `pubchem://compound/{cid}`;
+  leading zeros are fine. Upgrading does not repair an index built from such a file:
+  `index build --sdf` on the unchanged file keeps its chunk. Save the file again (or
+  `touch` it) so the chunk is rebuilt, or build in a new `--home`.
+- `index build --sdf` says why records were skipped when their IDs are the reason,
+  naming the first one. ChEMBL, ZINC and vendor files, whose IDs are not numbers, used
+  to end in "0 compounds" and "No built chunks" with nothing else.
+- A name that is not UTF-8 on a record's title line (a Windows-1252 `±` or `µ`) no
+  longer stops `index build --sdf` when the ID is in the `PUBCHEM_COMPOUND_CID` tag;
+  a field that cannot be read is left empty.
+- A cut-off or damaged `.sdf.gz` is reported as that, with the file's name, instead of
+  as `<Boost.Python.function object at 0x...> returned a result with an exception set`.
 - Substructure search is no longer dropped when its merge is interrupted (#120). The
   index goes without it while the pattern database is merged; a build stopped there
   used to come back without substructure search, call itself up to date, and delete

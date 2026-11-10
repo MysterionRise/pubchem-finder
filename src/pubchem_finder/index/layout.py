@@ -79,8 +79,8 @@ class ChunkStats(BaseModel):
     )
     skipped_id: str | None = Field(
         default=None,
-        description="The first record ID that was a number but cannot be indexed "
-        "(IDs must be whole numbers from 1 to 4,294,967,295)",
+        description="The first record ID that could not be used (IDs must be whole "
+        "numbers from 1 to 4,294,967,295)",
     )
     build_id: str | None = Field(
         default=None,

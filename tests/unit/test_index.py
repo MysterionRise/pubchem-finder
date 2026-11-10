@@ -406,8 +406,9 @@ def test_unreadable_sdf_is_an_index_build_error(tmp_path, sample_sdfs):
     data = sample_sdfs[1].read_bytes()
     broken = tmp_path / f"{CHUNK_NAMES[1]}.sdf.gz"
     broken.write_bytes(data[: len(data) // 2])
-    with pytest.raises(IndexBuildError, match=f"Building {CHUNK_NAMES[1]} failed"):
+    with pytest.raises(IndexBuildError) as err:
         build_chunks(IndexPaths(tmp_path / "home"), sources([broken]), workers=1)
+    assert f"{broken} is damaged or incomplete" in str(err.value)
 
 
 # --- Overlapping chunks: each CID once ----------------------------------------

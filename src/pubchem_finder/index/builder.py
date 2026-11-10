@@ -398,7 +398,7 @@ def build_chunks(
         if stats.skipped_id is not None:
             emit(
                 f"  {stats.name}: record IDs must be whole numbers from 1 to "
-                f"{MAX_ID:,}; skipped {stats.skipped_id} and any others like it"
+                f"{MAX_ID:,}; skipped {stats.skipped_id!r} and any others like it"
             )
         if src.delete_after:
             path.unlink(missing_ok=True)

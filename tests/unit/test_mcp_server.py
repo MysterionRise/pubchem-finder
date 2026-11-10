@@ -386,6 +386,15 @@ async def test_compound_resource(pubchem_api):
     assert result.contents[0].mime_type == "application/json"
 
 
+async def test_compound_resource_reads_a_zero_padded_cid(pubchem_api):
+    """The length limit used to count the padding: 11 or more digits were refused."""
+    import json
+
+    async with Client(mcp) as client:
+        result = await client.read_resource("pubchem://compound/00000002244")
+    assert json.loads(result.contents[0].text)["cid"] == 2244
+
+
 @pytest.mark.parametrize(
     "cid", ["999999999", "abc", "0", "%C2%B2", "%D9%A3", "9" * 400]
 )  # the two escapes are superscript two and an Arabic-Indic three

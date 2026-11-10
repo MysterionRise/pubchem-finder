@@ -2,12 +2,15 @@
 
 import gzip
 import logging
+import zlib
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, cast
 
 from rdkit import Chem
+
+from ..core.exceptions import IndexBuildError
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +49,11 @@ class SdfReader:
 
     Records that RDKit cannot sanitize, or whose ID is not a whole number from 1
     to :data:`MAX_ID`, are skipped and counted in :attr:`n_failed`;
-    :attr:`skipped_id` keeps the first ID that was a number but out of range. The
-    whole file is never loaded into memory.
+    :attr:`skipped_id` keeps the first ID that could not be used, so the build can
+    say why records are missing. The whole file is never loaded into memory.
+
+    Raises:
+        IndexBuildError: while iterating, when a gzipped file is cut off or damaged.
 
     Example:
         >>> reader = SdfReader("Compound_000000001_000500000.sdf.gz")
@@ -68,57 +74,90 @@ class SdfReader:
 
     def __iter__(self) -> Iterator[SdfRecord]:
         with self._open() as stream:
-            supplier = Chem.ForwardSDMolSupplier(stream, sanitize=True, removeHs=True)
-            for mol in supplier:
-                record = _to_record(mol)
-                if record is None:
-                    self.n_failed += 1
-                    if self.skipped_id is None and mol is not None:
-                        self.skipped_id = _numeric_id(mol)
-                    continue
-                self.n_ok += 1
-                yield record
+            # None stands for a record RDKit cannot sanitize.
+            supplier: Iterator[Chem.Mol | None] = iter(
+                Chem.ForwardSDMolSupplier(stream, sanitize=True, removeHs=True)
+            )
+            try:
+                for mol in supplier:
+                    if mol is None:
+                        self.n_failed += 1
+                        continue
+                    cid, unusable = _cid(mol)
+                    if cid is None:
+                        self.n_failed += 1
+                        if self.skipped_id is None and unusable is not None:
+                            self.skipped_id = _shorten(unusable)
+                        continue
+                    self.n_ok += 1
+                    yield _to_record(mol, cid)
+            except SystemError as exc:
+                # RDKit reads the stream from C++, where an error raised by gzip
+                # comes back as a bare SystemError naming a Boost.Python object.
+                cause = exc.__cause__ or exc.__context__
+                if not isinstance(cause, (EOFError, OSError, zlib.error)):
+                    raise
+                raise IndexBuildError(
+                    f"{self.path} is damaged or incomplete ({cause}); it was read "
+                    f"up to record {self.n_ok + self.n_failed:,}"
+                ) from exc
 
 
 def _prop(mol: Chem.Mol, tag: str) -> str | None:
     if mol.HasProp(tag):
-        value = str(mol.GetProp(tag)).strip()
+        try:
+            value = str(mol.GetProp(tag)).strip()
+        except UnicodeDecodeError:  # not UTF-8: unreadable, like a missing field
+            return None
         return value or None
     return None
 
 
 def _ids(mol: Chem.Mol) -> Iterator[str]:
     """Where a record's ID can be: PubChem's CID tag, then the title line."""
-    for value in (_prop(mol, CID_TAG), _prop(mol, "_Name")):
+    for tag in (CID_TAG, "_Name"):
+        value = _prop(mol, tag)
         if value:
             yield value
 
 
-def _cid(mol: Chem.Mol) -> int | None:
-    for value in _ids(mol):
-        # ASCII digits only (str.isdigit also accepts "²" and "٣"), and short enough
-        # to be in range before int() sees it.
-        if value.isascii() and value.isdigit() and len(value) <= 10:
-            cid = int(value)
-            if 1 <= cid <= MAX_ID:
-                return cid
-    return None
+def parse_id(value: str) -> int | None:
+    """``value`` as an ID the index can hold (1 to :data:`MAX_ID`), or None."""
+    # ASCII digits only: str.isdigit also accepts "²" and "٣".
+    if not (value.isascii() and value.isdigit()):
+        return None
+    # Leading zeros are padding (000000002244); what is left has to be short enough
+    # to be in range before int() sees it.
+    digits = value.lstrip("0")
+    if not 0 < len(digits) <= 10:
+        return None
+    cid = int(digits)
+    return cid if cid <= MAX_ID else None
 
 
-def _numeric_id(mol: Chem.Mol) -> str | None:
-    """The ID of a record skipped for its ID alone, shortened for a message."""
+def _cid(mol: Chem.Mol) -> tuple[int | None, str | None]:
+    """A record's ID, or else the first value that could not be used as one.
+
+    The title line stands in when the CID tag is missing or is not a number. A tag
+    that is a number the index cannot hold is still the record's ID: the record is
+    skipped, not filed under whatever number its title happens to be.
+    """
+    unusable: str | None = None
     for value in _ids(mol):
+        cid = parse_id(value)
+        if cid is not None:
+            return cid, None
+        unusable = unusable or value
         if value.isascii() and value.isdigit():
-            return value if len(value) <= 24 else value[:21] + "..."
-    return None
+            break
+    return None, unusable
 
 
-def _to_record(mol: Chem.Mol | None) -> SdfRecord | None:
-    if mol is None:
-        return None
-    cid = _cid(mol)
-    if cid is None:
-        return None
+def _shorten(value: str) -> str:
+    return value if len(value) <= 24 else value[:21] + "..."
+
+
+def _to_record(mol: Chem.Mol, cid: int) -> SdfRecord:
     smiles = next((s for s in (_prop(mol, t) for t in SMILES_TAGS) if s), None)
     if smiles is None:
         smiles = str(Chem.MolToSmiles(mol))
