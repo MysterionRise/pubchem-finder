@@ -42,7 +42,7 @@ from rdkit import Chem, rdBase
 
 from .. import __version__
 from ..core.exceptions import IndexBuildError, PubChemFinderError
-from ..data.sdf import SdfReader, SdfRecord
+from ..data.sdf import MAX_ID, SdfReader, SdfRecord
 from .layout import (
     FORMAT_VERSION,
     PATTERN_FP_TYPE,
@@ -185,6 +185,8 @@ def write_chunk(
         rdkit_version=rdkit.__version__,
         fpsim2_version=version("fpsim2"),
         source=source,
+        # Optional on a reader: only SdfReader meets IDs it cannot use.
+        skipped_id=getattr(reader, "skipped_id", None),
         build_id=uuid.uuid4().hex,
     )
     write_json_atomic(paths.chunk_stats(name), stats)
@@ -393,6 +395,11 @@ def build_chunks(
             f"built {stats.name}: {stats.n_records:,} compounds"
             f" ({stats.n_failed:,} skipped) in {stats.seconds:.0f}s"
         )
+        if stats.skipped_id is not None:
+            emit(
+                f"  {stats.name}: record IDs must be whole numbers from 1 to "
+                f"{MAX_ID:,}; skipped {stats.skipped_id} and any others like it"
+            )
         if src.delete_after:
             path.unlink(missing_ok=True)
 

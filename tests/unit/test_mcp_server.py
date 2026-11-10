@@ -386,7 +386,9 @@ async def test_compound_resource(pubchem_api):
     assert result.contents[0].mime_type == "application/json"
 
 
-@pytest.mark.parametrize("cid", ["999999999", "abc", "0"])
+@pytest.mark.parametrize(
+    "cid", ["999999999", "abc", "0", "%C2%B2", "%D9%A3", "9" * 400]
+)  # the two escapes are superscript two and an Arabic-Indic three
 async def test_missing_compound_resource_is_not_found(pubchem_api, cid):
     from mcp.shared.exceptions import MCPError
 

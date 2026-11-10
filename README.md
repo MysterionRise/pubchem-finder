@@ -197,7 +197,9 @@ own. Each file becomes a chunk named after it, so two files with the same name (
 vendors' `library.sdf`; upper and lower case count as the same) are refused rather than
 merged; rename one. Running the command again after a file changed rebuilds that file's
 chunk, and the old one stays searchable until the new one is complete. A file you moved
-keeps its chunk.
+keeps its chunk. A record's ID is its `PUBCHEM_COMPOUND_CID` tag or, failing that, its
+title line, and must be a whole number from 1 to 4,294,967,295; other records are skipped
+and counted.
 
 Substructure search is optional because it needs a second fingerprint database. It is
 built from the SMILES already in the index, so `index build --with-substructure` adds it to

@@ -77,6 +77,11 @@ class ChunkStats(BaseModel):
         description="The file given with --sdf (None: a PubChem chunk, or a chunk "
         "built by 2.2.0 or earlier)",
     )
+    skipped_id: str | None = Field(
+        default=None,
+        description="The first record ID that was a number but cannot be indexed "
+        "(IDs must be whole numbers from 1 to 4,294,967,295)",
+    )
     build_id: str | None = Field(
         default=None,
         description="Unique to each build of the chunk; the manifest records which "

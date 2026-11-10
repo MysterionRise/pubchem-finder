@@ -452,8 +452,9 @@ async def _read(fn: Callable[..., BaseModel], *args: object) -> str:
     mime_type="application/json",
 )
 async def compound_resource(cid: str) -> str:
-    if not cid.isdigit() or int(cid) < 1:
-        raise ResourceNotFoundError(f"Not a PubChem CID: {cid!r}")
+    # ASCII digits only: str.isdigit also accepts "²", which int() rejects.
+    if not (cid.isascii() and cid.isdigit()) or len(cid) > 10 or int(cid) < 1:
+        raise ResourceNotFoundError(f"Not a PubChem CID: {cid[:20]!r}")
     return await _read(_compound, int(cid))
 
 

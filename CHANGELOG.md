@@ -23,6 +23,13 @@ All notable changes to this project are documented here. The format follows
   `pubchem://compound/{cid}` returned an empty record, `pubchem_bioactivity` said "not
   tested" and `pubchem_xrefs` reported zero references, because PubChem answers a
   missing compound and a compound without data alike.
+- `index build --sdf` skips records whose ID the index cannot hold (#105). FPSim2 keeps
+  IDs as 32-bit numbers, so an in-house registry number above 4,294,967,295 was indexed
+  under that number modulo 2^32: a search returned another compound's ID, with its
+  PubChem link, at similarity 1.0. Such records are now counted as skipped and the
+  build says so, naming the first one. IDs must be plain digits: `²` and other
+  non-ASCII digits are no longer read as numbers, here or in `pubchem://compound/{cid}`.
+  An index built from a file with such IDs has to be rebuilt in a new `--home`.
 - `index build --sdf` could leave an index that searched an old version of a file while
   reporting it ready. 2.2.1 rebuilt the chunk of a changed file but decided whether to
   merge from what the same run had done, so a rebuild that failed part-way (a full disk,

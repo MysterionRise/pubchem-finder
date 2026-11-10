@@ -387,6 +387,27 @@ def test_an_index_merged_by_2_2_1_with_sdf_chunks_is_merged_once_more(
     assert "index up to date" in _sdf_build(home, library).output
 
 
+def test_index_build_skips_ids_the_index_cannot_hold(tmp_path):
+    from tests.conftest import write_sdf
+
+    aspirin = "CC(=O)Oc1ccccc1C(=O)O"
+    library = write_sdf(
+        tmp_path / "registry.sdf.gz",
+        [(2**32 + 2244, aspirin, "in-house number", "new"), (702, "CCO", "x", "new")],
+    )
+    home = tmp_path / "home"
+    built = _sdf_build(home, library)
+    assert built.exit_code == 0, built.output
+    assert "1 compounds (1 skipped)" in built.output
+    assert "record IDs must be whole numbers from 1 to 4,294,967,295" in built.output
+    assert str(2**32 + 2244) in built.output
+    found = runner.invoke(
+        app, ["search", aspirin, "--home", str(home), "--threshold", "0.9", "--json"]
+    )
+    # 2.2.1 answered CID 2244 here, at similarity 1.0: the ID modulo 2**32.
+    assert json.loads(found.output)["hits"] == []
+
+
 def test_search_without_index(tmp_path):
     result = runner.invoke(app, ["search", "CCO", "--home", str(tmp_path)])
     assert result.exit_code == 1

@@ -45,3 +45,41 @@ def test_empty_file(tmp_path):
     reader = SdfReader(path)
     assert list(reader) == []
     assert (reader.n_ok, reader.n_failed) == (0, 0)
+
+
+# FPSim2 keeps compound IDs as unsigned 32-bit numbers. A larger ID came back from a
+# search as that ID modulo 2**32: another compound's number, at similarity 1.0.
+
+
+def test_ids_above_32_bits_are_skipped_not_wrapped(tmp_path):
+    path = write_sdf(
+        tmp_path / "ids.sdf.gz",
+        [
+            (2244, "CC(=O)Oc1ccccc1C(=O)O", "aspirin", "new"),
+            (2**32 + 702, "CCO", "wraps to 702", "new"),
+            (2**32 - 1, "CCN", "the largest that fits", "new"),
+            (0, "CCC", "zero is no ID", "new"),
+            (241, "c1ccccc1", "benzene", "title"),
+        ],
+    )
+    reader = SdfReader(path)
+    assert [r.cid for r in reader] == [2244, 2**32 - 1, 241]
+    assert reader.n_failed == 2
+    assert reader.skipped_id == str(2**32 + 702)
+
+
+@pytest.mark.parametrize("title", ["\u00b2", "\u0663", "9" * 5000, "12a"])
+def test_ids_that_are_not_plain_numbers_are_failed_records(tmp_path, title):
+    """str.isdigit() accepts "\u00b2" (int() does not) and "\u0663" (int() reads 3)."""
+    mol = Chem.MolFromSmiles("CCO")
+    mol.SetProp("_Name", title)
+    path = tmp_path / "odd.sdf"
+    with Chem.SDWriter(str(path)) as writer:
+        writer.write(mol)
+    reader = SdfReader(path)
+    assert list(reader) == []
+    assert reader.n_failed == 1
+    if title.isascii() and title.isdigit():
+        assert reader.skipped_id == "9" * 21 + "..."  # shortened for the message
+    else:
+        assert reader.skipped_id is None
