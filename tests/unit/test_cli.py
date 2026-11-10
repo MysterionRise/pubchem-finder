@@ -460,6 +460,31 @@ def test_draw_command(tmp_path):
     assert "reference" in bad.output
 
 
+def test_draw_reports_an_unwritable_output_path(tmp_path):
+    missing = tmp_path / "missing" / "grid.png"
+    result = runner.invoke(app, ["draw", "CCO", "-o", str(missing)])
+    assert result.exit_code == 1
+    assert result.output.startswith("error:")
+    assert str(missing) in result.output
+
+
+@pytest.mark.parametrize(
+    ("command", "query"),
+    [("search", "CCO"), ("substructure", "c1ccccc1")],
+)
+def test_search_reports_an_uncreatable_data_directory(
+    tmp_path, monkeypatch, command, query
+):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where the data directory should be")
+    monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(blocker / "home"))
+    monkeypatch.setenv("PUBCHEM_FINDER_DEMO", "1")
+    result = runner.invoke(app, [command, query])
+    assert result.exit_code == 1
+    assert "cannot create the data directory" in result.output
+    assert "PUBCHEM_FINDER_HOME" in result.output
+
+
 def test_batch_props_standardize_triage(tmp_path):
     src = tmp_path / "in.smi"
     src.write_text("CC(=O)[O-].[Na+] salt\nnope( broken\nCCO\n")

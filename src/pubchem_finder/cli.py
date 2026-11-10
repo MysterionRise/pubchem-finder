@@ -292,7 +292,7 @@ def search(
             home=home,
             group_by_scaffold=group_by_scaffold,
         )
-    except PubChemFinderError as exc:
+    except (PubChemFinderError, OSError) as exc:
         _fail(exc)
         return
     if as_json:
@@ -369,7 +369,7 @@ def substructure(
         return
     try:
         result = run(query or "")
-    except PubChemFinderError as exc:
+    except (PubChemFinderError, OSError) as exc:
         _fail(exc)
         return
     if as_json:
@@ -471,7 +471,11 @@ def draw(
     except PubChemFinderError as exc:
         _fail(exc)
         return
-    output.write_bytes(png)
+    try:
+        output.write_bytes(png)
+    except OSError as exc:
+        _fail(exc)
+        return
     typer.echo(f"Wrote {output} ({len(smiles)} molecule(s), {len(png) / 1024:.0f} KB)")
 
 

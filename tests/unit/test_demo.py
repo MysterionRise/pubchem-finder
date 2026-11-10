@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 
 from pubchem_finder import service
 from pubchem_finder.cli import app
-from pubchem_finder.core.exceptions import IndexBuildError
+from pubchem_finder.core.exceptions import IndexBuildError, PubChemFinderError
 from pubchem_finder.index import builder, demo
 from pubchem_finder.index.layout import IndexPaths
 
@@ -104,6 +104,13 @@ def test_failed_build_leaves_nothing_behind(tmp_path, monkeypatch):
     with pytest.raises(IndexBuildError, match="No space left"):
         demo.ensure_built(tmp_path)
     assert list((tmp_path / "demo").iterdir()) == []
+
+
+def test_an_uncreatable_data_directory_is_reported(tmp_path):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where the data directory should be")
+    with pytest.raises(PubChemFinderError, match="cannot create the data directory"):
+        demo.ensure_built(blocker / "home")
 
 
 def test_half_moved_index_is_replaced(tmp_path):
