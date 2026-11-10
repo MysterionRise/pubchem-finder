@@ -62,12 +62,95 @@ def test_diff_highlights_show_added_atoms_only():
         Chem.MolFromSmiles(s)
         for s in (ASPIRIN, SALICYLIC, METHYL_SALICYLATE, "C1CCCCC1")
     ]
-    atoms, _ = drawing.diff_highlights(mols, ref)
+    atoms, _, not_computed = drawing.diff_highlights(mols, ref)
     assert atoms[0] == []  # identical to the reference
     assert atoms[1] == []  # a substructure of the reference adds nothing
     assert len(atoms[2]) == 1  # the ester methyl
     assert mols[2].GetAtomWithIdx(atoms[2][0]).GetSymbol() == "C"
     assert atoms[3] == []  # nothing in common: no highlight rather than everything
+    assert not_computed == []
+
+
+# FindMCS returns whatever it has when its 2 s run out, and the code took that for
+# the maximum common substructure: dolutegravir against cabotegravir came back with
+# a 2-atom "core" and 28 of 30 atoms highlighted as changed. About one analogue pair
+# in eleven (Tanimoto >= 0.5 in the demo set) hits the limit.
+
+DOLUTEGRAVIR = "C[C@@H]1CCO[C@@H]2N1C(=O)C3=C(C(=O)C(=CN3C2)C(=O)NCC4=C(C=C(C=C4)F)F)O"
+CABOTEGRAVIR = "C[C@H]1CO[C@H]2N1C(=O)C3=C(C(=O)C(=CN3C2)C(=O)NCC4=C(C=C(C=C4)F)F)O"
+
+
+class _CutShort:
+    """What FindMCS returned for the pair above after 2 s."""
+
+    canceled = True
+    numAtoms = 2
+    smartsString = "[#6]-[#6]"
+
+
+def test_a_search_that_timed_out_is_not_taken_for_the_answer(monkeypatch):
+    monkeypatch.setattr(drawing.rdFMCS, "FindMCS", lambda *a, **k: _CutShort())
+    mol = Chem.MolFromSmiles(DOLUTEGRAVIR)
+    atoms, bonds, not_computed = drawing.diff_highlights(
+        [mol], Chem.MolFromSmiles(CABOTEGRAVIR)
+    )
+    # The ring that has one more atom than cabotegravir's, and its methyl: the 5
+    # atoms the search finds when it is left to finish (30 s), not 28.
+    assert sorted(mol.GetAtomWithIdx(a).GetSymbol() for a in atoms[0]) == [
+        "C",
+        "C",
+        "C",
+        "C",
+        "O",
+    ]
+    assert bonds[0]
+    assert not_computed == []
+
+
+def test_the_fallback_agrees_with_a_search_that_finishes(monkeypatch):
+    """Close analogues the 2 s search does finish: both give the same atoms."""
+    pairs = [
+        (ASPIRIN, METHYL_SALICYLATE),
+        ("CC(C)Cc1ccc(cc1)C(C)C(=O)O", "CC(C)Cc1ccc(cc1)C(C)C(=O)OC"),
+        ("c1ccc2ccccc2c1CCN", "c1ccc2ccccc2c1CCNC(C)=O"),
+        ("O=C(O)c1ccccc1O", "O=C(O)c1ccc(Cl)cc1O"),
+    ]
+    finished = [
+        drawing.diff_highlights([Chem.MolFromSmiles(b)], Chem.MolFromSmiles(a))[0]
+        for a, b in pairs
+    ]
+    monkeypatch.setattr(drawing.rdFMCS, "FindMCS", lambda *a, **k: _CutShort())
+    fallback = [
+        drawing.diff_highlights([Chem.MolFromSmiles(b)], Chem.MolFromSmiles(a))[0]
+        for a, b in pairs
+    ]
+    assert fallback == finished
+    assert all(len(atoms[0]) >= 1 for atoms in finished)
+
+
+def test_a_difference_that_cannot_be_computed_is_labelled(monkeypatch):
+    monkeypatch.setattr(drawing.rdFMCS, "FindMCS", lambda *a, **k: _CutShort())
+    monkeypatch.setattr(drawing.rdRascalMCES, "FindMCES", lambda *a, **k: [])
+    seen = {}
+    real = drawing.Draw.MolsToGridImage
+
+    def spy(mols, **kwargs):
+        seen.update(kwargs)
+        return real(mols, **kwargs)
+
+    monkeypatch.setattr(drawing.Draw, "MolsToGridImage", spy)
+    png = drawing.draw_grid(
+        [DOLUTEGRAVIR, DOLUTEGRAVIR],
+        legends=["dolutegravir", ""],
+        highlight="diff",
+        reference=CABOTEGRAVIR,
+    )
+    assert png.startswith(b"\x89PNG")
+    assert seen["legends"] == [
+        "dolutegravir (difference not computed)",
+        "difference not computed",
+    ]
+    assert seen["highlightAtomLists"] == [[], []]  # not the whole molecule
 
 
 def test_atom_contributions_identical_molecule_is_all_non_negative():

@@ -132,7 +132,8 @@ def similarity_tiles(search: dict[str, Any], n: int = 8) -> tuple[Chem.Mol, list
     query = Chem.MolFromSmiles(search["query_smiles"])
     hits = single_component(search["hits"], n)
     mols = [Chem.MolFromSmiles(h["smiles"]) for h in hits]
-    atoms, bonds = diff_highlights(mols, query)  # also aligns depictions to the query
+    # Also aligns depictions to the query.
+    atoms, bonds, _ = diff_highlights(mols, query)
     tiles = [
         Tile(
             draw_mol(mol, (TILE_W - 4, 205), a, b, DIFF_COLOR),

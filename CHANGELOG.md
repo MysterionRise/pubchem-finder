@@ -31,6 +31,14 @@ All notable changes to this project are documented here. The format follows
   `pubchem://compound/{cid}` returned an empty record, `pubchem_bioactivity` said "not
   tested" and `pubchem_xrefs` reported zero references, because PubChem answers a
   missing compound and a compound without data alike.
+- `draw_molecules` with `highlight="diff"` (and `draw --highlight diff`) no longer
+  marks almost the whole molecule as changed. The common-substructure search has a
+  2-second limit, and when it ran out the few atoms found so far were taken for the
+  answer: dolutegravir drawn against cabotegravir had 28 of its 30 atoms highlighted,
+  where 5 differ. About one analogue pair in eleven hit the limit. A search that was
+  cut short is no longer used; a second, much faster method (RDKit's RASCAL) is asked
+  instead, and if that fails too the panel has no highlights and its caption says
+  "difference not computed".
 - `standardize` keeps sulfoxides as `S=O`. RDKit's cleanup redraws them `[S+]-[O-]`,
   so the "standardized" omeprazole no longer matched omeprazole: 0.63 against itself
   in a similarity search, no substructure hit, a different QED and a Brenk alert for
