@@ -31,6 +31,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+import duckdb
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -74,6 +75,10 @@ METADATA_SCHEMA = pa.schema(
     ]
 )
 METADATA_BATCH = 50_000
+# How many IDs shared between files are compared, compound by compound, before a
+# merge. Files that reuse IDs for other compounds clash on the first few.
+ID_CHECK_BATCH = 2_000
+ID_CHECK_MAX = 20_000
 POPCNT_BLOCK = 1 << 22  # rows of popcount read at a time when sorting
 
 EventFn = Callable[[str], None]
@@ -692,6 +697,8 @@ def finalize(
     names = [c.name for c in chunks]
     current = paths.load_manifest()
     merged = current is not None and _holds(current, chunks)
+    if force or not merged:
+        _check_ids(paths, chunks, current.chunks if current is not None else [])
     if current is not None and not merged and not force:
         for line in _merge_notes(current, chunks):
             emit(line)
@@ -800,6 +807,139 @@ def _merge_notes(manifest: Manifest, chunks: Sequence[ChunkStats]) -> list[str]:
             "earlier, which could miss a rebuilt --sdf file"
         ]
     return []
+
+
+def _check_ids(
+    paths: IndexPaths, chunks: Sequence[ChunkStats], merged: Sequence[str]
+) -> None:
+    """Refuse to merge files in which one ID stands for different compounds.
+
+    FPSim2 returns IDs, and the metadata of a hit is looked up by its ID alone. Two
+    vendor files that both number their records 1..N, a file that reuses an ID, or
+    a library numbered from 1 next to PubChem's first chunk would give each hit the
+    structure of whichever record was read last: aspirin's fingerprint with
+    paracetamol's structure, at similarity 1.000. The same compound in two files
+    (an --sdf file repeating part of a PubChem chunk) is fine and stays so.
+
+    Only files given with --sdf are checked, each against itself, PubChem's chunks
+    and the other files; PubChem's own chunks do not repeat a CID. ``merged`` are
+    the chunks the index already holds: the advice names a file that is new.
+    """
+    own = [c for c in chunks if c.source is not None]
+    if not own:
+        return
+    files = {c.name: str(paths.chunk_parquet(c.name)) for c in chunks}
+    downloaded = [c.name for c in chunks if c.source is None]
+    con = duckdb.connect(":memory:")
+    try:
+        for position, chunk in enumerate(own):
+            # Each pair of the user's files once.
+            others = downloaded + [c.name for c in own[position + 1 :]]
+            shared = _shared_ids(con, files[chunk.name], [files[n] for n in others])
+            both = [files[chunk.name]] + [files[n] for n in others]
+            for start in range(0, min(len(shared), ID_CHECK_MAX), ID_CHECK_BATCH):
+                clash = _first_clash(con, shared[start : start + ID_CHECK_BATCH], both)
+                if clash is not None:
+                    raise IndexBuildError(_clash_message(paths, own, merged, *clash))
+    finally:
+        con.close()
+
+
+def _shared_ids(
+    con: duckdb.DuckDBPyConnection, mine: str, others: list[str]
+) -> list[int]:
+    """IDs that occur twice in ``mine``, or in it and in one of ``others``."""
+    con.read_parquet([mine], union_by_name=True).create_view("mine", replace=True)
+    query = "SELECT cid FROM mine GROUP BY cid HAVING count(*) > 1"
+    if others:
+        con.read_parquet(others, union_by_name=True).create_view("others", replace=True)
+        query += " UNION SELECT cid FROM others WHERE cid IN (SELECT cid FROM mine)"
+    return [int(row[0]) for row in con.execute(query + " ORDER BY 1").fetchall()]
+
+
+_Row = tuple[str | None, str | None, str]  # SMILES, InChIKey, chunk name
+
+
+def _first_clash(
+    con: duckdb.DuckDBPyConnection, ids: list[int], files: list[str]
+) -> tuple[int, _Row, _Row] | None:
+    """The first of ``ids`` whose records in ``files`` are not one compound."""
+    con.read_parquet(files, union_by_name=True, filename=True).create_view(
+        "records", replace=True
+    )
+    listed = ", ".join(str(int(i)) for i in ids)
+    rows = con.execute(
+        "SELECT cid, smiles, inchikey, filename FROM records "  # noqa: S608
+        f"WHERE cid IN ({listed}) ORDER BY cid, filename"
+    ).fetchall()
+    first: dict[int, _Row] = {}
+    for cid, smiles, inchikey, filename in rows:
+        row: _Row = (smiles, inchikey, Path(filename).stem)
+        seen = first.setdefault(int(cid), row)
+        if seen is not row and not _same_compound(seen, row):
+            return int(cid), seen, row
+    return None
+
+
+def _same_compound(a: _Row, b: _Row) -> bool:
+    """Whether two records describe one compound, however each is drawn.
+
+    Judged by the first block of the InChIKey (the atoms and how they are
+    connected): PubChem's SMILES and RDKit's differ in spelling, and the same
+    record may carry stereo or charges in one file and not in the other.
+    """
+    if a[0] == b[0] or not a[0] or not b[0]:
+        return True
+    if a[1] and b[1]:
+        return a[1][:14] == b[1][:14]
+    skeleton_a, skeleton_b = _skeleton(a[0]), _skeleton(b[0])
+    return skeleton_a is None or skeleton_b is None or skeleton_a == skeleton_b
+
+
+def _skeleton(smiles: str) -> str | None:
+    mol: Chem.Mol | None = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None  # cannot tell
+    key = str(Chem.MolToInchiKey(mol))  # type: ignore[no-untyped-call]
+    return key[:14] if key else str(Chem.MolToSmiles(mol, isomericSmiles=False))
+
+
+def _clash_message(
+    paths: IndexPaths,
+    own: Sequence[ChunkStats],
+    merged: Sequence[str],
+    cid: int,
+    a: _Row,
+    b: _Row,
+) -> str:
+    def short(smiles: str | None) -> str:
+        text = smiles or "?"
+        return text if len(text) <= 60 else text[:57] + "..."
+
+    # The file to change: one of the user's own, and if possible one that is not
+    # in the index yet.
+    mine = [name for name in (b[2], a[2]) if name in {c.name for c in own}]
+    name = next((n for n in mine if n not in merged), mine[0])
+
+    where = (
+        f"{short(a[0])} and {short(b[0])}, both in {a[2]}"
+        if a[2] == b[2]
+        else f"{short(a[0])} in {a[2]} and {short(b[0])} in {b[2]}"
+    )
+    is_pubchem = {a[2], b[2]} - {c.name for c in own}
+    cids = (
+        " Next to PubChem's chunks an ID is read as a PubChem CID."
+        if is_pubchem
+        else ""
+    )
+    return (
+        f"ID {cid} stands for different compounds: {where}. A search returns one "
+        f"structure per ID, so one index cannot hold both.{cids} Give the records "
+        f"of {name} other IDs (the PUBCHEM_COMPOUND_CID tag, or the title line) and "
+        "build again, or index the files in separate data directories (--home). To "
+        f"leave {name} out of this index, delete {paths.chunk_stats(name)}. Nothing "
+        "was merged."
+    )
 
 
 def _some(names: Sequence[str]) -> str:

@@ -1051,6 +1051,102 @@ def test_failed_build_that_replaced_nothing_merges_nothing(
     assert _status(home)["unmerged_chunks"] == []
 
 
+# A hit's structure is looked up by its ID alone. Two vendor files that each number
+# their records 1..N were merged without a word, and a search for aspirin then
+# returned paracetamol's structure at similarity 1.000; a benzene substructure
+# search found 2 of the 4 compounds that contain it.
+
+VENDOR_A = [(1, ASPIRIN, "aspirin", "title"), (2, CAFFEINE, "caffeine", "title")]
+VENDOR_B = [(1, PARACETAMOL, "paracetamol", "title"), (2, "c1ccccc1", "x", "title")]
+
+
+def test_files_that_reuse_ids_for_other_compounds_are_not_merged(tmp_path):
+    from tests.conftest import write_sdf
+
+    home = tmp_path / "home"
+    a = write_sdf(tmp_path / "vendorA.sdf", VENDOR_A, gz=False)
+    b = write_sdf(tmp_path / "vendorB.sdf", VENDOR_B, gz=False)
+    assert _sdf_build(home, a).exit_code == 0
+    result = _sdf_build(home, a, b)
+    assert result.exit_code == 1
+    message = result.output.rstrip().splitlines()[-1]
+    assert "error: ID 1 stands for different compounds" in message
+    assert f"{ASPIRIN} in vendorA and {PARACETAMOL} in vendorB" in message
+    assert "Give the records of vendorB other IDs" in message  # the new file
+    assert str(home / "chunks" / "vendorB.json") in message
+    assert "Nothing was merged" in message
+    # The index built before is as it was, and right.
+    hits = json.loads(_search(home, ASPIRIN, "--json").output)["hits"]
+    assert [(h["cid"], h["smiles"]) for h in hits] == [(1, ASPIRIN)]
+    assert _status(home)["chunks_in_index"] == 1
+
+    # Renumbered, the second file goes in.
+    write_sdf(b, [(101, PARACETAMOL, "paracetamol", "title")], gz=False)
+    assert _sdf_build(home, a, b).exit_code == 0
+    hits = json.loads(_search(home, PARACETAMOL, "--json").output)["hits"]
+    assert [(h["cid"], h["smiles"]) for h in hits] == [(101, PARACETAMOL)]
+
+
+def test_an_id_used_twice_in_one_file_is_not_merged(tmp_path):
+    from tests.conftest import write_sdf
+
+    library = write_sdf(
+        tmp_path / "library.sdf",
+        [(700001, "CCO", "ethanol", "title"), (700001, "CCN", "ethylamine", "title")],
+        gz=False,
+    )
+    result = _sdf_build(tmp_path / "home", library)
+    assert result.exit_code == 1
+    assert "ID 700001 stands for different compounds" in result.output
+    assert "CCO and CCN, both in library" in result.output
+
+
+def test_a_library_numbered_from_one_does_not_go_next_to_pubchems_chunks(
+    tmp_path, sample_sdfs
+):
+    """PubChem's CID 702 is ethanol; a library whose record 702 is something else
+    would be shown with ethanol's structure, or ethanol with the library's."""
+    from pubchem_finder.index.builder import SdfSource, build_chunks, finalize
+    from pubchem_finder.index.layout import IndexPaths, chunk_name
+    from tests.conftest import write_sdf
+
+    home = tmp_path / "home"
+    paths = IndexPaths(home)
+    # A chunk as a download leaves it: no recorded file.
+    name = chunk_name(sample_sdfs[0])
+    build_chunks(paths, [SdfSource(name=name, fetch=lambda: sample_sdfs[0])])
+    finalize(paths)
+    library = write_sdf(
+        tmp_path / "library.sdf", [(702, CAFFEINE, "caffeine", "title")], gz=False
+    )
+    result = _sdf_build(home, library)
+    assert result.exit_code == 1
+    assert "ID 702 stands for different compounds" in result.output
+    assert "an ID is read as a PubChem CID" in result.output
+
+
+def test_the_same_compound_in_two_files_is_still_merged(tmp_path, sample_sdfs):
+    """An --sdf file that repeats compounds of another chunk, drawn another way:
+    Kekule SMILES against PubChem's aromatic one, a charged form, no stereo."""
+    from rdkit import Chem
+
+    home = tmp_path / "home"
+    mine = tmp_path / "mine.sdf"
+    with Chem.SDWriter(str(mine)) as writer:
+        for cid, smiles in (
+            (2244, "CC(=O)OC1=CC=CC=C1C(O)=O"),  # aspirin, Kekule
+            (338, "[O-]C(=O)c1ccccc1O"),  # salicylate, where the chunk has the acid
+            (702, "OCC"),
+        ):
+            mol = Chem.MolFromSmiles(smiles)
+            mol.SetProp("_Name", str(cid))
+            mol.SetProp("PUBCHEM_SMILES", smiles)
+            writer.write(mol)
+    result = _sdf_build(home, sample_sdfs[0], mine)
+    assert result.exit_code == 0, result.output
+    assert "Index ready: 8 compounds from 2 chunk(s)" in result.output
+
+
 def test_index_build_skips_ids_the_index_cannot_hold(tmp_path):
     from tests.conftest import write_sdf
 
