@@ -599,7 +599,8 @@ def test_pubchem_xrefs_says_which_types_are_missing(pubchem_knowledge_api):
     assert result.exit_code == 0
     assert "CHEMBL25" in result.output
     assert "PatentID" in result.output
-    assert "did not answer in time" in result.output
+    assert "(not available)" in result.output
+    assert "stops after 30 seconds" in result.output  # the note, on stderr
 
 
 def test_pubchem_command_errors(pubchem_knowledge_api):

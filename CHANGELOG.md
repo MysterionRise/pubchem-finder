@@ -32,6 +32,11 @@ All notable changes to this project are documented here. The format follows
   again now finishes it, and only `--without-substructure` removes pattern data
   (including what an unfinished `--with-substructure` left behind). A failed pattern
   merge no longer says the index is unchanged.
+- `pubchem_xrefs` keeps the registry IDs and PubMed articles when the patent request
+  fails for any reason, not only a timeout: a dropped connection, a 500 or 502, or a
+  cut-off answer used to fail the whole call. The note says why patents are missing,
+  and that for the most-patented compounds (water, ethanol) PubChem's 30-second limit
+  is reached every time.
 
 ## [2.2.1] - 2026-11-04
 

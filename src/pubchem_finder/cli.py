@@ -857,9 +857,9 @@ def pubchem_xrefs(
         sample = ", ".join(result.samples[kind][:5])
         typer.echo(f"{kind:<11} {count:>7,}  {sample}")
     for kind in result.unavailable:
-        typer.echo(
-            f"{kind:<11} {'?':>7}  (PubChem did not answer in time; try again later)"
-        )
+        typer.echo(f"{kind:<11} {'?':>7}  (not available)")
+    if result.note:
+        typer.echo(result.note, err=True)
 
 
 @pubchem_app.command("describe")

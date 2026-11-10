@@ -200,6 +200,13 @@ SLOW_PATENTS = [
     httpx.Response(504, text="Gateway Timeout"),
     httpx.ReadTimeout("slow"),
     httpx.Response(503, json=fx.fault("PUGREST.ServerBusy", "Too many requests")),
+    # Not only timeouts: 2.2.1 lost the identifiers it already had on any of these.
+    httpx.Response(500, json=fx.fault("PUGREST.ServerError", "Internal error")),
+    httpx.Response(502, text="Bad Gateway"),
+    httpx.RemoteProtocolError("Server disconnected"),
+    httpx.ReadError("Connection reset"),
+    httpx.Response(200, text='{"InformationList": {"Information": [{"CID": 2244, "Pat'),
+    httpx.Response(200, json={"Fault": "not the shape we expect"}),
 ]
 
 
@@ -220,6 +227,34 @@ def test_xrefs_without_patents_when_pubchem_cannot_list_them(
     assert result.unavailable == ["PatentID"]
     assert result.note is not None
     assert "patent" in result.note
+    assert "The other identifiers are complete." in result.note
+
+
+@pytest.mark.parametrize(
+    ("answer", "says"),
+    [
+        (httpx.Response(504, text="Gateway Timeout"), "stops after 30 seconds"),
+        (
+            httpx.Response(503, json=fx.fault("PUGREST.ServerBusy", "Too many")),
+            "too busy",
+        ),
+        (
+            httpx.Response(502, text="Bad Gateway"),
+            "could not be read (PubChem returned",
+        ),
+    ],
+)
+def test_xrefs_note_says_why_patents_are_missing(pubchem_knowledge_api, answer, says):
+    pubchem_knowledge_api["xrefs_patents"].mock(return_value=answer)
+    assert says in service.pubchem_xrefs(2244).note
+
+
+def test_xrefs_still_fail_on_a_request_pubchem_rejects(pubchem_knowledge_api):
+    pubchem_knowledge_api["xrefs_patents"].mock(
+        return_value=httpx.Response(400, json=fx.fault("PUGREST.BadRequest", "Bad"))
+    )
+    with pytest.raises(BadQuery):
+        service.pubchem_xrefs(2244)
 
 
 def test_xrefs_fail_when_pubchem_cannot_list_the_identifiers(pubchem_knowledge_api):

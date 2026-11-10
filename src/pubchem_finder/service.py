@@ -478,18 +478,23 @@ def _xrefs(cid: int, types: tuple[str, ...]) -> dict[str, list[str]]:
 def pubchem_xrefs(cid: int, sample: int = 10) -> CrossRefs:
     """Registry IDs, PubMed articles and patents linked to a CID.
 
-    When only the patent request times out or PubChem is busy, the other types are
-    still returned and patents are listed in ``unavailable``.
+    When only the patent request fails (PubChem runs out of time, is busy, or its
+    answer cannot be read), the other types are still returned, patents are listed
+    in ``unavailable`` and ``note`` says why.
     """
     if not 1 <= sample <= 100:
         raise BadQuery("sample must be between 1 and 100")
     refs = _xrefs(cid, _XREF_OTHERS)
     unavailable: list[str] = []
+    note: str | None = None
     try:
         refs |= _xrefs(cid, _XREF_PATENTS)
-    except (PubChemTimeout, PubChemUnavailable) as exc:
+    except BadQuery:
+        raise
+    except PubChemError as exc:
         logger.warning("patents for CID %d left out: %s", cid, exc)
         unavailable = list(_XREF_PATENTS)
+        note = _patents_note(exc)
     return CrossRefs(
         cid=cid,
         counts={t: len(v) for t, v in refs.items()},
@@ -498,14 +503,21 @@ def pubchem_xrefs(cid: int, sample: int = 10) -> CrossRefs:
             f"https://pubmed.ncbi.nlm.nih.gov/{p}/" for p in refs["PubMedID"][:sample]
         ],
         unavailable=unavailable,
-        note=(
-            "PubChem did not return the patent list in time (it is very long for "
-            "well-studied compounds); the other identifiers are complete. Ask again "
-            "later for patents."
-            if unavailable
-            else None
-        ),
+        note=note,
     )
+
+
+def _patents_note(exc: PubChemError) -> str:
+    rest = "The other identifiers are complete."
+    if isinstance(exc, PubChemTimeout):
+        return (
+            "PubChem ran out of time listing the patents. It stops after 30 seconds, "
+            "and for the most-patented compounds (water, ethanol) the list takes "
+            f"longer every time, so asking again may not help. {rest}"
+        )
+    if isinstance(exc, PubChemUnavailable):
+        return f"PubChem was too busy to list the patents; ask again later. {rest}"
+    return f"The patent list could not be read ({exc}); ask again later. {rest}"
 
 
 def pubchem_description(cid: int) -> Description:
