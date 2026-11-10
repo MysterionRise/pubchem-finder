@@ -194,8 +194,10 @@ radius 2, 1024 bits); `--radius` and `--fp-size` change it for a new index.
 
 `--sdf FILE` (repeatable) indexes your own files, alongside PubChem's chunks or on their
 own. Each file becomes a chunk named after it, so two files with the same name (two
-vendors' `library.sdf`) are refused rather than merged; rename one. Running the command
-again after a file changed rebuilds that file's chunk.
+vendors' `library.sdf`; upper and lower case count as the same) are refused rather than
+merged; rename one. Running the command again after a file changed rebuilds that file's
+chunk, and the old one stays searchable until the new one is complete. A file you moved
+keeps its chunk.
 
 Substructure search is optional because it needs a second fingerprint database. It is
 built from the SMILES already in the index, so `index build --with-substructure` adds it to

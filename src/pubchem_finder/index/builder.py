@@ -16,6 +16,7 @@ import multiprocessing
 import os
 import shutil
 import time
+import uuid
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import (
     FIRST_COMPLETED,
@@ -24,11 +25,11 @@ from concurrent.futures import (
     as_completed,
     wait,
 )
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import numpy as np
 import pyarrow as pa
@@ -51,6 +52,7 @@ from .layout import (
     PatternChunkStats,
     SourceFile,
     SubstructureInfo,
+    chunk_key,
     chunk_name,
     write_json_atomic,
 )
@@ -90,16 +92,18 @@ def build_chunk(
     home: str,
     fp_params: dict[str, Any] | None = None,
     source: SourceFile | None = None,
+    name: str | None = None,
 ) -> ChunkStats:
     """
-    Fingerprint one SDF file into a chunk (see :func:`write_chunk`).
+    Fingerprint one SDF file into a chunk (see :func:`write_chunk`), named after
+    the file unless ``name`` says otherwise.
 
     Runs in worker processes, so it takes and returns plain picklable values.
     """
     rdBase.DisableLog("rdApp.*")
     return write_chunk(
         IndexPaths(Path(home)),
-        chunk_name(sdf_path),
+        name or chunk_name(sdf_path),
         SdfReader(sdf_path),
         fp_params,
         source,
@@ -116,6 +120,11 @@ def write_chunk(
     """
     Fingerprint ``reader``'s compounds into ``<name>.h5`` + ``<name>.parquet``
     in one pass and write ``<name>.json`` last to mark the chunk complete.
+
+    A chunk that already exists stays as it is until the new files are complete,
+    so a failed or refused rebuild loses nothing. The swap then takes the old
+    ``<name>.json`` away first: if it is interrupted, the chunk reads as unbuilt
+    rather than as the old build with new files.
     """
     params = dict(fp_params or DEFAULT_FP_PARAMS)
     paths.chunks.mkdir(parents=True, exist_ok=True)
@@ -157,11 +166,15 @@ def write_chunk(
             )
         flush()
 
+    paths.chunk_stats(name).unlink(missing_ok=True)
+    paths.pattern_stats(name).unlink(missing_ok=True)  # derived from the old build
     if reader.n_ok:
         os.replace(h5_tmp, paths.chunk_h5(name))
-    else:
-        h5_tmp.unlink(missing_ok=True)  # FPSim2 cannot read an empty database
+    else:  # FPSim2 cannot read an empty database
+        h5_tmp.unlink(missing_ok=True)
+        paths.chunk_h5(name).unlink(missing_ok=True)
     os.replace(pq_tmp, paths.chunk_parquet(name))
+    paths.pattern_h5(name).unlink(missing_ok=True)
     stats = ChunkStats(
         name=name,
         n_records=reader.n_ok,
@@ -172,6 +185,7 @@ def write_chunk(
         rdkit_version=rdkit.__version__,
         fpsim2_version=version("fpsim2"),
         source=source,
+        build_id=uuid.uuid4().hex,
     )
     write_json_atomic(paths.chunk_stats(name), stats)
     return stats
@@ -308,7 +322,8 @@ class SdfSource:
 class BuildReport:
     built: list[ChunkStats] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
-    # Chunks replaced under their old name: finalize must merge again (force=True).
+    # Chunks replaced under their old name. finalize needs no telling: it compares
+    # each chunk's build_id with the one its manifest recorded.
     rebuilt: list[str] = field(default_factory=list)
 
 
@@ -328,36 +343,49 @@ def build_chunks(
     and downloaded files are deleted as soon as their chunk is complete. A chunk is
     named after its file, so two files with one name are refused rather than
     written over each other.
+
+    Every check runs before anything on disk changes, and a chunk being rebuilt
+    is replaced only once its new files are complete (see :func:`write_chunk`).
     """
     params = dict(fp_params or DEFAULT_FP_PARAMS)
     emit = on_event or (lambda msg: logger.info(msg))
-    _check_unique_names(sources)
-    paths.chunks.mkdir(parents=True, exist_ok=True)
-    _check_params(paths, params)
+    completed = paths.completed_chunks()
+    sources = _check_unique_names(sources, completed)
+    _check_params(completed, paths, params)
+    by_name = {stats.name: stats for stats in completed}
     report = BuildReport()
-    todo = []
-    rebuild: list[tuple[SdfSource, str]] = []
-    for src in sources:  # check everything before changing anything
-        stats_path = paths.chunk_stats(src.name)
-        if not stats_path.exists():
+    todo: list[SdfSource] = []
+    adopt: list[tuple[ChunkStats, SourceFile, str]] = []
+    reasons: dict[str, str] = {}
+    for src in sources:
+        stats = by_name.get(src.name)
+        if stats is None:
             todo.append(src)
             continue
-        stats = ChunkStats.model_validate_json(stats_path.read_text(encoding="utf-8"))
-        reason = _outdated(src, stats)
-        if reason is None:
-            report.skipped.append(src.name)
-        else:
-            rebuild.append((src, reason))
-    for src, reason in rebuild:
-        emit(f"rebuilding {src.name}: {reason}")
-        _discard_chunk(paths, src.name)
-        report.rebuilt.append(src.name)
-        todo.append(src)
+        action, note = _plan(src, stats, paths.chunk_stats(src.name))
+        if action == "rebuild":
+            reasons[src.name] = note
+            todo.append(src)
+            continue
+        report.skipped.append(src.name)
+        current = src.source()
+        if action == "adopt" and current is not None:
+            adopt.append((stats, current, note))
+    if todo:
+        # Before any download or rebuild: FPSim2 can't merge new chunks with ones
+        # another version wrote. Chunks about to be replaced don't count.
+        _check_versions(paths, [c for c in completed if c.name not in reasons])
+    paths.chunks.mkdir(parents=True, exist_ok=True)
+    for stats, current, note in adopt:
+        emit(note)
+        write_json_atomic(
+            paths.chunk_stats(stats.name), stats.model_copy(update={"source": current})
+        )
+    for name, note in reasons.items():
+        emit(f"rebuilding {name}: {note}")
+        report.rebuilt.append(name)
     if report.skipped:
         emit(f"{len(report.skipped)} chunk(s) already built, skipping")
-    if todo:
-        # Before any download: FPSim2 can't merge new chunks with old ones.
-        _check_versions(paths, paths.completed_chunks())
 
     def done(src: SdfSource, path: Path, stats: ChunkStats) -> None:
         report.built.append(stats)
@@ -372,7 +400,9 @@ def build_chunks(
         for src in todo:
             path = src.path()
             try:
-                stats = build_chunk(str(path), str(paths.home), params, src.source())
+                stats = build_chunk(
+                    str(path), str(paths.home), params, src.source(), src.name
+                )
             except PubChemFinderError:
                 raise
             except Exception as exc:
@@ -400,7 +430,7 @@ def build_chunks(
             path = src.path()
             emit(f"fingerprinting {src.name}")
             fut = pool.submit(
-                build_chunk, str(path), str(paths.home), params, src.source()
+                build_chunk, str(path), str(paths.home), params, src.source(), src.name
             )
             pending[fut] = (src, path)
             drain(2 * workers - 1)
@@ -408,51 +438,91 @@ def build_chunks(
     return report
 
 
-def _check_unique_names(sources: Sequence[SdfSource]) -> None:
+def _same_file(a: Path | str, b: Path | str) -> bool:
+    try:
+        return os.path.samefile(a, b)
+    except OSError:  # one of them is gone
+        return False
+
+
+def _check_unique_names(
+    sources: Sequence[SdfSource], completed: Sequence[ChunkStats]
+) -> list[SdfSource]:
+    """Refuse sources that would share a chunk, comparing names without case
+    (``Library`` and ``library`` are the same files on macOS and Windows).
+
+    Returns the sources, each under the spelling its existing chunk already has.
+    """
+    existing = {chunk_key(stats.name): stats for stats in completed}
     seen: dict[str, SdfSource] = {}
+    out: list[SdfSource] = []
     for src in sources:
-        other = seen.setdefault(src.name, src)
+        key = chunk_key(src.name)
+        other = seen.setdefault(key, src)
         if other is not src:
+            if (
+                other.local_path is not None
+                and src.local_path is not None
+                and _same_file(other.local_path, src.local_path)
+            ):
+                raise IndexBuildError(f"{src.label()} is given twice.")
             raise IndexBuildError(
-                f"{other.label()} and {src.label()} would both be chunk {src.name!r}: "
-                "each file becomes a chunk named after it. Rename one of them."
+                f"{other.label()} and {src.label()} would both be chunk {src.name!r} "
+                "(names are compared without case): each file becomes a chunk named "
+                "after it. Rename one of them."
             )
+        have = existing.get(key)
+        if have is not None and have.name != src.name:
+            same = (
+                have.source is not None
+                and src.local_path is not None
+                and _same_file(have.source.path, src.local_path)
+            )
+            if not same:
+                raise IndexBuildError(
+                    f"{src.label()} would be chunk {src.name!r}, and this index "
+                    f"already has chunk {have.name!r}: names are compared without "
+                    "case. Rename the file."
+                )
+            src = replace(src, name=have.name)  # the same file, typed in another case
+        out.append(src)
+    return out
 
 
-def _outdated(src: SdfSource, stats: ChunkStats) -> str | None:
-    """Why a complete chunk must be rebuilt for ``src``, or None if it is current."""
+def _plan(
+    src: SdfSource, stats: ChunkStats, stats_path: Path
+) -> tuple[Literal["skip", "adopt", "rebuild"], str]:
+    """What to do about a source whose chunk is already complete, and why.
+
+    ``adopt`` keeps the chunk and records ``src`` as its file: the same file at a
+    new place, or the file behind a chunk an earlier version built.
+    """
     current = src.source()
     if current is None:  # a PubChem chunk: its name pins its content
-        return None
+        return "skip", ""
     recorded = stats.source
-    if recorded is None:
-        return "built by an earlier version, which did not record its file"
-    if recorded.path != current.path:
-        raise IndexBuildError(
-            f"Chunk {src.name!r} already holds {recorded.path}, and {current.path} "
-            "would replace it: each file becomes a chunk named after it. Rename one "
-            "of them."
-        )
-    if (recorded.size, recorded.mtime_ns) != (current.size, current.mtime_ns):
-        return f"{current.path} changed since it was indexed"
-    return None
+    if recorded is None:  # 2.2.0 and earlier did not record the file
+        if current.mtime_ns <= stats_path.stat().st_mtime_ns:
+            return "adopt", f"{src.name}: recorded {current.path} as its file"
+        return "rebuild", f"{current.path} is newer than its chunk"
+    unchanged = (recorded.size, recorded.mtime_ns) == (current.size, current.mtime_ns)
+    if recorded.path == current.path or _same_file(recorded.path, current.path):
+        if unchanged:
+            return "skip", ""
+        return "rebuild", f"{current.path} changed since it was indexed"
+    if unchanged:
+        return "adopt", f"{src.name}: its file moved to {current.path}"
+    raise IndexBuildError(
+        f"Chunk {src.name!r} already holds {recorded.path}, and {current.path} is a "
+        "different file that would replace it: each file becomes a chunk named after "
+        "it. Rename one of them."
+    )
 
 
-def _discard_chunk(paths: IndexPaths, name: str) -> None:
-    # The stats file marks a chunk complete, so it goes first: an interrupted
-    # rebuild then reads as unbuilt. Pattern fingerprints derive from the chunk.
-    for path in (
-        paths.chunk_stats(name),
-        paths.pattern_stats(name),
-        paths.chunk_h5(name),
-        paths.chunk_parquet(name),
-        paths.pattern_h5(name),
-    ):
-        path.unlink(missing_ok=True)
-
-
-def _check_params(paths: IndexPaths, params: dict[str, Any]) -> None:
-    for stats in paths.completed_chunks():
+def _check_params(
+    completed: Sequence[ChunkStats], paths: IndexPaths, params: dict[str, Any]
+) -> None:
+    for stats in completed:
         if stats.fp_type != FP_TYPE or stats.fp_params != params:
             raise IndexBuildError(
                 f"Existing chunks in {paths.chunks} use {stats.fp_type} {stats.fp_params}, "
@@ -526,8 +596,10 @@ def finalize(
 ) -> Manifest:
     """Merge all completed chunks into the searchable index and write its manifest.
 
-    If the existing index already contains exactly the completed chunks, it is
-    left alone (merging all of PubChem takes a while) unless ``force`` is set.
+    If the existing index already holds exactly the completed chunks, in the builds
+    now on disk, it is left alone (merging all of PubChem takes a while) unless
+    ``force`` is set. That is read from disk, not from what this process did: a
+    chunk rebuilt by a run that then failed is merged by the next one.
     ``substructure`` turns the pattern-fingerprint database on or off; ``None``
     keeps whatever the current index has. Turning it on builds any missing
     pattern chunks (in up to ``workers`` processes) without touching the
@@ -539,10 +611,12 @@ def finalize(
         raise IndexBuildError(f"No built chunks in {paths.chunks}; nothing to finalize")
     names = [c.name for c in chunks]
     current = paths.load_manifest()
+    merged = current is not None and _holds(current, chunks)
     old_sub = current.substructure if current is not None else None
     want_sub = old_sub is not None if substructure is None else substructure
     sub_fresh = (
         not force
+        and merged
         and old_sub is not None
         and old_sub.chunks == names
         and old_sub.rdkit_version == rdkit.__version__
@@ -555,7 +629,7 @@ def finalize(
         build_pattern_chunks(paths, names, workers, emit)
         pattern_files = _pattern_files(paths, names)
 
-    if not force and current is not None and current.chunks == names:
+    if not force and current is not None and merged:
         manifest = current
         similarity_rebuilt = False
     else:
@@ -591,6 +665,18 @@ def finalize(
     return manifest
 
 
+def _holds(manifest: Manifest, chunks: Sequence[ChunkStats]) -> bool:
+    """Whether the merged index holds exactly ``chunks``, in the builds on disk."""
+    if manifest.chunks != [c.name for c in chunks]:
+        return False
+    if manifest.chunk_builds is None:
+        # Merged by 2.2.1 or earlier, which kept no record of builds. 2.2.1 could
+        # rebuild an --sdf chunk and fail before merging it, and such chunks are
+        # the ones with a recorded file, so an index with one is merged once more.
+        return all(c.source is None for c in chunks)
+    return manifest.chunk_builds == {c.name: c.build_id for c in chunks}
+
+
 def _merge_similarity(
     paths: IndexPaths, chunks: list[ChunkStats], emit: EventFn
 ) -> Manifest:
@@ -615,6 +701,7 @@ def _merge_similarity(
         pubchem_finder_version=__version__,
         rdkit_version=rdkit.__version__,
         fpsim2_version=version("fpsim2"),
+        chunk_builds={c.name: c.build_id for c in chunks},
     )
 
 

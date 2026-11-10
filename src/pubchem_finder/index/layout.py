@@ -19,6 +19,7 @@
 
 import json
 import os
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -75,6 +76,11 @@ class ChunkStats(BaseModel):
         default=None,
         description="The file given with --sdf (None: a PubChem chunk, or a chunk "
         "built by 2.2.0 or earlier)",
+    )
+    build_id: str | None = Field(
+        default=None,
+        description="Unique to each build of the chunk; the manifest records which "
+        "builds its merged files hold (None: built by 2.2.1 or earlier)",
     )
 
 
@@ -135,6 +141,11 @@ class Manifest(BaseModel):
     fpsim2_version: str
     substructure: SubstructureInfo | None = Field(
         default=None, description="Present when substructure search is enabled"
+    )
+    chunk_builds: dict[str, str | None] | None = Field(
+        default=None,
+        description="Each merged chunk's build_id, so a chunk rebuilt under its old "
+        "name is noticed (None: merged by 2.2.1 or earlier)",
     )
 
     @property
@@ -238,6 +249,12 @@ class IndexPaths:
                 "index for this version in another data directory (--home)."
             )
         return Manifest.model_validate(data)
+
+
+def chunk_key(name: str) -> str:
+    """How chunk names are compared: ``Library`` and ``library`` are one set of files
+    on macOS and Windows, so they are one chunk everywhere."""
+    return unicodedata.normalize("NFC", name).casefold()
 
 
 def chunk_name(path: Path | str) -> str:

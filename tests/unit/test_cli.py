@@ -163,20 +163,228 @@ def test_index_build_rebuilds_a_changed_file(tmp_path, same_named, sample_sdfs):
     assert 2244 not in cids  # gone with the old one
 
 
-def test_index_build_rebuilds_chunks_that_did_not_record_their_file(
+def _as_2_2_0_wrote_it(home, name="library"):
+    stats = home / "chunks" / f"{name}.json"
+    data = json.loads(stats.read_text())
+    del data["source"], data["build_id"]
+    stats.write_text(json.dumps(data))
+    return stats
+
+
+def test_index_build_adopts_the_file_of_a_chunk_from_an_earlier_version(
     tmp_path, same_named
 ):
     home = tmp_path / "home"
     library = same_named[0]
     assert _sdf_build(home, library).exit_code == 0
-    stats = home / "chunks" / "library.json"
-    data = json.loads(stats.read_text())
-    del data["source"]  # as 2.2.0 wrote it
-    stats.write_text(json.dumps(data))
+    stats = _as_2_2_0_wrote_it(home)
     result = _sdf_build(home, library)
     assert result.exit_code == 0, result.output
-    assert "built by an earlier version" in result.output
-    assert "source" in json.loads(stats.read_text())
+    assert "recorded" in result.output
+    assert "0 built this run" in result.output  # not fingerprinted again
+    assert json.loads(stats.read_text())["source"]["path"] == str(library.resolve())
+    assert 2244 in _cids(home)
+
+
+def test_index_build_rebuilds_an_earlier_versions_chunk_from_a_newer_file(
+    tmp_path, same_named, sample_sdfs
+):
+    import shutil
+
+    home = tmp_path / "home"
+    library = same_named[0]
+    assert _sdf_build(home, library).exit_code == 0
+    stats = _as_2_2_0_wrote_it(home)
+    shutil.copyfile(sample_sdfs[1], library)
+    later = stats.stat().st_mtime_ns + 5_000_000_000
+    os.utime(library, ns=(later, later))
+    result = _sdf_build(home, library)
+    assert result.exit_code == 0, result.output
+    assert "is newer than its chunk" in result.output
+    cids = _cids(home)
+    assert 1983 in cids
+    assert 2244 not in cids
+
+
+# The 2.2.1 rework of --sdf rebuilds, reviewed after release: the old chunk was deleted
+# before every check had run, and whether to merge was decided from what the process
+# had just done, so a rebuild that failed part-way left an index that the next run
+# called ready while it still searched the old file.
+
+
+@pytest.mark.parametrize("fails_in", ["build_chunk", "_merge_h5"])
+def test_index_build_after_a_failed_rebuild_serves_the_new_file(
+    tmp_path, same_named, sample_sdfs, monkeypatch, fails_in
+):
+    import shutil
+
+    from pubchem_finder.index import builder
+
+    home = tmp_path / "home"
+    library = same_named[0]
+    assert _sdf_build(home, library).exit_code == 0
+    shutil.copyfile(sample_sdfs[1], library)
+
+    real = getattr(builder, fails_in)
+    calls = []
+
+    def fail_once(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise OSError("No space left on device")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(builder, fails_in, fail_once)
+    failed = _sdf_build(home, library)
+    assert failed.exit_code == 1
+    assert "No space left" in failed.output
+    if fails_in == "build_chunk":  # nothing was replaced: the old index still answers
+        assert 2244 in _cids(home)
+
+    again = _sdf_build(home, library)
+    assert again.exit_code == 0, again.output
+    cids = _cids(home)
+    assert 1983 in cids  # the new file
+    assert 2244 not in cids  # not the old one
+
+
+def test_refused_build_leaves_the_changed_files_chunk_alone(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    import shutil
+
+    from pubchem_finder.index import builder
+
+    home = tmp_path / "home"
+    a = tmp_path / "a.sdf.gz"
+    b = tmp_path / "b.sdf.gz"
+    shutil.copyfile(sample_sdfs[0], a)
+    shutil.copyfile(sample_sdfs[1], b)
+    assert _sdf_build(home, a, b).exit_code == 0
+    before = {p.name: p.stat().st_size for p in (home / "chunks").iterdir()}
+
+    shutil.copyfile(sample_sdfs[0], b)  # b changes; a was built by "another RDKit"
+    monkeypatch.setattr(builder, "runtime_versions", lambda: ("2099.01.1", "9.9.9"))
+    refused = _sdf_build(home, b)
+    assert refused.exit_code == 1
+    assert "fingerprinted with" in refused.output
+    assert {p.name: p.stat().st_size for p in (home / "chunks").iterdir()} == before
+    monkeypatch.undo()
+    assert {2244, 1983} <= _cids(home)  # both files' compounds, as before
+
+
+def test_index_build_keeps_the_chunk_of_a_moved_file(tmp_path, same_named):
+    import shutil
+
+    home = tmp_path / "home"
+    library = same_named[0]
+    assert _sdf_build(home, library).exit_code == 0
+    moved = tmp_path / "elsewhere" / library.name
+    moved.parent.mkdir()
+    shutil.move(library, moved)  # keeps size and modification time
+    result = _sdf_build(home, moved)
+    assert result.exit_code == 0, result.output
+    assert "its file moved to" in result.output
+    assert "0 built this run" in result.output
+    stats = json.loads((home / "chunks" / "library.json").read_text())
+    assert stats["source"]["path"] == str(moved.resolve())
+
+
+def test_index_build_compares_chunk_names_without_case(tmp_path, sample_sdfs):
+    import shutil
+
+    upper = tmp_path / "vendor_a" / "Library.sdf.gz"
+    lower = tmp_path / "vendor_b" / "library.sdf.gz"
+    for path, src in ((upper, sample_sdfs[0]), (lower, sample_sdfs[1])):
+        path.parent.mkdir()
+        shutil.copyfile(src, path)
+    both = _sdf_build(tmp_path / "home", upper, lower)
+    assert both.exit_code == 1
+    assert "without case" in both.output
+    assert not (tmp_path / "home" / "chunks").exists()
+
+    home = tmp_path / "home2"
+    assert _sdf_build(home, upper).exit_code == 0
+    later = _sdf_build(home, lower)
+    assert later.exit_code == 1
+    assert "already has chunk 'Library'" in later.output
+    assert 2244 in _cids(home)
+
+
+def test_index_build_knows_its_file_under_another_spelling(tmp_path, same_named):
+    """On macOS and Windows a file can be typed in any case; a hard link stands in
+    for that here, so the test means the same on every filesystem."""
+    home = tmp_path / "home"
+    library = same_named[0]
+    assert _sdf_build(home, library).exit_code == 0
+    alias = tmp_path / "alias" / "LIBRARY.sdf.gz"
+    alias.parent.mkdir()
+    os.link(library, alias)
+    result = _sdf_build(home, alias)
+    assert result.exit_code == 0, result.output
+    assert "already built, skipping" in result.output
+    assert sorted(p.name for p in (home / "chunks").glob("*.json")) == ["library.json"]
+
+
+def test_index_build_says_when_a_file_is_given_twice(tmp_path, same_named):
+    result = _sdf_build(tmp_path / "home", same_named[0], same_named[0])
+    assert result.exit_code == 1
+    assert "is given twice" in result.output
+
+
+def test_index_build_rebuilds_a_changed_file_with_two_workers(
+    tmp_path, same_named, sample_sdfs
+):
+    import shutil
+
+    home = tmp_path / "home"
+    library, other = same_named[0], tmp_path / "other.sdf.gz"
+    shutil.copyfile(sample_sdfs[1], other)
+    args = ["index", "build", "--home", str(home), "--workers", "2"]
+    args += ["--sdf", str(library), "--sdf", str(other)]
+    assert runner.invoke(app, args).exit_code == 0
+    shutil.copyfile(sample_sdfs[1], library)
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert "rebuilding library: " in result.output
+    cids = _cids(home)
+    assert 1983 in cids
+    assert 2244 not in cids
+
+
+def test_an_index_merged_by_2_2_1_with_sdf_chunks_is_merged_once_more(
+    tmp_path, same_named, sample_sdfs
+):
+    """2.2.1 could rebuild a chunk and fail before merging it, leaving no trace in
+    the manifest. Such an index is merged again the first time it is built on."""
+    import shutil
+
+    from pubchem_finder.index.builder import SdfSource, build_chunks
+    from pubchem_finder.index.layout import IndexPaths
+
+    home = tmp_path / "home"
+    library = same_named[0]
+    assert _sdf_build(home, library).exit_code == 0
+    shutil.copyfile(sample_sdfs[1], library)
+    build_chunks(IndexPaths(home), [SdfSource(name="library", local_path=library)])
+    for path, field in (
+        (home / "index" / "manifest.json", "chunk_builds"),
+        (home / "chunks" / "library.json", "build_id"),
+    ):  # as 2.2.1 left it: chunk rebuilt, nothing merged, no record of builds
+        data = json.loads(path.read_text())
+        del data[field]
+        path.write_text(json.dumps(data))
+    assert 2244 in _cids(home)  # stale: still the old file's fingerprints
+
+    result = _sdf_build(home, library)
+    assert result.exit_code == 0, result.output
+    assert "merging" in result.output
+    cids = _cids(home)
+    assert 1983 in cids
+    assert 2244 not in cids
+    manifest = json.loads((home / "index" / "manifest.json").read_text())
+    assert manifest["chunk_builds"] == {"library": None}
+    assert "index up to date" in _sdf_build(home, library).output
 
 
 def test_search_without_index(tmp_path):

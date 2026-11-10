@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `index build --sdf` could leave an index that searched an old version of a file while
+  reporting it ready. 2.2.1 rebuilt the chunk of a changed file but decided whether to
+  merge from what the same run had done, so a rebuild that failed part-way (a full disk,
+  Ctrl+C, a damaged file) was followed by a run that merged nothing. Each chunk build
+  now has an id, the index records the ids it holds, and `index build` merges whenever
+  they differ. An index that 2.2.1 merged from `--sdf` files is merged once more the
+  next time it is built on, which repairs one already in that state.
+- A chunk being rebuilt is replaced only when its new files are complete, and every
+  check runs first. 2.2.1 deleted the old chunk up front, so a build that was then
+  refused (for example because RDKit had changed since the other chunks were built) or
+  that failed had already lost it.
+- `index build --sdf` keeps the chunk of a file that only moved (same size and
+  modification time) instead of refusing it, compares chunk names without case
+  (`Library.sdf` and `library.sdf` are the same files on macOS and Windows), and says
+  so when one file is given twice. A chunk built by 2.2.0 or earlier takes the file
+  passed for it as its own when that file is not newer than the chunk; 2.2.1
+  fingerprinted every such chunk again, from whatever file had its name.
+
 ## [2.2.1] - 2026-11-04
 
 ### Fixed
