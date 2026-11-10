@@ -48,6 +48,28 @@ def test_csv_without_smiles_column(tmp_path):
         list(batch.read_inputs(path))
 
 
+def test_read_csv_with_bom(tmp_path):
+    # Excel's "CSV UTF-8" prepends a byte-order mark; the first header must still
+    # match the SMILES column rather than becoming "﻿Name".
+    path = tmp_path / "excel.csv"
+    path.write_text(
+        "Name,SMILES\naspirin,CC(=O)Oc1ccccc1C(=O)O\n", encoding="utf-8-sig"
+    )
+    rows = list(batch.read_inputs(path))
+    assert [(r.id, r.smiles) for r in rows] == [
+        ("aspirin", "CC(=O)Oc1ccccc1C(=O)O"),
+    ]
+
+
+def test_non_utf8_file_reports_clearly(tmp_path):
+    # A file saved in another encoding (here Windows-1252 with a non-ASCII byte)
+    # should give one clear line, not a UnicodeDecodeError traceback.
+    path = tmp_path / "latin1.csv"
+    path.write_bytes("Name,SMILES\ncafé,CCO\n".encode("cp1252"))
+    with pytest.raises(InvalidInput, match="not UTF-8"):
+        list(batch.read_inputs(path))
+
+
 def test_read_stdin(monkeypatch):
     monkeypatch.setattr("sys.stdin", io.StringIO("CCO one\n"))
     assert [r.id for r in batch.read_inputs(batch.Path("-"))] == ["one"]

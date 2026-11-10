@@ -42,7 +42,10 @@ class BatchReport:
 def _open_input(path: Path) -> IO[str]:
     if str(path) == "-":
         return sys.stdin
-    return open(path, newline="", encoding="utf-8")
+    # "utf-8-sig" strips a leading byte-order mark if present (Excel's "CSV UTF-8"
+    # writes one) and otherwise reads plain UTF-8, so the first header is not
+    # mangled into "﻿smiles".
+    return open(path, newline="", encoding="utf-8-sig")
 
 
 def read_inputs(path: Path) -> Iterator[InputRow]:
@@ -54,6 +57,11 @@ def read_inputs(path: Path) -> Iterator[InputRow]:
             yield from _read_table(fh, "\t" if suffix == ".tsv" else ",")
         else:
             yield from _read_smi(fh)
+    except UnicodeDecodeError as exc:
+        raise InvalidInput(
+            f"{path} is not UTF-8 text. Re-save it as UTF-8 "
+            '(in Excel, "CSV UTF-8 (Comma delimited)") and run the command again.'
+        ) from exc
     finally:
         if fh is not sys.stdin:
             fh.close()
