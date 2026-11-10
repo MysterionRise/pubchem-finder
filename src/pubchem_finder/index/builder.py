@@ -122,9 +122,10 @@ def write_chunk(
     in one pass and write ``<name>.json`` last to mark the chunk complete.
 
     A chunk that already exists stays as it is until the new files are complete,
-    so a failed or refused rebuild loses nothing. The swap then takes the old
-    ``<name>.json`` away first: if it is interrupted, the chunk reads as unbuilt
-    rather than as the old build with new files.
+    so a failed or refused rebuild loses nothing, and a file without a single
+    usable record does not replace a chunk that has some. The swap then takes
+    the old ``<name>.json`` away first: if it is interrupted, the chunk reads as
+    unbuilt rather than as the old build with new files.
     """
     params = dict(fp_params or DEFAULT_FP_PARAMS)
     paths.chunks.mkdir(parents=True, exist_ok=True)
@@ -132,39 +133,46 @@ def write_chunk(
     pq_tmp = paths.chunk_parquet(name).with_suffix(".parquet.tmp")
     start = time.perf_counter()
 
-    with pq.ParquetWriter(pq_tmp, METADATA_SCHEMA, compression="zstd") as writer:
-        rows: dict[str, list[Any]] = {col: [] for col in METADATA_SCHEMA.names}
+    try:
+        with pq.ParquetWriter(pq_tmp, METADATA_SCHEMA, compression="zstd") as writer:
+            rows: dict[str, list[Any]] = {col: [] for col in METADATA_SCHEMA.names}
 
-        def flush() -> None:
-            if rows["cid"]:
-                writer.write_table(pa.table(rows, schema=METADATA_SCHEMA))
-                for col in rows.values():
-                    col.clear()
+            def flush() -> None:
+                if rows["cid"]:
+                    writer.write_table(pa.table(rows, schema=METADATA_SCHEMA))
+                    for col in rows.values():
+                        col.clear()
 
-        def mols() -> Iterator[tuple[Chem.Mol, int]]:
-            for rec in reader:
-                rows["cid"].append(rec.cid)
-                rows["smiles"].append(rec.smiles)
-                rows["inchikey"].append(rec.inchikey)
-                rows["iupac_name"].append(rec.iupac_name)
-                rows["molecular_formula"].append(rec.molecular_formula)
-                rows["molecular_weight"].append(rec.molecular_weight)
-                if len(rows["cid"]) >= METADATA_BATCH:
-                    flush()
-                yield rec.mol, rec.cid
+            def mols() -> Iterator[tuple[Chem.Mol, int]]:
+                for rec in reader:
+                    rows["cid"].append(rec.cid)
+                    rows["smiles"].append(rec.smiles)
+                    rows["inchikey"].append(rec.inchikey)
+                    rows["iupac_name"].append(rec.iupac_name)
+                    rows["molecular_formula"].append(rec.molecular_formula)
+                    rows["molecular_weight"].append(rec.molecular_weight)
+                    if len(rows["cid"]) >= METADATA_BATCH:
+                        flush()
+                    yield rec.mol, rec.cid
 
-        records = _peek(mols())
-        if records is not None:
-            # FPSim2 mutates fp_params; give it a copy.
-            create_db_file(
-                records,
-                str(h5_tmp),
-                "rdkit",
-                FP_TYPE,
-                dict(params),
-                sort_by_popcnt=False,
-            )
-        flush()
+            records = _peek(mols())
+            if records is not None:
+                # FPSim2 mutates fp_params; give it a copy.
+                create_db_file(
+                    records,
+                    str(h5_tmp),
+                    "rdkit",
+                    FP_TYPE,
+                    dict(params),
+                    sort_by_popcnt=False,
+                )
+            flush()
+        if not reader.n_ok:
+            _refuse_to_empty(paths, name, reader, source)
+    except BaseException:
+        h5_tmp.unlink(missing_ok=True)
+        pq_tmp.unlink(missing_ok=True)
+        raise
 
     paths.chunk_stats(name).unlink(missing_ok=True)
     paths.pattern_stats(name).unlink(missing_ok=True)  # derived from the old build
@@ -191,6 +199,37 @@ def write_chunk(
     )
     write_json_atomic(paths.chunk_stats(name), stats)
     return stats
+
+
+def _ids_rule(skipped_id: str) -> str:
+    return (
+        f"record IDs must be whole numbers from 1 to {MAX_ID:,}; skipped "
+        f"{skipped_id!r} and any others like it"
+    )
+
+
+def _refuse_to_empty(
+    paths: IndexPaths, name: str, reader: RecordReader, source: SourceFile | None
+) -> None:
+    """Raise if ``reader`` gave nothing and chunk ``name`` holds compounds.
+
+    An export that failed (0 bytes, a saved error page) or whose IDs changed form
+    would otherwise take the place of the only indexed copy of the library.
+    """
+    stats_path = paths.chunk_stats(name)
+    if not stats_path.exists():
+        return
+    kept = ChunkStats.model_validate_json(stats_path.read_text(encoding="utf-8"))
+    if not kept.n_records:
+        return
+    skipped_id = getattr(reader, "skipped_id", None)
+    why = f": {_ids_rule(skipped_id)}" if skipped_id is not None else ""
+    raise IndexBuildError(
+        f"{source.path if source is not None else name} has no record the index "
+        f"can hold ({reader.n_failed:,} skipped{why}). Chunk {name!r} keeps the "
+        f"{kept.n_records:,} compounds it has. To take the library out of the "
+        f"index instead, delete {stats_path} and build again."
+    )
 
 
 def build_pattern_chunk(home: str, name: str) -> PatternChunkStats:
@@ -364,7 +403,7 @@ def build_chunks(
         if stats is None:
             todo.append(src)
             continue
-        action, note = _plan(src, stats, paths.chunk_stats(src.name))
+        action, note = _plan(src, stats)
         if action == "rebuild":
             reasons[src.name] = note
             todo.append(src)
@@ -396,10 +435,7 @@ def build_chunks(
             f" ({stats.n_failed:,} skipped) in {stats.seconds:.0f}s"
         )
         if stats.skipped_id is not None:
-            emit(
-                f"  {stats.name}: record IDs must be whole numbers from 1 to "
-                f"{MAX_ID:,}; skipped {stats.skipped_id!r} and any others like it"
-            )
+            emit(f"  {stats.name}: {_ids_rule(stats.skipped_id)}")
         if src.delete_after:
             path.unlink(missing_ok=True)
 
@@ -455,16 +491,32 @@ def _same_file(a: Path | str, b: Path | str) -> bool:
 def _check_unique_names(
     sources: Sequence[SdfSource], completed: Sequence[ChunkStats]
 ) -> list[SdfSource]:
-    """Refuse sources that would share a chunk, comparing names without case
+    """Refuse sources that would share a chunk, comparing new names without case
     (``Library`` and ``library`` are the same files on macOS and Windows).
 
-    Returns the sources, each under the spelling its existing chunk already has.
+    Chunks that exist keep their own spelling: an index made on a case-sensitive
+    filesystem before 2.2.2 may hold both, and each must stay buildable. Returns
+    the sources, each under the spelling its existing chunk already has.
     """
-    existing = {chunk_key(stats.name): stats for stats in completed}
+    exact = {stats.name for stats in completed}
+    folded: dict[str, list[ChunkStats]] = {}
+    for stats in completed:
+        folded.setdefault(chunk_key(stats.name), []).append(stats)
     seen: dict[str, SdfSource] = {}
     out: list[SdfSource] = []
     for src in sources:
-        key = chunk_key(src.name)
+        if src.name not in exact:
+            alike = folded.get(chunk_key(src.name), [])
+            have = next((c for c in alike if _is_file_of(src, c)), None)
+            if have is not None:  # the same file, typed in another case
+                src = replace(src, name=have.name)
+            elif alike:
+                raise IndexBuildError(
+                    f"{src.label()} would be chunk {src.name!r}, and this index "
+                    f"already has chunk {alike[0].name!r}: names are compared "
+                    "without case. Rename the file."
+                )
+        key = src.name if src.name in exact else chunk_key(src.name)
         other = seen.setdefault(key, src)
         if other is not src:
             if (
@@ -478,40 +530,39 @@ def _check_unique_names(
                 "(names are compared without case): each file becomes a chunk named "
                 "after it. Rename one of them."
             )
-        have = existing.get(key)
-        if have is not None and have.name != src.name:
-            same = (
-                have.source is not None
-                and src.local_path is not None
-                and _same_file(have.source.path, src.local_path)
-            )
-            if not same:
-                raise IndexBuildError(
-                    f"{src.label()} would be chunk {src.name!r}, and this index "
-                    f"already has chunk {have.name!r}: names are compared without "
-                    "case. Rename the file."
-                )
-            src = replace(src, name=have.name)  # the same file, typed in another case
         out.append(src)
     return out
 
 
+def _is_file_of(src: SdfSource, chunk: ChunkStats) -> bool:
+    """Whether ``src``, named like ``chunk`` but for case, is the file behind it."""
+    if src.local_path is None:
+        return False
+    if chunk.source is not None:
+        return _same_file(chunk.source.path, src.local_path)
+    # No file recorded (2.2.0 or earlier): where names ignore case, the file
+    # answers to the chunk's spelling too.
+    suffix = src.local_path.name[len(src.name) :]
+    return _same_file(src.local_path.with_name(chunk.name + suffix), src.local_path)
+
+
 def _plan(
-    src: SdfSource, stats: ChunkStats, stats_path: Path
+    src: SdfSource, stats: ChunkStats
 ) -> tuple[Literal["skip", "adopt", "rebuild"], str]:
     """What to do about a source whose chunk is already complete, and why.
 
-    ``adopt`` keeps the chunk and records ``src`` as its file: the same file at a
-    new place, or the file behind a chunk an earlier version built.
+    ``adopt`` keeps the chunk and records ``src`` as its file: the same file (by
+    size and modification time) at a new place.
     """
     current = src.source()
     if current is None:  # a PubChem chunk: its name pins its content
         return "skip", ""
     recorded = stats.source
-    if recorded is None:  # 2.2.0 and earlier did not record the file
-        if current.mtime_ns <= stats_path.stat().st_mtime_ns:
-            return "adopt", f"{src.name}: recorded {current.path} as its file"
-        return "rebuild", f"{current.path} is newer than its chunk"
+    if recorded is None:
+        # Built by 2.2.0 or earlier, or downloaded: nothing says whether this is
+        # the file the chunk holds, and its modification time cannot settle it
+        # (copies and downloads keep the publisher's), so the file is indexed.
+        return "rebuild", "its chunk does not record the file it was built from"
     unchanged = (recorded.size, recorded.mtime_ns) == (current.size, current.mtime_ns)
     if recorded.path == current.path or _same_file(recorded.path, current.path):
         if unchanged:
@@ -519,10 +570,19 @@ def _plan(
         return "rebuild", f"{current.path} changed since it was indexed"
     if unchanged:
         return "adopt", f"{src.name}: its file moved to {current.path}"
+    if Path(recorded.path).exists():
+        raise IndexBuildError(
+            f"Chunk {src.name!r} already holds {recorded.path}, and {current.path} "
+            "is a different file that would replace it: each file becomes a chunk "
+            "named after it. To index both, rename one of them; to replace the "
+            "first, copy the new file over it."
+        )
     raise IndexBuildError(
-        f"Chunk {src.name!r} already holds {recorded.path}, and {current.path} is a "
-        "different file that would replace it: each file becomes a chunk named after "
-        "it. Rename one of them."
+        f"Chunk {src.name!r} was built from {recorded.path}, which is no longer "
+        f"there, and {current.path} is not that file moved (its size or "
+        f"modification time differs). To replace the chunk, put the file at "
+        f"{recorded.path} and build again. Renaming it instead would index it next "
+        "to the old version."
     )
 
 
@@ -615,18 +675,27 @@ def finalize(
     similarity database; only turning it off removes pattern data.
     """
     emit = on_event or (lambda msg: logger.info(msg))
-    chunks = [c for c in paths.completed_chunks() if c.n_records > 0]
+    built = paths.completed_chunks()
+    chunks = [c for c in built if c.n_records > 0]
     if not chunks:
-        raise IndexBuildError(f"No built chunks in {paths.chunks}; nothing to finalize")
+        raise IndexBuildError(_nothing_to_merge(paths, built))
     names = [c.name for c in chunks]
     current = paths.load_manifest()
     merged = current is not None and _holds(current, chunks)
+    if current is not None and not merged and not force:
+        for line in _merge_notes(current, chunks):
+            emit(line)
     old_sub = current.substructure if current is not None else None
     if substructure is None:
         # The manifest goes without substructure search while the pattern database
         # is merged, so after an interrupted merge it is the pattern chunks that
         # say the user asked for it.
         want_sub = old_sub is not None or bool(paths.completed_pattern_chunks())
+        if want_sub and old_sub is None:
+            emit(
+                "finishing substructure search, which an earlier build started "
+                "(--without-substructure removes it instead)"
+            )
     else:
         want_sub = substructure
     sub_fresh = (
@@ -680,6 +749,38 @@ def finalize(
     return manifest
 
 
+def _nothing_to_merge(paths: IndexPaths, built: Sequence[ChunkStats]) -> str:
+    if not built:
+        return f"No built chunks in {paths.chunks}; nothing to finalize"
+    skipped_id = next((c.skipped_id for c in built if c.skipped_id is not None), None)
+    why = f": {_ids_rule(skipped_id)}" if skipped_id is not None else ""
+    return (
+        f"None of the {len(built)} chunk(s) in {paths.chunks} holds a compound, so "
+        f"there is nothing to finalize{why}"
+    )
+
+
+def _merge_notes(manifest: Manifest, chunks: Sequence[ChunkStats]) -> list[str]:
+    """What to say before a merge whose reason the build output does not show."""
+    names = [c.name for c in chunks]
+    gone = [n for n in manifest.chunks if n not in names]
+    if gone:
+        shown = ", ".join(gone[:3]) + (
+            f" and {len(gone) - 3} more" if len(gone) > 3 else ""
+        )
+        return [
+            f"warning: {shown}: in the index, but no longer complete in the chunks "
+            "directory, so this merge leaves it out. Build from its file again to "
+            "put it back."
+        ]
+    if manifest.chunks == names and manifest.chunk_builds is None:
+        return [
+            "merging once more: this index was merged by pubchem-finder 2.2.1 or "
+            "earlier, which could miss a rebuilt --sdf file"
+        ]
+    return []
+
+
 def _remove_pattern_data(paths: IndexPaths) -> bool:
     """Delete the pattern database and its chunks; whether there was anything."""
     found = paths.pattern_fingerprints.exists() or paths.pattern_chunks.is_dir()
@@ -713,6 +814,7 @@ def _merge_similarity(
     # leaves the previous index searchable; it is withdrawn only for the swap.
     _merge_h5(files, paths.fingerprints, withdraw=paths.manifest, home=paths.home)
     all_stats = paths.completed_chunks()
+    chunks = [_with_build_id(paths, c) for c in chunks]
     return Manifest(
         format_version=FORMAT_VERSION,
         fp_type=chunks[0].fp_type,
@@ -726,6 +828,19 @@ def _merge_similarity(
         fpsim2_version=version("fpsim2"),
         chunk_builds={c.name: c.build_id for c in chunks},
     )
+
+
+def _with_build_id(paths: IndexPaths, stats: ChunkStats) -> ChunkStats:
+    """Give a chunk from 2.2.1 or earlier a build id as it is merged.
+
+    A rebuild by any version then shows: it writes another id, or (2.2.1) none.
+    Called between the merge and the new manifest, while the index has none.
+    """
+    if stats.build_id is not None:
+        return stats
+    stats = stats.model_copy(update={"build_id": uuid.uuid4().hex})
+    write_json_atomic(paths.chunk_stats(stats.name), stats)
+    return stats
 
 
 def _pattern_files(paths: IndexPaths, names: list[str]) -> list[str]:

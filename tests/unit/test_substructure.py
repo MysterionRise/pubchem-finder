@@ -346,8 +346,11 @@ def test_interrupted_pattern_merge_keeps_substructure_search(
         finalize(paths, force=True)
     assert paths.load_manifest().substructure is None  # withdrawn for the merge
 
-    manifest = finalize(paths)  # the same command again
+    events: list[str] = []
+    manifest = finalize(paths, events.append)  # the same command again
     assert manifest.substructure is not None
+    assert any("finishing substructure search" in e for e in events)
+    assert any("--without-substructure removes it" in e for e in events)
     assert service.substructure_search("c1ccccc1", home=paths.home).hits
 
 

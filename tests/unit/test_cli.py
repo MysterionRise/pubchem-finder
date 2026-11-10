@@ -1,5 +1,6 @@
 """Tests for the typer CLI."""
 
+import contextlib
 import csv
 import json
 import os
@@ -130,6 +131,8 @@ def test_build_says_when_ids_are_why_records_were_skipped(tmp_path):
     assert "built chembl: 0 compounds (2 skipped)" in result.output
     assert "record IDs must be whole numbers from 1 to 4,294,967,295" in result.output
     assert "skipped 'CHEMBL1' and any others like it" in result.output
+    assert "None of the 1 chunk(s)" in result.output
+    assert "holds a compound" in result.output
 
 
 @pytest.fixture
@@ -189,39 +192,206 @@ def _as_2_2_0_wrote_it(home, name="library"):
     return stats
 
 
-def test_index_build_adopts_the_file_of_a_chunk_from_an_earlier_version(
-    tmp_path, same_named
-):
-    home = tmp_path / "home"
-    library = same_named[0]
-    assert _sdf_build(home, library).exit_code == 0
-    stats = _as_2_2_0_wrote_it(home)
-    result = _sdf_build(home, library)
-    assert result.exit_code == 0, result.output
-    assert "recorded" in result.output
-    assert "0 built this run" in result.output  # not fingerprinted again
-    assert json.loads(stats.read_text())["source"]["path"] == str(library.resolve())
-    assert 2244 in _cids(home)
-
-
-def test_index_build_rebuilds_an_earlier_versions_chunk_from_a_newer_file(
+def test_index_build_rebuilds_a_chunk_that_records_no_file(
     tmp_path, same_named, sample_sdfs
 ):
+    """A chunk from 2.2.0 or earlier does not say which file it holds. A draft of
+    2.2.2 took a same-named file for that file whenever it was not newer than the
+    chunk, and downloads and copies keep the publisher's time: a replaced library
+    was recorded as built and never indexed."""
     import shutil
 
     home = tmp_path / "home"
     library = same_named[0]
     assert _sdf_build(home, library).exit_code == 0
     stats = _as_2_2_0_wrote_it(home)
-    shutil.copyfile(sample_sdfs[1], library)
-    later = stats.stat().st_mtime_ns + 5_000_000_000
-    os.utime(library, ns=(later, later))
+    shutil.copyfile(sample_sdfs[1], library)  # another version of the library...
+    earlier = stats.stat().st_mtime_ns - 5_000_000_000
+    os.utime(library, ns=(earlier, earlier))  # ...that looks older than the chunk
     result = _sdf_build(home, library)
     assert result.exit_code == 0, result.output
-    assert "is newer than its chunk" in result.output
+    assert "rebuilding library: its chunk does not record the file" in result.output
     cids = _cids(home)
     assert 1983 in cids
     assert 2244 not in cids
+    assert json.loads(stats.read_text())["source"]["path"] == str(library.resolve())
+
+    again = _sdf_build(home, library)
+    assert "index up to date" in again.output
+    assert "merging" not in again.output
+
+
+def _snapshot(folder):
+    return {
+        str(p.relative_to(folder)): p.read_bytes()
+        for p in sorted(folder.rglob("*"))
+        if p.is_file()
+    }
+
+
+@pytest.mark.parametrize("content", ["empty", "error page", "text ids"])
+@pytest.mark.parametrize("with_another_chunk", [False, True])
+def test_file_without_usable_records_does_not_replace_its_chunk(
+    tmp_path, sample_sdfs, content, with_another_chunk
+):
+    """A failed export (0 bytes, a saved error page) or one whose IDs changed form
+    was fingerprinted into an empty chunk that replaced the good one. With one
+    library the index then stayed "ready" on fingerprints without records, and
+    every later build failed; with two, the library left the index silently."""
+    import shutil
+
+    from rdkit import Chem
+
+    from tests.conftest import CHUNK_A, write_sdf
+
+    home = tmp_path / "home"
+    library = write_sdf(tmp_path / "library.sdf", CHUNK_A, gz=False)
+    files = [library]
+    if with_another_chunk:
+        files.append(shutil.copyfile(sample_sdfs[1], tmp_path / "other.sdf.gz"))
+    assert _sdf_build(home, *files).exit_code == 0
+    before = _snapshot(home / "chunks")
+
+    if content == "empty":
+        library.write_bytes(b"")
+    elif content == "error page":
+        library.write_text("<html><body>404 Not Found</body></html>\n")
+    else:
+        with Chem.SDWriter(str(library)) as writer:
+            for i, smiles in enumerate(["CCO", "CCN", "CCC"], 1):
+                mol = Chem.MolFromSmiles(smiles)
+                mol.SetProp("_Name", f"ABC-{i:04d}")
+                writer.write(mol)
+    result = _sdf_build(home, *files)
+    assert result.exit_code == 1, result.output
+    assert "has no record the index can hold" in result.output
+    assert f"Chunk 'library' keeps the {len(CHUNK_A)} compounds it has" in result.output
+    if content == "text ids":
+        assert "skipped 'ABC-0001' and any others like it" in result.output
+    assert _snapshot(home / "chunks") == before  # the chunk, and nothing left over
+    found = runner.invoke(
+        app, ["search", "CC(=O)Oc1ccccc1C(=O)O", "--home", str(home), "--json"]
+    )
+    hit = json.loads(found.output)["hits"][0]
+    assert (hit["cid"], hit["smiles"]) == (2244, "CC(=O)Oc1ccccc1C(=O)O")
+
+
+def test_rebuild_from_a_damaged_file_leaves_the_chunk_as_it_was(
+    tmp_path, same_named, sample_sdfs
+):
+    """The real write_chunk failing part-way through a file: 2.2.1 had deleted the
+    old chunk by then, and its tests only ever failed before the first record."""
+    home = tmp_path / "home"
+    library = same_named[0]
+    assert _sdf_build(home, library).exit_code == 0
+    before = _snapshot(home / "chunks")
+
+    data = sample_sdfs[1].read_bytes()
+    library.write_bytes(data[: len(data) // 2])  # a download that stopped half-way
+    result = _sdf_build(home, library)
+    assert result.exit_code == 1
+    assert f"{library.resolve()} is damaged or incomplete" in result.output
+    assert _snapshot(home / "chunks") == before  # no .tmp files either
+    assert 2244 in _cids(home)
+
+
+def test_moved_and_changed_file_says_how_to_replace_its_chunk(
+    tmp_path, same_named, sample_sdfs
+):
+    """The advice was "Rename one of them" although only one file was left, and
+    renaming it indexes the library a second time next to its old version."""
+    import shutil
+
+    home = tmp_path / "home"
+    library = same_named[0]
+    assert _sdf_build(home, library).exit_code == 0
+    recorded = library.resolve()
+    moved = tmp_path / "elsewhere" / library.name
+    moved.parent.mkdir()
+    shutil.copyfile(sample_sdfs[1], moved)
+    library.unlink()
+    result = _sdf_build(home, moved)
+    assert result.exit_code == 1
+    assert f"was built from {recorded}, which is no longer there" in result.output
+    assert f"put the file at {recorded} and build again" in result.output
+    assert "Rename one of them" not in result.output
+    assert 2244 in _cids(home)
+
+
+def test_merge_says_when_it_leaves_out_a_chunk_that_is_no_longer_complete(
+    tmp_path, same_named, sample_sdfs
+):
+    """A rebuild killed inside its swap leaves the chunk without its stats file; a
+    later build of something else merged the library out without a word."""
+    import shutil
+
+    home = tmp_path / "home"
+    library = same_named[0]
+    other = shutil.copyfile(sample_sdfs[1], tmp_path / "other.sdf.gz")
+    assert _sdf_build(home, library, other).exit_code == 0
+    (home / "chunks" / "library.json").unlink()
+    result = _sdf_build(home, other)
+    assert result.exit_code == 0, result.output
+    assert "warning: library: in the index, but no longer complete" in result.output
+    assert 2244 not in _cids(home)
+
+
+def _built_chunks(home):
+    from pubchem_finder.index.layout import IndexPaths
+
+    return IndexPaths(home).completed_chunks()
+
+
+def test_chunks_that_differ_only_by_case_stay_buildable(tmp_path, sample_sdfs):
+    """An index made on a case-sensitive filesystem before 2.2.2 may hold chunks
+    Library and library. A draft of 2.2.2 kept one of them per folded name and
+    refused the other's own file with "Rename the file"."""
+    import shutil
+
+    from pubchem_finder.index.builder import SdfSource, _check_unique_names
+
+    upper = tmp_path / "a" / "Library.sdf.gz"
+    lower = tmp_path / "b" / "library.sdf.gz"
+    stats = []
+    for path, src in ((upper, sample_sdfs[0]), (lower, sample_sdfs[1])):
+        path.parent.mkdir()
+        shutil.copyfile(src, path)
+        home = tmp_path / f"home-{path.parent.name}"
+        assert _sdf_build(home, path).exit_code == 0
+        stats += _built_chunks(home)
+    assert sorted(c.name for c in stats) == ["Library", "library"]
+
+    sources = [
+        SdfSource(name="Library", local_path=upper),
+        SdfSource(name="library", local_path=lower),
+    ]
+    for given in ([sources[0]], [sources[1]], sources):
+        assert _check_unique_names(given, stats) == given
+
+
+def test_a_chunk_without_a_recorded_file_knows_it_under_another_case(
+    tmp_path, sample_sdfs
+):
+    """On macOS and Windows `library.sdf` and `Library.sdf` are one file. A chunk
+    from 2.2.0 or earlier records no file to compare with, so the file typed in
+    another case was refused with "Rename the file"; 2.2.1 rebuilt it."""
+    import shutil
+    from dataclasses import replace
+
+    from pubchem_finder.index.builder import SdfSource, _check_unique_names
+
+    typed = shutil.copyfile(sample_sdfs[0], tmp_path / "LIBRARY.sdf.gz")
+    # Where names keep their case, a hard link under the chunk's spelling; where
+    # they don't, the file answers to that spelling already.
+    with contextlib.suppress(FileExistsError):
+        os.link(typed, tmp_path / "library.sdf.gz")
+    home = tmp_path / "home"
+    assert _sdf_build(home, tmp_path / "library.sdf.gz").exit_code == 0
+    _as_2_2_0_wrote_it(home)
+    src = SdfSource(name="LIBRARY", local_path=typed)
+    assert _check_unique_names([src], _built_chunks(home)) == [
+        replace(src, name="library")
+    ]
 
 
 # The 2.2.1 rework of --sdf rebuilds, reviewed after release: the old chunk was deleted
@@ -396,13 +566,26 @@ def test_an_index_merged_by_2_2_1_with_sdf_chunks_is_merged_once_more(
 
     result = _sdf_build(home, library)
     assert result.exit_code == 0, result.output
-    assert "merging" in result.output
+    assert "merging once more: this index was merged by pubchem-finder 2.2.1" in (
+        result.output
+    )
     cids = _cids(home)
     assert 1983 in cids
     assert 2244 not in cids
+    # The chunk gets a build id as it is merged, so that a rebuild by 2.2.1 (which
+    # writes none) is not taken for the build the index holds.
+    stats_path = home / "chunks" / "library.json"
+    stats = json.loads(stats_path.read_text())
     manifest = json.loads((home / "index" / "manifest.json").read_text())
-    assert manifest["chunk_builds"] == {"library": None}
-    assert "index up to date" in _sdf_build(home, library).output
+    assert stats["build_id"]
+    assert manifest["chunk_builds"] == {"library": stats["build_id"]}
+    again = _sdf_build(home, library)
+    assert "index up to date" in again.output
+    assert "merging" not in again.output
+
+    del stats["build_id"]  # 2.2.1 rebuilds the chunk and fails before its merge
+    stats_path.write_text(json.dumps(stats))
+    assert "merging 1 chunk(s)" in _sdf_build(home, library).output
 
 
 def test_index_build_skips_ids_the_index_cannot_hold(tmp_path):

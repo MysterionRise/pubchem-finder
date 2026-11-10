@@ -29,17 +29,31 @@ All notable changes to this project are documented here. The format follows
   Ctrl+C, a damaged file) was followed by a run that merged nothing. Each chunk build
   now has an id, the index records the ids it holds, and `index build` merges whenever
   they differ. An index that 2.2.1 merged from `--sdf` files is merged once more the
-  next time it is built on, which repairs one already in that state.
+  next time it is built on, which repairs one already in that state; the build says
+  that this is why it merges.
 - A chunk being rebuilt is replaced only when its new files are complete, and every
   check runs first. 2.2.1 deleted the old chunk up front, so a build that was then
   refused (for example because RDKit had changed since the other chunks were built) or
-  that failed had already lost it.
+  that failed had already lost it. A failed build also leaves no `.tmp` files behind.
+- A file with no usable record does not replace a chunk that has some. An export that
+  failed (0 bytes, a saved error page) or whose IDs were no longer numbers was
+  fingerprinted into an empty chunk that took the place of the last good one: with one
+  library the index stayed "ready" on fingerprints without records and every later
+  build failed with "No built chunks"; with several, the library left the index
+  without a word. The build now stops, keeps the chunk and says how to take the
+  library out of the index if that is what was meant.
 - `index build --sdf` keeps the chunk of a file that only moved (same size and
   modification time) instead of refusing it, compares chunk names without case
   (`Library.sdf` and `library.sdf` are the same files on macOS and Windows), and says
-  so when one file is given twice. A chunk built by 2.2.0 or earlier takes the file
-  passed for it as its own when that file is not newer than the chunk; 2.2.1
-  fingerprinted every such chunk again, from whatever file had its name.
+  so when one file is given twice. Chunks that already exist keep their spelling, so
+  an index holding both `Library` and `library` (possible on Linux until now) still
+  builds. A chunk built by 2.2.0 or earlier does not record its file and is rebuilt
+  once from the file passed for it, as in 2.2.1. When the file a chunk was built from
+  is gone and another one has its name, the refusal says where to put the new file to
+  replace the chunk, instead of "Rename one of them".
+- `index build` warns when a merge leaves out a chunk that is in the index but no
+  longer complete on disk (a rebuild killed in the middle of its swap), and says so
+  when it finishes a substructure build that an earlier run started.
 - `index build --sdf` skips records whose ID the index cannot hold (#105). FPSim2 keeps
   IDs as 32-bit numbers, so an in-house registry number above 4,294,967,295 was indexed
   under that number modulo 2^32: a search returned another compound's ID, with its
