@@ -113,6 +113,11 @@ class SimilarityResults(BaseModel):
     scaffolds: list["ScaffoldGroup"] | None = Field(
         default=None, description="Hits grouped by Murcko scaffold, when requested"
     )
+    warning: str | None = Field(
+        default=None,
+        description="Set when the results may be incomplete (files of the index "
+        "changed after it was merged); tell the user",
+    )
 
 
 class SubstructureResults(BaseModel):
@@ -138,13 +143,20 @@ class SubstructureResults(BaseModel):
         description="True if every candidate was checked, so the hits are all the matches"
     )
     hits: list[IndexedCompound] = Field(description="Matches, lowest CID first")
-    warning: str | None = None
+    warning: str | None = Field(
+        default=None,
+        description="Set when matches may be missing (files of the index changed "
+        "after it was merged, or RDKit changed since it was built); tell the user",
+    )
 
 
 class IndexStatus(BaseModel):
     """State of the local index."""
 
-    state: str = Field(description="'ready' or 'not_built'")
+    state: str = Field(
+        description="'ready' or 'not_built'. A ready index with unmerged_chunks "
+        "needs `index build` to finish; see hint"
+    )
     home: str = Field(description="Data directory")
     n_compounds: int = 0
     n_failed: int = 0
@@ -154,6 +166,13 @@ class IndexStatus(BaseModel):
     memory_bytes: int = Field(default=0, description="RAM needed to search in memory")
     chunks_in_index: int = 0
     chunks_built: int = Field(default=0, description="Chunks on disk, merged or not")
+    unmerged_chunks: list[str] = Field(
+        default_factory=list,
+        description="Chunks whose file was indexed again after the index was merged "
+        "(a build failed, was stopped, or is running): until a build completes, "
+        "searches return their earlier compounds without structures and do not "
+        "find compounds added since",
+    )
     loaded: bool = Field(
         default=False, description="Whether this process has the index in use"
     )

@@ -20,6 +20,7 @@
 import json
 import os
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -254,6 +255,30 @@ class IndexPaths:
                 "index for this version in another data directory (--home)."
             )
         return Manifest.model_validate(data)
+
+
+def unmerged(manifest: Manifest, chunks: Iterable[ChunkStats]) -> list[str]:
+    """The chunks of a merged index that are no longer the builds it holds.
+
+    ``chunks`` are the complete chunks on disk. A chunk rebuilt since the merge has
+    another build id: its Parquet file describes the new file while the merged
+    fingerprints are still the old one's, so the two must not be read together. A
+    chunk without stats is being replaced right now, or is gone.
+    """
+    on_disk = {c.name: c for c in chunks}
+    out: list[str] = []
+    for name in manifest.chunks:
+        stats = on_disk.get(name)
+        if stats is None:
+            out.append(name)
+        elif manifest.chunk_builds is None:
+            # Merged by 2.2.1 or earlier, which knew no build ids: a chunk of the
+            # user's own file that has one was rebuilt after that merge.
+            if stats.build_id is not None and stats.source is not None:
+                out.append(name)
+        elif manifest.chunk_builds.get(name) != stats.build_id:
+            out.append(name)
+    return out
 
 
 def chunk_key(name: str) -> str:

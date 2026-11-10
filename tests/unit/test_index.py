@@ -644,3 +644,79 @@ def test_in_memory_searches_of_one_array_never_overlap(substructure_home, monkey
         for job in jobs:
             job.result()
     assert peak == {"top_k": 1, "substructure": 1}
+
+
+# --- Chunks rebuilt since the merge ---------------------------------------------
+
+
+def _chunk(name, build_id, source=True):
+    from pubchem_finder.index.layout import ChunkStats, SourceFile
+
+    return ChunkStats(
+        name=name,
+        n_records=1,
+        n_failed=0,
+        seconds=0.0,
+        fp_type="Morgan",
+        fp_params={"radius": 2, "fpSize": 1024},
+        build_id=build_id,
+        source=SourceFile(path=f"/data/{name}.sdf", size=1, mtime_ns=1)
+        if source
+        else None,
+    )
+
+
+def test_unmerged_compares_build_ids(built_home):
+    from pubchem_finder.index.layout import unmerged
+
+    manifest = IndexPaths(built_home).load_manifest()
+    held = manifest.model_copy(
+        update={
+            "chunks": ["a", "b", "c"],
+            "chunk_builds": {"a": "1", "b": "2", "c": "3"},
+        }
+    )
+    on_disk = [_chunk("a", "1"), _chunk("b", "9"), _chunk("new", "5")]
+    # b is another build, c has no stats; a chunk that was never merged is not
+    # the index's business.
+    assert unmerged(held, on_disk) == ["b", "c"]
+    assert unmerged(held, [_chunk("a", "1"), _chunk("b", "2"), _chunk("c", "3")]) == []
+    # 2.2.1 rebuilds b: its stats lose their id.
+    assert unmerged(held, [_chunk("a", "1"), _chunk("b", None), _chunk("c", "3")]) == [
+        "b"
+    ]
+
+
+def test_unmerged_under_a_manifest_without_build_ids(built_home):
+    """Merged by 2.2.1 or earlier. Only a chunk of the user's own file that has a
+    build id was rebuilt since; PubChem's chunks are never rebuilt."""
+    from pubchem_finder.index.layout import unmerged
+
+    manifest = IndexPaths(built_home).load_manifest()
+    legacy = manifest.model_copy(
+        update={"chunks": ["lib", "old", "pubchem"], "chunk_builds": None}
+    )
+    on_disk = [
+        _chunk("lib", "7"),
+        _chunk("old", None),
+        _chunk("pubchem", "8", source=False),
+    ]
+    assert unmerged(legacy, on_disk) == ["lib"]
+
+
+def test_status_says_when_an_index_was_merged_before_build_ids(tmp_path, sample_sdfs):
+    import json
+
+    from pubchem_finder import service
+
+    paths = IndexPaths(tmp_path / "home")
+    build_chunks(paths, sources(sample_sdfs[:1]), workers=1)
+    finalize(paths)
+    assert "2.2.1 or earlier" not in (service.index_status(paths.home).hint or "")
+    data = json.loads(paths.manifest.read_text())
+    del data["chunk_builds"]
+    paths.manifest.write_text(json.dumps(data))
+    status = service.index_status(paths.home)
+    assert "merged by pubchem-finder 2.2.1 or earlier" in status.hint
+    # Its chunk has a build id, which no merge by 2.2.1 could have seen.
+    assert status.unmerged_chunks == [CHUNK_NAMES[0]]

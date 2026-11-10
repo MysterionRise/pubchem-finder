@@ -31,6 +31,17 @@ All notable changes to this project are documented here. The format follows
   they differ. An index that 2.2.1 merged from `--sdf` files is merged once more the
   next time it is built on, which repairs one already in that state; the build says
   that this is why it merges.
+- A rebuilt `--sdf` chunk is no longer read together with the fingerprints of the file
+  it replaced. Its records went live when its files were swapped in, while the index
+  kept the old fingerprints until the merge: after a build that failed or was stopped
+  in between (and for a running server, during every rebuild), a hit carried whatever
+  structure the new file had under the same ID, and `index status` said ready. With
+  IDs that were renumbered between exports, a search for aspirin returned caffeine's
+  structure at similarity 1.000. Searches now leave such a chunk's structures out and
+  carry a `warning` saying which file to build again; `index status` lists it in
+  `unmerged_chunks`; a build that fails after replacing chunks merges them before it
+  reports the failure; and a failed merge no longer says "The current index is
+  unchanged" when a chunk was replaced.
 - A chunk being rebuilt is replaced only when its new files are complete, and every
   check runs first. 2.2.1 deleted the old chunk up front, so a build that was then
   refused (for example because RDKit had changed since the other chunks were built) or

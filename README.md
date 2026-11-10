@@ -196,10 +196,13 @@ radius 2, 1024 bits); `--radius` and `--fp-size` change it for a new index.
 own. Each file becomes a chunk named after it, so two files with the same name (two
 vendors' `library.sdf`; upper and lower case count as the same) are refused rather than
 merged; rename one. Running the command again after a file changed rebuilds that file's
-chunk, and the old one stays searchable until the new one is complete. A file you moved
-keeps its chunk. A record's ID is its `PUBCHEM_COMPOUND_CID` tag or, failing that, its
-title line, and must be a whole number from 1 to 4,294,967,295; other records are skipped
-and counted.
+chunk and merges it. If the build fails or is stopped between the two, searches still
+answer from the old file: they leave the structures of that file's hits out and say so,
+`index status` lists the chunk under `unmerged_chunks`, and running the build again
+finishes it. A file with no usable record does not replace its chunk, and a file you
+moved keeps its chunk. A record's ID is its `PUBCHEM_COMPOUND_CID` tag or, when that is
+missing or not a number, its title line, and must be a whole number from 1 to
+4,294,967,295; other records are skipped and counted.
 
 Substructure search is optional because it needs a second fingerprint database. It is
 built from the SMILES already in the index, so `index build --with-substructure` adds it to

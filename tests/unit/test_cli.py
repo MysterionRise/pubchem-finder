@@ -676,6 +676,165 @@ def test_an_index_merged_by_2_2_1_with_sdf_chunks_is_merged_once_more(
     assert "merging 1 chunk(s)" in _sdf_build(home, library).output
 
 
+# Found reviewing the repair above, on real files: a rebuilt chunk's records go live
+# as soon as its files are swapped in, while the merged index holds the fingerprints
+# of the file it replaced until the merge is done. When the build failed or was
+# stopped in between, a search paired the two: with IDs that mean another compound in
+# the new export, aspirin's fingerprint came back with caffeine's structure at 1.000,
+# and `index status` said ready.
+
+ASPIRIN = "CC(=O)Oc1ccccc1C(=O)O"
+CAFFEINE = "Cn1cnc2c1c(=O)n(C)c(=O)n2C"
+PARACETAMOL = "CC(=O)Nc1ccc(O)cc1"
+EXPORT_1 = [(1, ASPIRIN, "aspirin", "new"), (2, "c1ccccc1", "benzene", "new")]
+EXPORT_2 = [(1, CAFFEINE, "caffeine", "new"), (5, PARACETAMOL, "paracetamol", "new")]
+
+
+def _search(home, smiles, *more):
+    found = runner.invoke(
+        app, ["search", smiles, "--home", str(home), "--threshold", "0.9", *more]
+    )
+    assert found.exit_code == 0, found.output
+    return found
+
+
+def _status(home):
+    result = runner.invoke(app, ["index", "status", "--home", str(home), "--json"])
+    return json.loads(result.output)
+
+
+@pytest.fixture
+def renumbered(tmp_path):
+    """An index of export 1, with the file then replaced by export 2."""
+    from tests.conftest import write_sdf
+
+    home = tmp_path / "home"
+    library = write_sdf(tmp_path / "library.sdf.gz", EXPORT_1)
+    args = ["index", "build", "--home", str(home), "--workers", "1"]
+    result = runner.invoke(app, [*args, "--sdf", str(library), "--with-substructure"])
+    assert result.exit_code == 0, result.output
+    write_sdf(library, EXPORT_2)
+    return home, library
+
+
+def test_rebuilt_chunk_is_not_read_with_the_fingerprints_it_replaced(
+    renumbered, monkeypatch
+):
+    from pubchem_finder.index import builder
+
+    home, library = renumbered
+    real = builder.sort_fpsim2_file
+    monkeypatch.setattr(
+        builder,
+        "sort_fpsim2_file",
+        lambda *a, **k: (_ for _ in ()).throw(OSError(28, "No space left on device")),
+    )
+    failed = _sdf_build(home, library)
+    assert failed.exit_code == 1
+    assert "built library: 2 compounds" in failed.output  # the chunk was replaced
+    assert "No space left on device" in failed.output
+    assert "The current index is unchanged" not in failed.output
+    assert "still holds the earlier build of library" in failed.output
+
+    # The index answers from export 1's fingerprints. ID 1 is caffeine now, so the
+    # hit must not carry a structure, and the result has to say why.
+    hits = json.loads(_search(home, ASPIRIN, "--json").output)
+    assert [(h["cid"], h["smiles"]) for h in hits["hits"]] == [(1, None)]
+    assert "library was indexed again after the last merge" in hits["warning"]
+    assert f"index build --sdf {library.resolve()}" in hits["warning"]
+    text = _search(home, ASPIRIN)
+    assert "warning: The index is behind its files" in text.output
+    assert CAFFEINE not in text.output
+
+    sub = runner.invoke(
+        app, ["substructure", "c1ccccc1", "--home", str(home), "--json"]
+    )
+    found = json.loads(sub.output)
+    assert found["hits"] == []  # not benzene's ID with another structure
+    assert "library was indexed again" in found["warning"]
+
+    status = _status(home)
+    assert status["state"] == "ready"
+    assert status["unmerged_chunks"] == ["library"]
+    assert "The index is behind its files" in status["hint"]
+
+    monkeypatch.setattr(builder, "sort_fpsim2_file", real)
+    again = _sdf_build(home, library)
+    assert again.exit_code == 0, again.output
+    assert _status(home)["unmerged_chunks"] == []
+    hits = json.loads(_search(home, CAFFEINE, "--json").output)
+    assert [(h["cid"], h["smiles"]) for h in hits["hits"]] == [(1, CAFFEINE)]
+    assert hits["warning"] is None
+    assert json.loads(_search(home, ASPIRIN, "--json").output)["hits"] == []
+
+
+def test_a_running_server_sees_a_chunk_change_under_it(renumbered):
+    """One LocalIndex for the life of the process, as the MCP server keeps it."""
+    from pubchem_finder import service
+    from pubchem_finder.index.builder import SdfSource, build_chunks, finalize
+    from pubchem_finder.index.layout import IndexPaths
+
+    home, library = renumbered
+    paths = IndexPaths(home)
+
+    def top(smiles):
+        result = service.similarity_search(smiles, threshold=0.9, home=home)
+        return [(h.cid, h.smiles) for h in result.hits], result.warning
+
+    assert top(ASPIRIN) == ([(1, ASPIRIN)], None)
+    build_chunks(paths, [SdfSource(name="library", local_path=library)])  # no merge
+    hits, warning = top(ASPIRIN)
+    assert hits == [(1, None)]
+    assert warning is not None
+    assert service.index_status(home).unmerged_chunks == ["library"]
+
+    finalize(paths)
+    assert top(CAFFEINE) == ([(1, CAFFEINE)], None)
+    assert top(ASPIRIN) == ([], None)
+    assert service.index_status(home).unmerged_chunks == []
+
+
+def test_failed_build_merges_what_it_had_already_replaced(renumbered, tmp_path):
+    """One damaged file among several: the others were rebuilt, nothing was merged,
+    and the only message was about the damaged file."""
+    from tests.conftest import CHUNK_B, write_sdf
+
+    home, library = renumbered
+    other = write_sdf(tmp_path / "other.sdf.gz", CHUNK_B)
+    data = other.read_bytes()
+    other.write_bytes(data[: len(data) // 2])
+    failed = _sdf_build(home, library, other)
+    assert failed.exit_code == 1
+    assert "library: indexed again before the build failed; merging" in failed.output
+    assert failed.output.rstrip().splitlines()[-1].startswith("error: ")
+    assert "is damaged or incomplete" in failed.output.rstrip().splitlines()[-1]
+
+    assert _status(home)["unmerged_chunks"] == []
+    hits = json.loads(_search(home, CAFFEINE, "--json").output)
+    assert [(h["cid"], h["smiles"]) for h in hits["hits"]] == [(1, CAFFEINE)]
+    assert hits["warning"] is None
+    found = json.loads(_search(home, PARACETAMOL, "--json").output)
+    assert [h["cid"] for h in found["hits"]] == [5]
+
+
+def test_failed_build_that_replaced_nothing_merges_nothing(
+    tmp_path, same_named, sample_sdfs
+):
+    """New chunks wait for a build that succeeds, as they always did: a download
+    that fails at chunk 37 of 359 must not start a merge of the first 36."""
+    home = tmp_path / "home"
+    assert _sdf_build(home, same_named[0]).exit_code == 0
+    new = tmp_path / "new.sdf.gz"
+    new.write_bytes(sample_sdfs[1].read_bytes())
+    broken = tmp_path / "broken.sdf.gz"
+    broken.write_bytes(sample_sdfs[1].read_bytes()[:200])
+    failed = _sdf_build(home, new, broken)
+    assert failed.exit_code == 1
+    assert "merging" not in failed.output
+    assert _status(home)["chunks_in_index"] == 1
+    assert _status(home)["unmerged_chunks"] == []
+
+
 def test_index_build_skips_ids_the_index_cannot_hold(tmp_path):
     from tests.conftest import write_sdf
 

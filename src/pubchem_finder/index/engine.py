@@ -19,7 +19,7 @@ from rdkit import Chem
 from .. import hints
 from ..config import INDEX_MODE_ENV
 from ..core.exceptions import IndexNotBuilt
-from .layout import IndexPaths, Manifest
+from .layout import ChunkStats, IndexPaths, Manifest, unmerged
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +114,10 @@ class LocalIndex:
         self._pattern_manifest: Manifest | None = None
         self._db: duckdb.DuckDBPyConnection | None = None
         self._db_files: list[Path] = []
+        # Chunk stats already read, by chunk name, with what os.stat said then.
+        self._stats_seen: dict[str, tuple[tuple[int, int, int], ChunkStats]] = {}
+        # Its own lock: _lock is held while an engine loads, which can take long.
+        self._stats_lock = threading.Lock()
 
     @property
     def manifest(self) -> Manifest:
@@ -268,12 +272,66 @@ class LocalIndex:
         result.exhaustive = result.n_checked == result.n_candidates
         return result
 
+    def unmerged(self, manifest: Manifest | None = None) -> dict[str, str | None]:
+        """Chunks rebuilt, or removed, since the index was merged (see
+        :func:`~pubchem_finder.index.layout.unmerged`), each with the file it was
+        last built from when that is known.
+
+        The index still holds their earlier fingerprints, so :meth:`metadata` leaves
+        their Parquet files out: a hit from one comes back without a structure
+        rather than with the structure another build filed under the same ID.
+        """
+        manifest = manifest or self.manifest
+        stats = {c.name: c for c in self._chunk_stats(manifest.chunks)}
+        files: dict[str, str | None] = {}
+        for name in unmerged(manifest, stats.values()):
+            source = stats[name].source if name in stats else None
+            files[name] = source.path if source is not None else None
+        return files
+
+    def _chunk_stats(self, names: list[str]) -> list[ChunkStats]:
+        """The stats of the chunks in ``names`` that are complete on disk.
+
+        One os.stat per chunk and search; a stats file is parsed again only when it
+        was replaced (a build writes a new file, so its inode changes with it).
+        """
+        found: list[ChunkStats] = []
+        with self._stats_lock:
+            for name in names:
+                path = self.paths.chunk_stats(name)
+                try:
+                    stat = path.stat()
+                    key = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
+                    seen = self._stats_seen.get(name)
+                    if seen is None or seen[0] != key:
+                        text = path.read_text(encoding="utf-8")
+                        seen = (key, ChunkStats.model_validate_json(text))
+                        self._stats_seen[name] = seen
+                except (OSError, ValueError):  # no stats: not a complete chunk
+                    self._stats_seen.pop(name, None)
+                    continue
+                found.append(seen[1])
+        return found
+
     def metadata(self, cids: list[int]) -> dict[int, dict[str, Any]]:
-        """Metadata rows for ``cids`` from the chunk Parquet files."""
+        """Metadata rows for ``cids`` from the chunk Parquet files, leaving out
+        chunks rebuilt since the index was merged (see :meth:`unmerged`)."""
         if not cids:
             return {}
-        manifest = self.manifest
-        files = self.paths.metadata_files(manifest.chunks)
+        rows: dict[int, dict[str, Any]] = {}
+        for _ in range(3):
+            manifest = self.manifest
+            stale = set(self.unmerged(manifest))
+            rows = self._metadata(cids, [n for n in manifest.chunks if n not in stale])
+            # A build may have replaced a chunk while its file was being read.
+            if set(self.unmerged(manifest)) == stale:
+                break
+        return rows
+
+    def _metadata(
+        self, cids: list[int], chunks: list[str]
+    ) -> dict[int, dict[str, Any]]:
+        files = self.paths.metadata_files(chunks)
         if not files:
             return {}
         with self._lock:

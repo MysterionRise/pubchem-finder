@@ -300,6 +300,8 @@ def search(
         return
     if result.note:
         typer.echo(f"note: {result.note}", err=True)
+    if result.warning:
+        typer.echo(f"warning: {result.warning}", err=True)
     typer.echo(
         f"{len(result.hits)} hit(s) >= {result.threshold} {result.metric} "
         f"among {result.n_indexed:,} compounds ({result.fingerprint})"
@@ -712,6 +714,11 @@ def index_build(
                     for n in names
                 ]
                 report = build_chunks(paths, sources, workers, params, say)
+    except (PubChemFinderError, OSError) as exc:
+        _merge_rebuilt_chunks(paths, say, workers)
+        _fail(exc)
+        return
+    try:
         manifest = finalize(paths, say, substructure=with_substructure, workers=workers)
     except (PubChemFinderError, OSError) as exc:
         _fail(exc)
@@ -722,6 +729,28 @@ def index_build(
         f"{len(manifest.chunks)} chunk(s){extra}, {len(report.built)} built this run, "
         f"in {paths.home}"
     )
+
+
+def _merge_rebuilt_chunks(paths: Any, say: Callable[[str], None], workers: int) -> None:
+    """After a build that failed part-way: merge the chunks it had replaced by then.
+
+    Their new records are on disk while the index still holds the fingerprints of
+    the files they replaced. Nothing is merged when the failed build replaced
+    nothing: chunks that are only new wait for a build that succeeds.
+    """
+    from .index.builder import finalize, rebuilt_since_merge
+
+    try:
+        rebuilt = rebuilt_since_merge(paths)
+        if not rebuilt:
+            return
+        say(
+            f"{', '.join(rebuilt)}: indexed again before the build failed; merging "
+            "so that the index matches the files"
+        )
+        finalize(paths, say, workers=workers)
+    except (PubChemFinderError, OSError, ValueError) as exc:
+        say(f"error: {exc}")
 
 
 def _build_demo(home: Path, say: Callable[[str], None]) -> None:

@@ -54,6 +54,7 @@ from .layout import (
     SubstructureInfo,
     chunk_key,
     chunk_name,
+    unmerged,
     write_json_atomic,
 )
 
@@ -806,6 +807,21 @@ def _some(names: Sequence[str]) -> str:
     return ", ".join(names[:3]) + more
 
 
+def rebuilt_since_merge(paths: IndexPaths) -> list[str]:
+    """Chunks that are complete on disk in another build than the index holds.
+
+    Until they are merged the index answers from the fingerprints of the files
+    they replaced, and searches leave their structures out (see
+    :func:`~pubchem_finder.index.layout.unmerged`).
+    """
+    manifest = paths.load_manifest()
+    if manifest is None:
+        return []
+    chunks = paths.completed_chunks()
+    built = {c.name for c in chunks}
+    return [name for name in unmerged(manifest, chunks) if name in built]
+
+
 def _remove_pattern_data(paths: IndexPaths) -> bool:
     """Delete the pattern database and its chunks; whether there was anything."""
     found = paths.pattern_fingerprints.exists() or paths.pattern_chunks.is_dir()
@@ -835,9 +851,19 @@ def _merge_similarity(
     paths.index_dir.mkdir(parents=True, exist_ok=True)
     files = [str(paths.chunk_h5(c.name)) for c in chunks]
     emit(f"merging {len(files)} chunk(s) into {paths.fingerprints}")
+    behind = rebuilt_since_merge(paths)
     # The old manifest stays until the merged file is complete, so a failed merge
     # leaves the previous index searchable; it is withdrawn only for the swap.
-    _merge_h5(files, paths.fingerprints, withdraw=paths.manifest, home=paths.home)
+    _merge_h5(
+        files,
+        paths.fingerprints,
+        withdraw=paths.manifest,
+        home=paths.home,
+        on_failure="The current index is unchanged."
+        if not behind
+        else f"The index still holds the earlier build of {_some(behind)}: searches "
+        "leave its structures out until a build completes. Run the build again.",
+    )
     all_stats = paths.completed_chunks()
     chunks = [_with_build_id(paths, c) for c in chunks]
     return Manifest(
@@ -935,7 +961,7 @@ def _merge_h5(
         ) from exc
     finally:
         unsorted.unlink(missing_ok=True)
-    _swap_in(tmp, dest, withdraw)
+    _swap_in(tmp, dest, withdraw, on_failure)
 
 
 def _check_mergeable(files: list[str], home: Path) -> None:
@@ -957,7 +983,7 @@ def _check_mergeable(files: list[str], home: Path) -> None:
         )
 
 
-def _swap_in(tmp: Path, dest: Path, withdraw: Path | None) -> None:
+def _swap_in(tmp: Path, dest: Path, withdraw: Path | None, on_failure: str) -> None:
     aside = withdraw.with_name(withdraw.name + ".old") if withdraw else None
     if withdraw is not None and aside is not None and withdraw.exists():
         os.replace(withdraw, aside)
@@ -971,7 +997,7 @@ def _swap_in(tmp: Path, dest: Path, withdraw: Path | None) -> None:
         tmp.unlink(missing_ok=True)
         raise IndexBuildError(
             f"Could not replace {dest}: {exc}. If a server is using the index, stop "
-            "it and run the build again; the current index is unchanged."
+            f"it and run the build again. {on_failure}"
         ) from exc
     if aside is not None:
         aside.unlink(missing_ok=True)

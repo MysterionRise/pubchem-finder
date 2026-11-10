@@ -213,6 +213,23 @@ def _search_index(home: Path | str | None) -> tuple[LocalIndex, str, str | None]
     return demo_index, "demo", note
 
 
+def _unmerged_warning(index: LocalIndex) -> str | None:
+    """What to tell the user when chunks were rebuilt after the index was merged."""
+    stale = index.unmerged()
+    if not stale:
+        return None
+    names = ", ".join(list(stale)[:3]) + (
+        f" and {len(stale) - 3} more" if len(stale) > 3 else ""
+    )
+    return (
+        f"The index is behind its files: {names} was indexed again after the last "
+        "merge (a build failed, was stopped, or is still running). Until a build "
+        "completes, hits from it come without a structure and compounds added "
+        "since are not found. Finish with "
+        f"{hints.merge_rebuilt(list(stale.values()), index.paths.home)}."
+    )
+
+
 def similarity_search(
     smiles: str,
     threshold: float = 0.7,
@@ -249,6 +266,7 @@ def similarity_search(
         note=note,
         hits=hits,
         scaffolds=medchem.group_by_scaffold(hits) if group_by_scaffold else None,
+        warning=_unmerged_warning(index),
     )
 
 
@@ -268,14 +286,15 @@ def substructure_search(
     index, scope, note = _search_index(home)
     found = index.substructure(mol, max_hits=max_hits, max_candidates=max_candidates)
     sub = index.manifest.substructure
-    warning = None
+    warnings = [_unmerged_warning(index)]
     if sub is not None and sub.rdkit_version != rdkit.__version__:
-        warning = (
+        warnings.append(
             f"The substructure index was built with RDKit {sub.rdkit_version}, but "
             f"RDKit {rdkit.__version__} is running. Pattern fingerprints can differ "
             "between releases, so matches may be missing. Rebuild it with "
             f"{hints.add_substructure(index.paths.home)}."
         )
+    warning = " ".join(w for w in warnings if w) or None
     return SubstructureResults(
         query=query,
         query_type=query_type,
@@ -313,6 +332,21 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
             hint=hints.build_index(paths.home) + until_then,
         )
     sub = manifest.substructure if paths.pattern_fingerprints.exists() else None
+    hint_parts = [
+        _unmerged_warning(index),
+        None
+        if sub is not None
+        else (
+            f"Substructure search is off; add it with {hints.add_substructure(paths.home)}."
+        ),
+    ]
+    if manifest.chunk_builds is None and any(c.source is not None for c in built):
+        hint_parts.insert(
+            1,
+            "This index was merged by pubchem-finder 2.2.1 or earlier, which could "
+            "miss a file that had been indexed again; the next `index build` merges "
+            "it once more to be sure.",
+        )
     return IndexStatus(
         state="ready",
         home=str(paths.home),
@@ -324,6 +358,7 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
         memory_bytes=manifest.memory_bytes(),
         chunks_in_index=len(manifest.chunks),
         chunks_built=len(built),
+        unmerged_chunks=list(index.unmerged(manifest)),
         loaded=index.loaded,
         mode=None
         if index.in_memory is None
@@ -335,11 +370,7 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
         substructure_memory_bytes=sub.memory_bytes() if sub is not None else 0,
         search_scope="index",
         demo_compounds=demo_compounds,
-        hint=None
-        if sub is not None
-        else (
-            f"Substructure search is off; add it with {hints.add_substructure(paths.home)}."
-        ),
+        hint=" ".join(part for part in hint_parts if part) or None,
     )
 
 
