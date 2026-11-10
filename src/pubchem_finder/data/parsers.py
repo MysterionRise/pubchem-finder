@@ -121,13 +121,19 @@ _UNIPROT = re.compile(
 )
 
 
-def _representative(accessions: Counter[str]) -> str | None:
-    """One accession for a gene PubChem lists under several: UniProt's if there is
-    one, otherwise the most frequent."""
-    if not accessions:
-        return None
-    uniprot = [a for a, _ in accessions.most_common() if _UNIPROT.fullmatch(a)]
-    return uniprot[0] if uniprot else accessions.most_common(1)[0][0]
+def _representative(active: Counter[str], listed: Counter[str]) -> str | None:
+    """One accession for a target PubChem lists under several: UniProt's if there
+    is one, otherwise the most frequent.
+
+    ``active`` counts the accessions on the target's active rows, ``listed`` those
+    on every row of its gene: PubChem may give the UniProt accession only on rows
+    with another outcome.
+    """
+    for accessions in (active, listed):
+        uniprot = [a for a, _ in accessions.most_common() if _UNIPROT.fullmatch(a)]
+        if uniprot:
+            return uniprot[0]
+    return active.most_common(1)[0][0] if active else None
 
 
 def _column_index(columns: Sequence[str]) -> dict[str, int]:
@@ -169,9 +175,21 @@ def summarize_assays(
         value = str(cells[i]).strip()
         return value or None
 
+    # A gene appears with several protein accessions, or none; it is one target.
+    # The same accession also appears with its gene on some rows and without it on
+    # others (depositors differ), so the table itself says which gene such a row
+    # means, as long as it names exactly one.
+    accession_genes: dict[str, set[str]] = defaultdict(set)
+    gene_accessions: dict[str, Counter[str]] = defaultdict(Counter)
+    for row in rows:
+        cells = row.get("Cell", [])
+        accession, gene_id = cell(cells, "accession"), cell(cells, "gene_id")
+        if accession and gene_id:
+            accession_genes[accession].add(gene_id)
+            gene_accessions[gene_id][accession] += 1
+
     aids: set[int] = set()
     outcomes: Counter[str] = Counter()
-    # A gene appears with several protein accessions, or none; it is one target.
     target_aids: dict[tuple[str, str], set[int]] = defaultdict(set)
     target_accessions: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
     potent: list[PotentResult] = []
@@ -187,6 +205,8 @@ def summarize_assays(
         if outcome != "Active":
             continue
         accession, gene_id = cell(cells, "accession"), cell(cells, "gene_id")
+        if accession and not gene_id and len(accession_genes[accession]) == 1:
+            (gene_id,) = accession_genes[accession]
         if gene_id or accession:
             target = ("gene", gene_id) if gene_id else ("accession", accession or "")
             target_aids[target].add(aid)
@@ -221,7 +241,10 @@ def summarize_assays(
         outcomes=dict(outcomes.most_common()),
         top_targets=[
             TargetActivity(
-                target_accession=_representative(target_accessions[target]),
+                target_accession=_representative(
+                    target_accessions[target],
+                    gene_accessions[target[1]] if target[0] == "gene" else Counter(),
+                ),
                 target_gene_id=target[1] if target[0] == "gene" else None,
                 active_assays=len(target_aids[target]),
             )

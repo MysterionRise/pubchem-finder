@@ -276,12 +276,16 @@ class Description(BaseModel):
 
 
 class TargetActivity(BaseModel):
-    """One target: a gene, however many protein accessions PubChem lists it under."""
+    """One target: a gene, however many protein accessions PubChem lists it under,
+    or a protein accession for which PubChem's table names no single gene."""
 
     target_accession: str | None = Field(
         description="A protein accession of the target (UniProt's when PubChem has one)"
     )
-    target_gene_id: str | None = Field(description="NCBI Gene ID")
+    target_gene_id: str | None = Field(
+        description="NCBI Gene ID; None when PubChem names no gene, or more than "
+        "one, for the accession"
+    )
     active_assays: int = Field(description="Distinct assays with an active result")
 
 
@@ -305,7 +309,8 @@ class BioactivitySummary(BaseModel):
         "report several"
     )
     top_targets: list[TargetActivity] = Field(
-        description="Targets with the most active assays, one row per gene"
+        description="Targets with the most active assays, one row per gene (per "
+        "protein accession where PubChem names no single gene for it)"
     )
     most_potent: list[PotentResult] = Field(
         description="Active results with the lowest potency-type values in µM (IC50, "

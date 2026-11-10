@@ -124,6 +124,56 @@ def test_targets_are_counted_per_gene_across_accessions():
     ] == [("2099", "P03372", 3), ("7157", "P04637", 2), (None, "XP_1", 1)]
 
 
+def test_rows_without_a_gene_join_the_gene_their_accession_has_elsewhere():
+    """ChEMBL's binding assays carry the accession and no gene, other depositors
+    both. Imatinib showed ABL1 twice in its top five: 141 assays under gene 25 and
+    49 under P00519 alone, where the table supports 190."""
+    summary = parsers.summarize_assays(
+        _assays(
+            fx.assay("400", "Active", "P00519", "25"),
+            fx.assay("401", "Active", "P00519", "", "0.01", "Ki", "ABL1 binding"),
+            fx.assay("402", "Active", "P00519", ""),
+            fx.assay("403", "Unspecified", "P16234", "5156"),  # the gene, not active
+            fx.assay("404", "Active", "P16234", ""),
+            # One accession under two genes: its gene-less row cannot be placed.
+            fx.assay("405", "Active", "P00760", "615026"),
+            fx.assay("406", "Inactive", "P00760", "780933"),
+            fx.assay("407", "Active", "P00760", ""),
+            fx.assay("408", "Active", "P00760", ""),
+        ),
+        cid=1,
+        top_n=10,
+    )
+    assert [
+        (t.target_gene_id, t.target_accession, t.active_assays)
+        for t in summary.top_targets
+    ] == [
+        ("25", "P00519", 3),
+        (None, "P00760", 2),
+        ("5156", "P16234", 1),
+        ("615026", "P00760", 1),
+    ]
+    assert [(p.aid, p.target_gene_id) for p in summary.most_potent] == [(401, "25")]
+
+
+def test_target_accession_is_uniprots_even_when_only_other_rows_carry_it():
+    """Quercetin's ESR1 was labelled AEP43755 (GenBank): PubChem lists P03372 for
+    gene 2099 in the same table, on rows whose outcome is not active."""
+    summary = parsers.summarize_assays(
+        _assays(
+            fx.assay("500", "Active", "AEP43755", "2099"),
+            fx.assay("501", "Active", "AEP43755", "2099"),
+            fx.assay("502", "Inactive", "P03372", "2099"),
+            fx.assay("503", "Active", "NP_001", "7157"),  # no UniProt anywhere
+        ),
+        cid=1,
+    )
+    assert [(t.target_gene_id, t.target_accession) for t in summary.top_targets] == [
+        ("2099", "P03372"),
+        ("7157", "NP_001"),
+    ]
+
+
 def test_summarize_assays_empty_and_malformed():
     empty = {"Table": {"Columns": {"Column": fx.ASSAY_COLUMNS}, "Row": []}}
     summary = parsers.summarize_assays(empty, cid=1)
