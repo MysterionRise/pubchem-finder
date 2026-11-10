@@ -45,3 +45,24 @@ def test_launch_python_matches_the_published_commands():
     from tests.unit.test_metadata import LAUNCH_PYTHON
 
     assert hints.LAUNCH_PYTHON == LAUNCH_PYTHON
+
+
+def test_messages_name_a_command_that_runs_from_any_terminal(monkeypatch, tmp_path):
+    """Most users reach the server through uvx and have no `pubchem-finder` on their
+    PATH; two messages still told them to run the bare command."""
+    from pubchem_finder import service
+    from pubchem_finder.index import builder
+    from pubchem_finder.index.layout import IndexPaths
+
+    monkeypatch.setattr(hints, "__version__", "2.2.2")
+    launch = "uvx --python 3.14 pubchem-finder==2.2.2"
+    note = service.DEMO_NOTE.format(
+        n=1932, live=hints.command("pubchem similarity SMILES"), build=""
+    )
+    assert f"`{launch} pubchem similarity SMILES`" in note
+    assert "`pubchem-finder " not in note
+
+    help_text = builder._version_help(IndexPaths(tmp_path))
+    assert f"`{launch} index build --home NEW_DIR`" in help_text
+    assert "--sdf" in help_text  # the advice also fits people indexing their own files
+    assert "`pubchem-finder " not in help_text

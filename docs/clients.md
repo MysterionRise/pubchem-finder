@@ -157,24 +157,41 @@ curl -s http://127.0.0.1:8000/health
 uv run python scripts/smoke.py --url http://127.0.0.1:8000/mcp   # every tool, from the repo
 ```
 
-**Beyond your own machine.** The server binds to `127.0.0.1` by default and has no
-authentication or TLS of its own. To share it, keep that default and put an HTTPS reverse
-proxy with authentication in front of it (Caddy, nginx, a Cloudflare Tunnel...), then bind
-to the interface the proxy reaches with `--host`. With Caddy, `/etc/caddy/Caddyfile`:
+**Beyond your own machine (experimental).** The server binds to `127.0.0.1` by default
+and has no authentication or TLS of its own. To share it, put an HTTPS reverse proxy with
+authentication in front of it (Caddy, nginx, a Cloudflare Tunnel...). With the proxy on
+the same machine, keep the default bind. The server then answers only requests whose
+`Host` header is local (DNS-rebinding protection), so the proxy has to send one: nginx's
+`proxy_pass` does by default, Caddy and Cloudflare Tunnel pass the public name through
+unless told otherwise. With Caddy, `/etc/caddy/Caddyfile`:
 
 ```
 pubchem.example.com {
     basic_auth {
         alice <hash from `caddy hash-password`>
     }
-    reverse_proxy 127.0.0.1:8000
+    reverse_proxy 127.0.0.1:8000 {
+        header_up Host {upstream_hostport}
+        header_up -Origin
+    }
 }
 ```
 
-Binding to anything but `127.0.0.1` prints a warning. For loopback binds the server
-also rejects requests whose `Host` header is not local (DNS-rebinding protection); for
-other binds it accepts any `Host`, so the proxy is the trust boundary. A Docker image and
-an `--allowed-host` option are on the roadmap if shared servers see use.
+`header_up -Origin` matters only for clients that run in a browser, whose `Origin` is the
+public name too. Check the setup through the proxy with an MCP client, for example
+`uv run python scripts/smoke.py --url https://pubchem.example.com/mcp` from the repo:
+`/health` answers even when the `Host` header is wrong and every `/mcp` request gets a
+421.
+
+With the proxy on another machine, bind to the interface it reaches with `--host`.
+Binding to anything but `127.0.0.1` prints a warning, and the server then accepts any
+`Host`, so the proxy is the trust boundary.
+
+Sharing one server is the least-tested way to run pubchem-finder: a few heavy requests
+can slow everyone down, and the memory limits of containers are not detected. A Docker
+image, an `--allowed-host` option and per-request limits are designed but not scheduled.
+If you run it for a group, or want to, say what you need in
+[#125](https://github.com/MysterionRise/pubchem-finder/issues/125).
 
 **What a shared server shares:**
 

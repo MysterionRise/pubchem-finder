@@ -189,9 +189,8 @@ def get_index(home: Path | str | None = None) -> LocalIndex:
 
 DEMO_NOTE = (
     "Searched the built-in demo set of {n:,} FDA-approved drugs, not PubChem. "
-    "pubchem_similarity_search and pubchem_substructure_search (`pubchem-finder "
-    "pubchem` in a terminal) search all of PubChem live. No local index is built yet. "
-    "{build}"
+    "pubchem_similarity_search and pubchem_substructure_search (`{live}` in a "
+    "terminal) search all of PubChem live. No local index is built yet. {build}"
 )
 
 
@@ -207,7 +206,9 @@ def _search_index(home: Path | str | None) -> tuple[LocalIndex, str, str | None]
         return index, "index", None
     demo_index = get_index(demo.ensure_built(index.paths.home))
     note = DEMO_NOTE.format(
-        n=demo_index.manifest.n_compounds, build=hints.build_index(index.paths.home)
+        n=demo_index.manifest.n_compounds,
+        live=hints.command("pubchem similarity SMILES"),
+        build=hints.build_index(index.paths.home),
     )
     return demo_index, "demo", note
 

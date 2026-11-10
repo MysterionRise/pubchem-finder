@@ -40,7 +40,7 @@ from FPSim2.io import create_db_file
 from FPSim2.io.backends.pytables import merge_db_files
 from rdkit import Chem, rdBase
 
-from .. import __version__
+from .. import __version__, hints
 from ..core.exceptions import IndexBuildError, PubChemFinderError
 from ..data.sdf import MAX_ID, SdfReader, SdfRecord
 from .layout import (
@@ -571,9 +571,10 @@ def _version_help(paths: IndexPaths) -> str:
     return (
         "FPSim2 can't merge fingerprints written by different versions. The current "
         "index is unchanged and still searchable. To grow it, build the larger index "
-        "in a new data directory (`pubchem-finder index build --limit N --home NEW_DIR`)"
-        f" and point PUBCHEM_FINDER_HOME at it once it's ready, or delete {paths.home}"
-        " and build again."
+        f"in a new data directory (`{hints.command('index build --home NEW_DIR')}` "
+        "with `--limit N`, `--all` or your `--sdf` files) and point "
+        f"PUBCHEM_FINDER_HOME at it once it's ready, or delete {paths.home} and build "
+        "again."
     )
 
 

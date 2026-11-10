@@ -23,13 +23,6 @@ All notable changes to this project are documented here. The format follows
   `pubchem://compound/{cid}` returned an empty record, `pubchem_bioactivity` said "not
   tested" and `pubchem_xrefs` reported zero references, because PubChem answers a
   missing compound and a compound without data alike.
-- `index build --sdf` skips records whose ID the index cannot hold (#105). FPSim2 keeps
-  IDs as 32-bit numbers, so an in-house registry number above 4,294,967,295 was indexed
-  under that number modulo 2^32: a search returned another compound's ID, with its
-  PubChem link, at similarity 1.0. Such records are now counted as skipped and the
-  build says so, naming the first one. IDs must be plain digits: `²` and other
-  non-ASCII digits are no longer read as numbers, here or in `pubchem://compound/{cid}`.
-  An index built from a file with such IDs has to be rebuilt in a new `--home`.
 - `index build --sdf` could leave an index that searched an old version of a file while
   reporting it ready. 2.2.1 rebuilt the chunk of a changed file but decided whether to
   merge from what the same run had done, so a rebuild that failed part-way (a full disk,
@@ -47,6 +40,13 @@ All notable changes to this project are documented here. The format follows
   so when one file is given twice. A chunk built by 2.2.0 or earlier takes the file
   passed for it as its own when that file is not newer than the chunk; 2.2.1
   fingerprinted every such chunk again, from whatever file had its name.
+- `index build --sdf` skips records whose ID the index cannot hold (#105). FPSim2 keeps
+  IDs as 32-bit numbers, so an in-house registry number above 4,294,967,295 was indexed
+  under that number modulo 2^32: a search returned another compound's ID, with its
+  PubChem link, at similarity 1.0. Such records are now counted as skipped and the
+  build says so, naming the first one. IDs must be plain digits: `²` and other
+  non-ASCII digits are no longer read as numbers, here or in `pubchem://compound/{cid}`.
+  An index built from a file with such IDs has to be rebuilt in a new `--home`.
 - Substructure search is no longer dropped when its merge is interrupted (#120). The
   index goes without it while the pattern database is merged; a build stopped there
   used to come back without substructure search, call itself up to date, and delete
@@ -59,6 +59,22 @@ All notable changes to this project are documented here. The format follows
   cut-off answer used to fail the whole call. The note says why patents are missing,
   and that for the most-patented compounds (water, ethanol) PubChem's 30-second limit
   is reached every time.
+- Two messages told people to run a bare `pubchem-finder ...` command, which most
+  users, who start the server through `uvx`, do not have: the note on searches of the
+  demo set, and the advice after an RDKit or FPSim2 upgrade. Both now give the full
+  `uvx` command for the running version, and the upgrade advice also fits indexes
+  built from your own files.
+- The Caddy example in docs/clients.md could not work: with the server on its default
+  loopback bind, Caddy passed the public `Host` header through and every MCP request
+  was refused with a 421, while the suggested `/health` check still passed. The example
+  now rewrites `Host` (and drops `Origin`, for browser-based clients), and the check
+  goes through the proxy with an MCP client.
+
+### Changed
+
+- README: a "What leaves your machine" section says which tools send what to PubChem
+  and which send nothing. docs/clients.md marks sharing one server over HTTP as
+  experimental and points to #125. ROADMAP.md follows the new milestones.
 
 ## [2.2.1] - 2026-11-04
 
@@ -85,9 +101,9 @@ All notable changes to this project are documented here. The format follows
 - `index build --sdf` no longer loses compounds when files share a name. Each file becomes
   a chunk named after it, so `--sdf vendor_a/library.sdf --sdf vendor_b/library.sdf`
   kept only one of them, while reporting both as built, and a file with the same name
-  in a later run replaced the first. Both are now refused with a message that says to
-  rename one. Chunks record the file they were built from, and running the command
-  again after a file changed rebuilds its chunk instead of skipping it as already built.
+  in a later run was skipped as already built. Both are now refused with a message that
+  says to rename one. Chunks record the file they were built from, and running the
+  command again after a file changed rebuilds its chunk instead of skipping it.
 - `pubchem_xrefs` no longer fails for well-studied compounds when PubChem runs out of
   time listing their patents (#90): patents, most of the response (3.1 of 3.6 MB for
   aspirin), are fetched on their own, and if that request times out the registry IDs and

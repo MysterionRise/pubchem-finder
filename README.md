@@ -227,8 +227,8 @@ pubchem-finder pubchem bioactivity 2244       # assay outcomes, top targets, low
 PubChem's similarity search uses its own fingerprint and does not report scores, so each
 hit is scored here with ECFP4, the same fingerprint as the local index, and sorted by it.
 Successful responses are cached for 7 days, so repeated questions cost nothing and stay
-within PubChem's rate limits (`pubchem-finder cache info | clear`; `PUBCHEM_FINDER_CACHE=0`
-turns the cache off).
+within PubChem's rate limits. `pubchem-finder cache info` shows the cache and
+`pubchem-finder cache clear` empties it; `PUBCHEM_FINDER_CACHE=0` turns it off.
 
 ### Pictures, triage and whole files
 
@@ -313,6 +313,28 @@ To give your own agent the tools instead, talk to the MCP server:
 does it with the plain MCP client in under 50 lines (`uv run examples/mcp_client.py`, no
 API key). Examples for agent frameworks are welcome, see
 [#34](https://github.com/MysterionRise/pubchem-finder/issues/34).
+
+## What leaves your machine
+
+pubchem-finder has no telemetry, no account and no API key. What it sends depends on the
+tool:
+
+- **Nothing:** `compound_properties`, `standardize`, `compare`, `medchem_profile`,
+  `draw_molecules`, `similarity_search`, `substructure_search` and `index_status`, and the
+  commands behind them, run on your machine with RDKit and the local index. A structure
+  you pass to them goes nowhere.
+- **Your query, to PubChem:** the `pubchem_*` tools, `pubchem://compound/{cid}`, `lookup`
+  and the `pubchem` commands send the name, CID, InChIKey or SMILES you asked about to
+  NCBI's PubChem service over HTTPS, and nothing else. Answers are cached for 7 days in
+  your data directory.
+- **Downloads:** `index build --limit N` and `--all` fetch PubChem's SDF files from NCBI;
+  `index build --sdf` reads your own files and sends nothing. The first `uvx` run fetches
+  the packages from PyPI.
+
+So to keep a structure confidential, search it with the local tools and do not ask for
+PubChem's live searches on it (`pubchem_similarity_search`, `pubchem_substructure_search`,
+`pubchem_exact_match`, or `pubchem_lookup` by SMILES). Your AI assistant is separate from
+all this: whatever you type into it, and whatever the tools return, goes to its provider.
 
 ## Troubleshooting
 
