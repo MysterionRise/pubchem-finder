@@ -529,8 +529,9 @@ def find_analogues(compound: str, threshold: str = "0.6") -> str:
         "1. Get its SMILES with pubchem_lookup unless it is one already.\n"
         f"2. Run similarity_search with threshold={value:g} and group_by_scaffold=true. "
         'If the result\'s search_scope is "demo", tell me that only the built-in demo '
-        "set of FDA-approved drugs was searched, and also run pubchem_similarity_search "
-        "to cover all of PubChem.\n"
+        "set of FDA-approved drugs was searched, and offer to run "
+        "pubchem_similarity_search to cover all of PubChem (it sends the structure to "
+        "PubChem, so ask first).\n"
         "3. Draw the closest hits (up to 8, the query first) with draw_molecules, "
         'highlight="diff" and the query as reference_smiles, with CIDs and similarities '
         "as legends.\n"

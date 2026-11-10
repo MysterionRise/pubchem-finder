@@ -197,8 +197,11 @@ DEMO_NOTE = (
 )
 
 
-def _search_index(home: Path | str | None) -> tuple[LocalIndex, str, str | None]:
+def _search_index(
+    home: Path | str | None, live: str = "pubchem similarity SMILES"
+) -> tuple[LocalIndex, str, str | None]:
     """The index a local search uses, its scope and the note for the results.
+    ``live`` is the command that runs the same search over all of PubChem.
 
     The local index once one is built. Until then the built-in demo index (built
     on first use, in about a second), unless PUBCHEM_FINDER_DEMO=0; then the
@@ -210,7 +213,7 @@ def _search_index(home: Path | str | None) -> tuple[LocalIndex, str, str | None]
     demo_index = get_index(demo.ensure_built(index.paths.home))
     note = DEMO_NOTE.format(
         n=demo_index.manifest.n_compounds,
-        live=hints.command("pubchem similarity SMILES"),
+        live=hints.command(live),
         build=hints.build_index(index.paths.home),
     )
     return demo_index, "demo", note
@@ -322,7 +325,7 @@ def substructure_search(
     if max_candidates < 1:
         raise PubChemFinderError("max_candidates must be at least 1")
     mol = parse_query(query, query_type)
-    index, scope, note = _search_index(home)
+    index, scope, note = _search_index(home, live="pubchem substructure SMILES")
     found = index.substructure(mol, max_hits=max_hits, max_candidates=max_candidates)
     sub = found.merged.manifest.substructure
     warnings = [_unmerged_warning(index, found.merged, "substructure")]

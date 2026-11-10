@@ -30,7 +30,14 @@ All notable changes to this project are documented here. The format follows
 - A CID that PubChem does not have is "not found" (#104). `pubchem_lookup` by CID and
   `pubchem://compound/{cid}` returned an empty record, `pubchem_bioactivity` said "not
   tested" and `pubchem_xrefs` reported zero references, because PubChem answers a
-  missing compound and a compound without data alike.
+  missing compound and a compound without data alike. The same holds for a lookup by
+  SMILES or InChIKey of a structure PubChem does not have, which returned a record
+  with CID 0 and a link to `/compound/0`: it now raises `CompoundNotFound`, so code
+  that tested for `cid == 0` or an empty title has to catch that instead. A lookup of
+  several CIDs at once returns the ones that exist and leaves the others out.
+- `lookup` says how to look up something that is not a name. `lookup 2244` and
+  `lookup <SMILES>` answered "No CID found ... the given name"; the error now adds
+  `--by cid`, `--by smiles` or `--by inchikey`, and the README shows it.
 - `draw_molecules` with `highlight="diff"` (and `draw --highlight diff`) no longer
   marks almost the whole molecule as changed. The common-substructure search has a
   2-second limit, and when it ran out the few atoms found so far were taken for the
@@ -73,7 +80,7 @@ All notable changes to this project are documented here. The format follows
   come back as given, with the note. In Python,
   `MoleculeStandardizer.standardize_detailed` returns the same three parts.
 - `index build --sdf` could leave an index that searched an old version of a file while
-  reporting it ready. 2.2.1 rebuilt the chunk of a changed file but decided whether to
+  reporting it ready (#102). 2.2.1 rebuilt the chunk of a changed file but decided whether to
   merge from what the same run had done, so a rebuild that failed part-way (a full disk,
   Ctrl+C, a damaged file) was followed by a run that merged nothing. Each chunk build
   now has an id, the index records the ids it holds, and `index build` merges whenever
@@ -110,7 +117,7 @@ All notable changes to this project are documented here. The format follows
   not `lib[1]`: its hits came back without a structure, or with the structure
   `lib1.sdf` has under the same ID.
 - A chunk being rebuilt is replaced only when its new files are complete, and every
-  check runs first. 2.2.1 deleted the old chunk up front, so a build that was then
+  check runs first (#102). 2.2.1 deleted the old chunk up front, so a build that was then
   refused (for example because RDKit had changed since the other chunks were built) or
   that failed had already lost it. A failed build also leaves no `.tmp` files behind.
 - A file with no usable record does not replace a chunk that has some. An export that
@@ -164,19 +171,31 @@ All notable changes to this project are documented here. The format follows
 - Two messages told people to run a bare `pubchem-finder ...` command, which most
   users, who start the server through `uvx`, do not have: the note on searches of the
   demo set, and the advice after an RDKit or FPSim2 upgrade. Both now give the full
-  `uvx` command for the running version, and the upgrade advice also fits indexes
+  `uvx` command for the running version, the note names the command for the search
+  that ran (similarity or substructure), and the upgrade advice also fits indexes
   built from your own files.
 - The Caddy example in docs/clients.md could not work: with the server on its default
   loopback bind, Caddy passed the public `Host` header through and every MCP request
   was refused with a 421, while the suggested `/health` check still passed. The example
-  now rewrites `Host` (and drops `Origin`, for browser-based clients), and the check
-  goes through the proxy with an MCP client.
+  now rewrites `Host`, and the check is an MCP request sent through the proxy with
+  `curl`. The page also says how clients send the proxy's credentials and that clients
+  running in a web page are not supported through it.
 
 ### Changed
 
 - README: a "What leaves your machine" section says which tools send what to PubChem
-  and which send nothing. docs/clients.md marks sharing one server over HTTP as
-  experimental and points to #125. ROADMAP.md follows the new milestones.
+  and which send nothing, and which of the built-in prompts point the assistant at
+  PubChem. docs/clients.md marks sharing one server over HTTP as experimental and
+  points to #125. ROADMAP.md follows the new milestones.
+- Requests to PubChem no longer return NCBI's session cookie. A long-running server
+  shares one HTTP client, so every later request of that server, for every user of a
+  shared one, went out under the same session ID.
+- The `find_analogues` prompt offers PubChem's live search when only the demo set was
+  searched and asks first, instead of running it: that search sends the structure to
+  PubChem.
+- docs/clients.md and `examples/mcp_client.py` build the first index with
+  `--with-substructure`, as the README does; without it, substructure search stopped
+  working once the index replaced the demo set.
 
 ## [2.2.1] - 2026-11-04
 

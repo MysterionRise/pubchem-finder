@@ -153,7 +153,7 @@ and `pubchem://index/status`.
 ## Use it from the command line
 
 ```bash
-uvx --python 3.14 pubchem-finder lookup caffeine                # PubChem record by name, CID, SMILES or InChIKey
+uvx --python 3.14 pubchem-finder lookup caffeine                # PubChem record by name (--by cid, smiles or inchikey for those)
 uvx --python 3.14 pubchem-finder props "CC(=O)Oc1ccccc1C(=O)O"  # RDKit descriptors (offline)
 ```
 
@@ -332,16 +332,22 @@ tool:
   you pass to them goes nowhere.
 - **Your query, to PubChem:** the `pubchem_*` tools, `pubchem://compound/{cid}`, `lookup`
   and the `pubchem` commands send the name, CID, InChIKey or SMILES you asked about to
-  NCBI's PubChem service over HTTPS, and nothing else. Answers are cached for 7 days in
-  your data directory.
+  NCBI's PubChem service over HTTPS. Like any web request it comes from your IP address;
+  it carries a `pubchem-finder/<version>` User-Agent and no cookies. Answers are cached
+  in your data directory and reused for 7 days; `cache clear` deletes them.
 - **Downloads:** `index build --limit N` and `--all` fetch PubChem's SDF files from NCBI;
   `index build --sdf` reads your own files and sends nothing. The first `uvx` run fetches
   the packages from PyPI.
 
 So to keep a structure confidential, search it with the local tools and do not ask for
 PubChem's live searches on it (`pubchem_similarity_search`, `pubchem_substructure_search`,
-`pubchem_exact_match`, or `pubchem_lookup` by SMILES). Your AI assistant is separate from
-all this: whatever you type into it, and whatever the tools return, goes to its provider.
+`pubchem_exact_match`, or `pubchem_lookup` by SMILES). The assistant picks the tools, and
+two of the built-in prompts point it at PubChem: `compound_dossier` starts with a lookup,
+and `find_analogues` offers PubChem's search when only the demo set was searched. For a
+confidential structure, say so in your request or switch the `pubchem_*` tools off in
+your client. Your AI assistant is separate from all this: whatever you type into it, and
+whatever the tools return, goes to its provider. A client that shows server icons
+fetches pubchem-finder's from GitHub.
 
 ## Troubleshooting
 

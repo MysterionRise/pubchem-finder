@@ -340,6 +340,10 @@ async def test_find_analogues_prompt():
     )
     assert "similarity_search with threshold=0.7 and group_by_scaffold=true" in text
     assert 'search_scope is "demo"' in text
+    # PubChem's search sends the structure there: offered, not run unasked.
+    assert "offer to run pubchem_similarity_search" in text
+    assert "ask first" in text
+    assert "also run" not in text
     default = await text_of("find_analogues", {"compound": "ibuprofen"})
     assert "threshold=0.6" in default
 

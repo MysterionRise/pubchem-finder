@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from . import __version__, batch, service
 from .config import HOME_ENV, resolve_home
 from .core.exceptions import InvalidInput, PubChemFinderError
-from .data.pug_rest import ANNOTATION_HEADINGS, AnnotationHeading
+from .data.pug_rest import ANNOTATION_HEADINGS, AnnotationHeading, CompoundNotFound
 from .models import RemoteSearchResults, SubstructureResults
 
 app = typer.Typer(
@@ -176,6 +176,15 @@ def lookup(
     """Look a compound up in PubChem."""
     try:
         result = service.lookup(query, by=by.value, limit=limit)
+    except CompoundNotFound as exc:
+        hint = (
+            " QUERY was read as a name; for a CID, SMILES or InChIKey add "
+            "--by cid, --by smiles or --by inchikey."
+            if by is By.name
+            else ""
+        )
+        _fail(PubChemFinderError(f"{exc}.{hint}" if hint else str(exc)))
+        return
     except PubChemFinderError as exc:
         _fail(exc)
         return

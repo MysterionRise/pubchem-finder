@@ -70,6 +70,11 @@ def test_lookup_not_found(pubchem_api, monkeypatch):
     result = runner.invoke(app, ["lookup", "notacompound"])
     assert result.exit_code == 1
     assert "error:" in result.output
+    # `lookup 2244` and `lookup <SMILES>` end here too: say what --by is for.
+    assert "--by cid, --by smiles or --by inchikey" in result.output
+    by_cid = runner.invoke(app, ["lookup", "999999999", "--by", "cid"])
+    assert by_cid.exit_code == 1
+    assert "--by cid" not in by_cid.output
 
 
 def test_index_build_requires_one_source(tmp_path):

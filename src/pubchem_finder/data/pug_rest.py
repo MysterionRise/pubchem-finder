@@ -12,6 +12,7 @@ import threading
 import time
 import zlib
 from collections.abc import Mapping, Sequence
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any, Literal, get_args
 from urllib.parse import quote
 
@@ -101,6 +102,16 @@ class PubChemError(PubChemFinderError):
     """PubChem returned an error or an unexpected response."""
 
 
+def no_cookies() -> CookieJar:
+    """A cookie jar that accepts nothing.
+
+    NCBI sets a session cookie (``ncbi_sid``) on its answers. A long-running
+    server shares one client, so returning it would tie every later request,
+    of every user of that server, to one session ID.
+    """
+    return CookieJar(DefaultCookiePolicy(allowed_domains=[]))
+
+
 class CompoundNotFound(PubChemError):
     """No compound matches the query."""
 
@@ -159,6 +170,7 @@ class PubChemClient:
         self._client = client or httpx.Client(
             timeout=timeout,
             headers={"User-Agent": f"pubchem-finder/{__version__}"},
+            cookies=no_cookies(),
         )
         self._last_request: float | None = None
         # MCP tools run on worker threads and share one client, so the throttle

@@ -63,7 +63,8 @@ settings. The sections below give the exact config for each client someone has t
    images from tools.
 4. Ask *"Find close analogues of aspirin in the local index."* It should call
    `similarity_search` and list CID 2244 first. Without an index built
-   (`pubchem-finder index build --limit 1`, a few minutes), it searches the built-in demo
+   (`pubchem-finder index build --limit 1 --with-substructure`, a few minutes), it
+   searches the built-in demo
    set of FDA-approved drugs, and the answer should say so.
 
 ## Clients
@@ -155,6 +156,7 @@ Any client that supports streamable HTTP can connect, for example Claude Code wi
 curl -s http://127.0.0.1:8000/health
 # {"status":"ok","name":"pubchem-finder","version":"..."}
 uv run python scripts/smoke.py --url http://127.0.0.1:8000/mcp   # every tool, from the repo
+# add --home DIR when the server has an index: the checks then expect that index
 ```
 
 **Beyond your own machine (experimental).** The server binds to `127.0.0.1` by default
@@ -172,16 +174,24 @@ pubchem.example.com {
     }
     reverse_proxy 127.0.0.1:8000 {
         header_up Host {upstream_hostport}
-        header_up -Origin
     }
 }
 ```
 
-`header_up -Origin` matters only for clients that run in a browser, whose `Origin` is the
-public name too. Check the setup through the proxy with an MCP client, for example
-`uv run python scripts/smoke.py --url https://pubchem.example.com/mcp` from the repo:
-`/health` answers even when the `Host` header is wrong and every `/mcp` request gets a
-421.
+Check the setup with an MCP request through the proxy, not with `/health`, which answers
+even when the `Host` header is wrong and every `/mcp` request gets a 421:
+
+```bash
+curl -s -u alice -X POST https://pubchem.example.com/mcp \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+# 200 and a line with "serverInfo":{"name":"pubchem-finder",...}: it works. 421: Host is not rewritten.
+```
+
+Clients send the same credentials as an `Authorization` header (in Claude Code,
+`claude mcp add --transport http --header "Authorization: Basic ..."`). `scripts/smoke.py`
+sends none, so it cannot check a server behind authentication. Clients that run in a web
+page are not supported through the proxy: they would also need CORS headers.
 
 With the proxy on another machine, bind to the interface it reaches with `--host`.
 Binding to anything but `127.0.0.1` prints a warning, and the server then accepts any
@@ -203,8 +213,7 @@ If you run it for a group, or want to, say what you need in
   A full-PubChem index takes tens of seconds to load (and about 17 GB of RAM), so expect
   the first query after a restart to be slow.
 
-Out of scope for now: built-in OAuth, and a Docker image
-([#33](https://github.com/MysterionRise/pubchem-finder/issues/33)).
+Out of scope for now: built-in OAuth.
 
 ## Add your client
 

@@ -5,7 +5,7 @@ import threading
 import pytest
 from typer.testing import CliRunner
 
-from pubchem_finder import service
+from pubchem_finder import hints, service
 from pubchem_finder.cli import app
 from pubchem_finder.core.exceptions import IndexBuildError
 from pubchem_finder.index import builder, demo
@@ -196,6 +196,12 @@ def test_similarity_search_without_an_index_searches_the_demo_set(demo_built, de
     assert f"demo set of {n:,} FDA-approved drugs, not PubChem" in found.note
     assert "index build --limit 1 --with-substructure" in found.note
     assert "pubchem_similarity_search" in found.note
+    # Through the search itself, not by formatting the note in the test: the
+    # command is one that runs from any terminal, for the search that ran.
+    assert f"`{hints.command('pubchem similarity SMILES')}`" in found.note
+    assert "`pubchem-finder pubchem" not in found.note.replace(
+        hints.command("pubchem similarity SMILES"), ""
+    )
 
 
 def test_substructure_search_without_an_index_searches_the_demo_set(
@@ -204,7 +210,8 @@ def test_substructure_search_without_an_index_searches_the_demo_set(
     found = service.substructure_search("c1ccc2[nH]ccc2c1", home=demo_built)
     assert found.search_scope == "demo"
     assert found.hits
-    assert found.note is not None
+    assert f"`{hints.command('pubchem substructure SMILES')}`" in found.note
+    assert "pubchem similarity SMILES" not in found.note
 
 
 def test_status_says_searches_use_the_demo_set(demo_built, demo_on):
