@@ -14,6 +14,7 @@ from platformdirs import user_data_dir
 HOME_ENV = "PUBCHEM_FINDER_HOME"
 INDEX_MODE_ENV = "PUBCHEM_FINDER_INDEX_MODE"
 CACHE_ENV = "PUBCHEM_FINDER_CACHE"
+CACHE_MAX_MB_ENV = "PUBCHEM_FINDER_CACHE_MAX_MB"
 DEMO_ENV = "PUBCHEM_FINDER_DEMO"
 
 
@@ -51,3 +52,18 @@ def _flag(name: str) -> bool:
 def cache_path(home: Path | str | None = None) -> Path:
     """Location of the PubChem response cache inside the data directory."""
     return resolve_home(home) / "cache" / "pubchem-http.sqlite"
+
+
+def cache_max_bytes() -> int:
+    """The response cache's size limit in bytes (default 256 MB), set in megabytes
+    with ``PUBCHEM_FINDER_CACHE_MAX_MB``. An unreadable value falls back to the
+    default."""
+    from .data.cache import DEFAULT_MAX_BYTES
+
+    raw = os.environ.get(CACHE_MAX_MB_ENV)
+    if raw is None:
+        return DEFAULT_MAX_BYTES
+    try:
+        return max(0, round(float(raw) * 1_000_000))
+    except ValueError:
+        return DEFAULT_MAX_BYTES
