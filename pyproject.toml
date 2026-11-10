@@ -114,6 +114,13 @@ ignore_missing_imports = true
 module = ["pyarrow.*", "tables.*", "FPSim2.*"]
 ignore_missing_imports = true
 
+# Agent-framework examples declare their own dependencies with inline script
+# metadata (uv run examples/<name>.py), so these are not installed in the
+# project environment.
+[[tool.mypy.overrides]]
+module = ["langchain_anthropic.*", "langchain_mcp_adapters.*", "langgraph.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--strict-markers"]
