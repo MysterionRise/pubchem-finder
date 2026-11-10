@@ -16,7 +16,13 @@ from rdkit import Chem, DataStructs, rdBase
 
 from . import drawing, hints, medchem
 from .chemistry import MoleculeStandardizer, calculate_properties, is_druglike
-from .config import cache_enabled, cache_path, demo_enabled, resolve_home
+from .config import (
+    cache_enabled,
+    cache_max_bytes,
+    cache_path,
+    demo_enabled,
+    resolve_home,
+)
 from .core.exceptions import MoleculeValidationError, PubChemFinderError
 from .core.limits import check_atoms, check_length
 from .data import parsers
@@ -87,7 +93,7 @@ def get_client() -> PubChemClient:
             cache = None
             if cache_enabled():
                 try:
-                    cache = ResponseCache(cache_path())
+                    cache = ResponseCache(cache_path(), max_bytes=cache_max_bytes())
                 except (OSError, sqlite3.Error) as exc:
                     logger.warning("PubChem response cache disabled: %s", exc)
             _client = PubChemClient(cache=cache)
@@ -576,7 +582,9 @@ def pubchem_annotations(
 def cache_stats(home: Path | str | None = None) -> CacheStats | None:
     """Size of the PubChem response cache, or None if it does not exist."""
     path = cache_path(home)
-    return ResponseCache(path).stats() if path.exists() else None
+    if not path.exists():
+        return None
+    return ResponseCache(path, max_bytes=cache_max_bytes()).stats()
 
 
 def cache_clear(home: Path | str | None = None) -> int:

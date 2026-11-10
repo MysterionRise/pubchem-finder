@@ -956,7 +956,8 @@ def cache_info(home: HomeOpt = None) -> None:
         typer.echo("No PubChem response cache yet.")
         return
     typer.echo(
-        f"{stats.path}: {stats.entries:,} responses, {stats.size_bytes / 1e6:.1f} MB"
+        f"{stats.path}: {stats.entries:,} responses, {stats.size_bytes / 1e6:.1f} MB "
+        f"(limit {stats.max_bytes / 1e6:.0f} MB)"
     )
 
 

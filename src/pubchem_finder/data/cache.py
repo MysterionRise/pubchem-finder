@@ -6,7 +6,10 @@ makes repeats free and keeps the client well inside PubChem's request limits.
 Only successful (HTTP 200) bodies are stored; errors are never cached.
 
 The cache is a single SQLite file in WAL mode, so the CLI and a running MCP
-server can share it safely.
+server can share it safely. It stays bounded: expired entries are dropped when
+it is opened and now and then as it is written, and once the stored bodies pass
+a size limit (256 MB by default, ``PUBCHEM_FINDER_CACHE_MAX_MB``) the oldest
+entries go first.
 """
 
 import hashlib
@@ -22,6 +25,10 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_TTL_SECONDS = 7 * 24 * 3600
+DEFAULT_MAX_BYTES = 256 * 1_000_000
+# Prune expired entries and trim to size once every this many writes, so a
+# long-lived cache stays bounded without paying for a sweep on each one.
+_MAINTAIN_EVERY = 100
 
 
 @dataclass(frozen=True)
@@ -29,6 +36,7 @@ class CacheStats:
     path: Path
     entries: int
     size_bytes: int
+    max_bytes: int
 
 
 class ResponseCache:
@@ -36,6 +44,8 @@ class ResponseCache:
     Args:
         path: SQLite file; parent directories are created.
         ttl_seconds: Entries older than this are ignored and overwritten.
+        max_bytes: Soft cap on the stored bodies; the oldest entries are dropped
+            when it is exceeded.
         clock: Time source (tests).
     """
 
@@ -43,12 +53,15 @@ class ResponseCache:
         self,
         path: Path,
         ttl_seconds: float = DEFAULT_TTL_SECONDS,
+        max_bytes: int = DEFAULT_MAX_BYTES,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.path = Path(path)
         self.ttl_seconds = ttl_seconds
+        self.max_bytes = max_bytes
         self._clock = clock
         self._lock = threading.Lock()
+        self._writes_since_maintenance = 0
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as con:
             con.execute("PRAGMA journal_mode=WAL")
@@ -56,6 +69,7 @@ class ResponseCache:
                 "CREATE TABLE IF NOT EXISTS responses ("
                 " key TEXT PRIMARY KEY, body BLOB NOT NULL, created REAL NOT NULL)"
             )
+            self._maintain(con)
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -96,6 +110,28 @@ class ResponseCache:
                 "INSERT OR REPLACE INTO responses (key, body, created) VALUES (?, ?, ?)",
                 (key, zlib.compress(body), self._clock()),
             )
+            self._writes_since_maintenance += 1
+            if self._writes_since_maintenance >= _MAINTAIN_EVERY:
+                self._maintain(con)
+
+    def _maintain(self, con: sqlite3.Connection) -> None:
+        """Drop expired entries, then the oldest ones until under ``max_bytes``."""
+        self._writes_since_maintenance = 0
+        con.execute(
+            "DELETE FROM responses WHERE created < ?",
+            (self._clock() - self.ttl_seconds,),
+        )
+        rows = con.execute(
+            "SELECT key, LENGTH(body) FROM responses ORDER BY created"
+        ).fetchall()
+        total = sum(size for _, size in rows)
+        drop: list[tuple[str]] = []
+        for key, size in rows:
+            if total <= self.max_bytes:
+                break
+            drop.append((key,))
+            total -= size
+        con.executemany("DELETE FROM responses WHERE key = ?", drop)
 
     def clear(self) -> int:
         """Delete every entry; returns how many were removed."""
@@ -113,4 +149,9 @@ class ResponseCache:
             for p in self.path.parent.glob(self.path.name + "*")
             if p.is_file()
         )
-        return CacheStats(path=self.path, entries=int(entries), size_bytes=size)
+        return CacheStats(
+            path=self.path,
+            entries=int(entries),
+            size_bytes=size,
+            max_bytes=self.max_bytes,
+        )
