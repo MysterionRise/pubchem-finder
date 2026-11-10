@@ -601,9 +601,10 @@ def finalize(
     ``force`` is set. That is read from disk, not from what this process did: a
     chunk rebuilt by a run that then failed is merged by the next one.
     ``substructure`` turns the pattern-fingerprint database on or off; ``None``
-    keeps whatever the current index has. Turning it on builds any missing
+    keeps whatever the index has, or was being given when a merge was interrupted
+    (its pattern chunks are the record of that). Turning it on builds any missing
     pattern chunks (in up to ``workers`` processes) without touching the
-    similarity database.
+    similarity database; only turning it off removes pattern data.
     """
     emit = on_event or (lambda msg: logger.info(msg))
     chunks = [c for c in paths.completed_chunks() if c.n_records > 0]
@@ -613,7 +614,13 @@ def finalize(
     current = paths.load_manifest()
     merged = current is not None and _holds(current, chunks)
     old_sub = current.substructure if current is not None else None
-    want_sub = old_sub is not None if substructure is None else substructure
+    if substructure is None:
+        # The manifest goes without substructure search while the pattern database
+        # is merged, so after an interrupted merge it is the pattern chunks that
+        # say the user asked for it.
+        want_sub = old_sub is not None or bool(paths.completed_pattern_chunks())
+    else:
+        want_sub = substructure
     sub_fresh = (
         not force
         and merged
@@ -652,17 +659,25 @@ def finalize(
         sub = _merge_patterns(paths, names, pattern_files, emit)
 
     if not similarity_rebuilt and sub == old_sub:
+        if substructure is False and _remove_pattern_data(paths):
+            emit("substructure search removed")
         emit(f"index up to date: {manifest.n_compounds:,} compounds")
         return manifest
     manifest = manifest.model_copy(update={"substructure": sub})
     write_json_atomic(paths.manifest, manifest)
-    if sub is None and paths.pattern_fingerprints.exists():
-        paths.pattern_fingerprints.unlink()
-        shutil.rmtree(paths.pattern_chunks, ignore_errors=True)
+    if substructure is False and _remove_pattern_data(paths):
         emit("substructure search removed")
     extra = " with substructure search" if sub is not None else ""
     emit(f"index ready: {manifest.n_compounds:,} compounds{extra}")
     return manifest
+
+
+def _remove_pattern_data(paths: IndexPaths) -> bool:
+    """Delete the pattern database and its chunks; whether there was anything."""
+    found = paths.pattern_fingerprints.exists() or paths.pattern_chunks.is_dir()
+    paths.pattern_fingerprints.unlink(missing_ok=True)
+    shutil.rmtree(paths.pattern_chunks, ignore_errors=True)
+    return found
 
 
 def _holds(manifest: Manifest, chunks: Sequence[ChunkStats]) -> bool:
@@ -723,7 +738,12 @@ def _merge_patterns(
 ) -> SubstructureInfo:
     stats = [paths.completed_pattern_chunks()[n] for n in names]
     emit(f"merging {len(files)} pattern chunk(s) into {paths.pattern_fingerprints}")
-    _merge_h5(files, paths.pattern_fingerprints)
+    _merge_h5(
+        files,
+        paths.pattern_fingerprints,
+        on_failure="Similarity search is unaffected; run the build again to finish "
+        "substructure search.",
+    )
     return SubstructureInfo(
         n_compounds=sum(s.n_records for s in stats),
         n_failed=sum(s.n_failed for s in stats),
@@ -738,6 +758,7 @@ def _merge_h5(
     dest: Path,
     withdraw: Path | None = None,
     home: Path | None = None,
+    on_failure: str = "The current index is unchanged.",
 ) -> None:
     """Merge FPSim2 files into one popcount-sorted file at ``dest``, atomically.
 
@@ -762,7 +783,7 @@ def _merge_h5(
         if isinstance(exc, PubChemFinderError):
             raise
         raise IndexBuildError(
-            f"Merging into {dest} failed: {exc}. The current index is unchanged."
+            f"Merging into {dest} failed: {exc}. {on_failure}"
         ) from exc
     finally:
         unsorted.unlink(missing_ok=True)

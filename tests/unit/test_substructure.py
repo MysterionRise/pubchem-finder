@@ -314,3 +314,95 @@ def test_pattern_chunks_rebuilt_when_fpsim2_changes(tmp_path, substructure_home)
     assert [h.cid for h in service.substructure_search("c1ccccc1", home=home).hits] == (
         oracle("c1ccccc1", "smiles")
     )
+
+
+# The manifest goes without substructure search while the pattern database is merged.
+# A merge interrupted there used to read as "the user never asked for it": the next
+# build said the index was up to date, and the one after deleted the pattern chunks.
+
+
+def _interrupt_pattern_merge_once(monkeypatch, error: BaseException):
+    from pubchem_finder.index import builder
+
+    real = builder._merge_patterns
+    calls = []
+
+    def once(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise error
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(builder, "_merge_patterns", once)
+
+
+def test_interrupted_pattern_merge_keeps_substructure_search(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    paths = fresh_home(tmp_path, sample_sdfs[:1])
+    finalize(paths, substructure=True)
+    _interrupt_pattern_merge_once(monkeypatch, KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        finalize(paths, force=True)
+    assert paths.load_manifest().substructure is None  # withdrawn for the merge
+
+    manifest = finalize(paths)  # the same command again
+    assert manifest.substructure is not None
+    assert service.substructure_search("c1ccccc1", home=paths.home).hits
+
+
+def test_growth_after_an_interrupted_merge_keeps_pattern_chunks(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    paths = fresh_home(tmp_path, sample_sdfs[:1])
+    finalize(paths, substructure=True)
+    _interrupt_pattern_merge_once(monkeypatch, KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        finalize(paths, force=True)
+    first = paths.pattern_stats(CHUNK_NAMES[0])
+    built = first.stat().st_mtime_ns
+
+    new_chunk = SdfSource(name=chunk_name(sample_sdfs[1]), local_path=sample_sdfs[1])
+    build_chunks(paths, [new_chunk])
+    manifest = finalize(paths)
+    assert manifest.substructure is not None
+    assert manifest.substructure.chunks == INDEXED_CHUNKS
+    assert first.stat().st_mtime_ns == built  # kept, not computed again
+
+
+def test_without_substructure_also_clears_an_unfinished_one(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    paths = fresh_home(tmp_path, sample_sdfs[:1])
+    finalize(paths)
+    _interrupt_pattern_merge_once(monkeypatch, KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        finalize(paths, substructure=True)
+    assert paths.pattern_chunks.is_dir()
+
+    events: list[str] = []
+    manifest = finalize(paths, events.append, substructure=False)
+    assert manifest.substructure is None
+    assert not paths.pattern_chunks.exists()
+    assert "substructure search removed" in events
+    assert finalize(paths).substructure is None  # and it stays off
+
+
+def test_failed_pattern_merge_does_not_claim_the_index_is_unchanged(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    from pubchem_finder.index import builder
+
+    paths = fresh_home(tmp_path, sample_sdfs[:1])
+    finalize(paths)
+
+    def broken(*_args, **_kwargs):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(builder, "sort_fpsim2_file", broken)
+    with pytest.raises(IndexBuildError) as failure:
+        finalize(paths, substructure=True)
+    assert "No space left" in str(failure.value)
+    assert "unchanged" not in str(failure.value)
+    assert "run the build again" in str(failure.value)
+    assert service.similarity_search("CCO", threshold=0.1, home=paths.home).hits

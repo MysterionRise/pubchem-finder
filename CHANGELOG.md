@@ -25,6 +25,13 @@ All notable changes to this project are documented here. The format follows
   so when one file is given twice. A chunk built by 2.2.0 or earlier takes the file
   passed for it as its own when that file is not newer than the chunk; 2.2.1
   fingerprinted every such chunk again, from whatever file had its name.
+- Substructure search is no longer dropped when its merge is interrupted (#120). The
+  index goes without it while the pattern database is merged; a build stopped there
+  used to come back without substructure search, call itself up to date, and delete
+  the per-chunk pattern data on the next build that added compounds. Running the build
+  again now finishes it, and only `--without-substructure` removes pattern data
+  (including what an unfinished `--with-substructure` left behind). A failed pattern
+  merge no longer says the index is unchanged.
 
 ## [2.2.1] - 2026-11-04
 
