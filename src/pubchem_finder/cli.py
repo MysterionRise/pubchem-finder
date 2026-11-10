@@ -228,9 +228,17 @@ def standardize(
 
         def one(row: batch.InputRow) -> list[dict[str, Any]]:
             result = service.standardize(row.smiles)
-            return [{"standardized_smiles": result.smiles, "changed": result.changed}]
+            return [
+                {
+                    "standardized_smiles": result.smiles,
+                    "changed": result.changed,
+                    "removed": ".".join(result.removed),
+                    "note": result.note or "",
+                }
+            ]
 
-        _run_batch(input_file, output, ["standardized_smiles", "changed"], one)
+        columns = ["standardized_smiles", "changed", "removed", "note"]
+        _run_batch(input_file, output, columns, one)
         return
     try:
         result = service.standardize(smiles or "")
@@ -239,8 +247,12 @@ def standardize(
         return
     if as_json:
         typer.echo(result.model_dump_json(indent=2))
-    else:
-        typer.echo(result.smiles)
+        return
+    typer.echo(result.smiles)
+    if result.removed:
+        typer.echo(f"removed: {'.'.join(result.removed)}", err=True)
+    if result.note:
+        typer.echo(f"note: {result.note}", err=True)
 
 
 @app.command()

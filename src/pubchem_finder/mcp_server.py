@@ -207,7 +207,13 @@ async def compound_properties(smiles: str) -> Properties:
 @_tool("Standardize a structure", calls_pubchem=False)
 async def standardize(smiles: str) -> Standardized:
     """Standardize a structure: remove salts/counter-ions, neutralize charges,
-    normalize functional groups, and return canonical SMILES of the parent."""
+    normalize functional groups, and return canonical SMILES of the parent.
+
+    The parent is the largest organic component; `removed` lists everything left
+    out, so for a mixture of two drugs it names the one that was dropped. Metal
+    compounds (cisplatin) and inputs with nothing organic (sodium chloride) are
+    returned as given, with a `note`. Sulfoxides stay S=O, the form PubChem and
+    the local index use."""
     return await _run(service.standardize, smiles)
 
 
@@ -543,7 +549,8 @@ def triage_structures(structures: str = "") -> str:
     )
     return (
         f"Triage {target}\n"
-        "For each one, standardize it (salts, charges), then run medchem_profile: QED, "
+        "For each one, standardize it (salts, charges; say what it removed when that "
+        "is more than a counter-ion, and pass its note on), then run medchem_profile: QED, "
         "synthetic accessibility, Lipinski and Veber rules, PAINS/Brenk/NIH alerts. Show "
         "one table ranked from most to least promising, with the reason for each "
         "rank. Then draw the structures that have alerts with draw_molecules, their "

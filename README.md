@@ -118,7 +118,7 @@ before binding it to anything but `127.0.0.1`.
 |---|---|
 | `pubchem_lookup(query, by, limit)` | Resolve a name, CID, SMILES or InChIKey to PubChem records: identifiers, formula, MW, XLogP, H-bond counts, TPSA, link. |
 | `compound_properties(smiles)` | RDKit descriptors and Lipinski check for any SMILES. Offline. |
-| `standardize(smiles)` | Remove salts and counter-ions, neutralize, canonicalize. Offline. |
+| `standardize(smiles)` | Remove salts and counter-ions, neutralize, canonicalize; says what it removed. Offline. |
 | `compare(smiles_a, smiles_b)` | Tanimoto similarity on ECFP4 and MACCS fingerprints. Offline. |
 | `medchem_profile(smiles)` | QED, synthetic accessibility, Lipinski/Veber, PAINS/Brenk/NIH alerts with atoms, Murcko scaffold. Offline. |
 | `draw_molecules(smiles, legends, highlight, smarts, reference_smiles)` | Structures as an inline image, highlighting a SMARTS match, what changed relative to a reference, or a similarity map. Offline. |

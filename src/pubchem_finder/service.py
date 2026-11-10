@@ -147,14 +147,16 @@ def properties(smiles: str) -> Properties:
 def standardize(smiles: str) -> Standardized:
     """Standardize a structure (cleanup, parent fragment, neutralize)."""
     mol = parse_smiles(smiles)
-    std = _STANDARDIZER.standardize(mol)
+    std = _STANDARDIZER.standardize_detailed(mol)
     if std is None:
         raise MoleculeValidationError(f"Could not standardize {smiles!r}")
-    result = str(Chem.MolToSmiles(std))
+    result = str(Chem.MolToSmiles(std.mol))
     return Standardized(
         input_smiles=smiles,
         smiles=result,
         changed=result != Chem.MolToSmiles(mol),
+        removed=std.removed,
+        note=std.note,
     )
 
 

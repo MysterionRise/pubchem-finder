@@ -38,7 +38,15 @@ def test_props_invalid_smiles_exits_nonzero(invalid_smiles):
 def test_standardize_prints_smiles():
     result = runner.invoke(app, ["standardize", "CC(=O)[O-].[Na+]"])
     assert result.exit_code == 0
-    assert result.output.strip() == "CC(=O)O"
+    assert result.stdout.strip() == "CC(=O)O"
+    assert "removed: [Na+]" in result.stderr
+
+
+def test_standardize_says_when_the_input_is_returned_as_given():
+    result = runner.invoke(app, ["standardize", "N.N.Cl[Pt]Cl"])
+    assert result.exit_code == 0
+    assert "Pt" in result.stdout
+    assert "note: Contains bonded Pt" in result.stderr
 
 
 def test_compare():

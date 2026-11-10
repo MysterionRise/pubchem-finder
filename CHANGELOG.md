@@ -31,6 +31,20 @@ All notable changes to this project are documented here. The format follows
   `pubchem://compound/{cid}` returned an empty record, `pubchem_bioactivity` said "not
   tested" and `pubchem_xrefs` reported zero references, because PubChem answers a
   missing compound and a compound without data alike.
+- `standardize` keeps sulfoxides as `S=O`. RDKit's cleanup redraws them `[S+]-[O-]`,
+  so the "standardized" omeprazole no longer matched omeprazole: 0.63 against itself
+  in a similarity search, no substructure hit, a different QED and a Brenk alert for
+  a charged sulfur that the drug does not have. 15 of the 1,932 demo drugs were
+  affected, and the `triage_structures` prompt standardizes before it profiles.
+- `standardize` no longer returns the counter-ion or a ligand as the parent. For
+  pyrantel pamoate it returned pamoic acid (the larger fragment); cisplatin came back
+  as ammonia, carboplatin and oxaliplatin as their ligands, sodium chloride as HCl.
+  Pamoate is now passed over as a counter-ion; a compound with a bonded metal other
+  than an alkali or alkaline-earth metal, and an input with nothing organic in it, are
+  returned as given with a `note`; and the new `removed` field lists every fragment
+  left out, so the dropped half of a two-drug mixture, or an iron or lithium ion, no
+  longer disappears silently. The CLI prints both on stderr, and batch output gains
+  `removed` and `note` columns.
 - `index build --sdf` could leave an index that searched an old version of a file while
   reporting it ready. 2.2.1 rebuilt the chunk of a changed file but decided whether to
   merge from what the same run had done, so a rebuild that failed part-way (a full disk,

@@ -59,6 +59,17 @@ class Standardized(BaseModel):
     input_smiles: str
     smiles: str = Field(description="Canonical SMILES of the standardized parent")
     changed: bool = Field(description="Whether standardization altered the structure")
+    removed: list[str] = Field(
+        default_factory=list,
+        description="What was left out of the parent, as SMILES: counter-ions and "
+        "solvents, but also the smaller component of a mixture or a metal. Tell the "
+        "user when it is more than a counter-ion",
+    )
+    note: str | None = Field(
+        default=None,
+        description="Set when the input was returned as given (a metal compound, "
+        "or nothing organic) or a metal was left out; tell the user",
+    )
 
 
 class Comparison(BaseModel):
