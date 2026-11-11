@@ -19,6 +19,7 @@
 
 import json
 import os
+import re
 import unicodedata
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass
@@ -306,21 +307,34 @@ def unmerged(
     earlier, which recorded no build ids.
     """
     on_disk = {c.name: c for c in chunks}
+    merged_at = int(manifest.built_at.timestamp() * 1_000_000_000)
     out: list[str] = []
     for name in manifest.chunks:
         stats = on_disk.get(name)
         if stats is None:
             out.append(name)
         elif manifest.chunk_builds is None:
-            # Merged by 2.2.1 or earlier. Those wrote the manifest last, so a chunk
-            # of the user's own file with newer stats was built after the merge
-            # (2.2.1 could rebuild one and fail before merging it). A build id
-            # alone does not say so: 2.2.1 may have merged a chunk that has one.
-            if stats.source is not None and name in newer:
+            # Merged by 2.2.1 or earlier, which could rebuild a chunk of the user's
+            # own file and fail before merging it. Two things show that: stats
+            # newer than the manifest (those versions wrote the manifest last), and
+            # a chunk built from a file that was modified after the merge. The
+            # second also holds in a copy of the home that lost its file times, and
+            # after 2.2.1 rewrote the manifest to add substructure search. A build
+            # id alone says nothing: 2.2.1 may have merged a chunk that has one.
+            if stats.source is not None and (
+                name in newer or stats.source.mtime_ns > merged_at
+            ):
                 out.append(name)
         elif manifest.chunk_builds.get(name) != stats.build_id:
             out.append(name)
     return out
+
+
+def duckdb_path(path: Path | str) -> str:
+    """``path`` as DuckDB has to be given one file. It reads ``*``, ``?`` and ``[``
+    in a path as a pattern: asked for ``lib[1].parquet`` it opened ``lib1.parquet``,
+    and gave a hit of one library the structure the other has under that ID."""
+    return re.sub(r"([*?\[])", r"[\1]", str(path))
 
 
 def chunk_key(name: str) -> str:

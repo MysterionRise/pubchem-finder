@@ -45,6 +45,10 @@ All notable changes to this project are documented here. The format follows
   judged against the merge that produced them, so a build that finishes between a
   search and the lookup of its hits cannot pair them either, and a substructure search
   that had to leave candidates out no longer calls itself exhaustive.
+- An `--sdf` file whose name contains `[`, `*` or `?` is read back by that name. The
+  chunk files of `lib[1].sdf` were looked up as a pattern, which matches `lib1` and
+  not `lib[1]`: its hits came back without a structure, or with the structure
+  `lib1.sdf` has under the same ID.
 - A chunk being rebuilt is replaced only when its new files are complete, and every
   check runs first. 2.2.1 deleted the old chunk up front, so a build that was then
   refused (for example because RDKit had changed since the other chunks were built) or

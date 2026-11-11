@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -19,7 +20,7 @@ from rdkit import Chem
 from .. import hints
 from ..config import INDEX_MODE_ENV
 from ..core.exceptions import IndexNotBuilt
-from .layout import ChunkStats, IndexPaths, Manifest, Merged, unmerged
+from .layout import ChunkStats, IndexPaths, Manifest, Merged, duckdb_path, unmerged
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,9 @@ Metric = Literal["tanimoto", "dice", "cosine"]
 # in-memory array from different threads (parallel MCP tool calls) race the same way.
 # LocalIndex therefore lets one in-memory search per array run at a time.
 SEARCH_WORKERS = 1
+# How long a chunk's stats file is read afresh on every search (see _chunk_stats):
+# longer than any filesystem's modification-time step (FAT's is 2 s).
+STATS_SETTLE_NS = 3_000_000_000
 METADATA_COLUMNS = (
     "cid",
     "smiles",
@@ -324,7 +328,10 @@ class LocalIndex:
         the time its file was written.
 
         One os.stat per chunk and search; a stats file is parsed again only when it
-        was replaced (a build writes a new file, so its inode changes with it).
+        was replaced (a build writes a new file, so its inode changes with it), or
+        while it is so new that a replacement could look the same: where inode
+        numbers are reused and modification times are coarse, a rebuild within the
+        same tick leaves a file with the same number, time and size.
         """
         found: dict[str, tuple[ChunkStats, int]] = {}
         with self._stats_lock:
@@ -334,7 +341,8 @@ class LocalIndex:
                     stat = path.stat()
                     key = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
                     seen = self._stats_seen.get(name)
-                    if seen is None or seen[0] != key:
+                    settled = time.time_ns() - stat.st_mtime_ns > STATS_SETTLE_NS
+                    if seen is None or seen[0] != key or not settled:
                         text = path.read_text(encoding="utf-8")
                         seen = (key, ChunkStats.model_validate_json(text))
                         self._stats_seen[name] = seen
@@ -351,17 +359,18 @@ class LocalIndex:
         chunks rebuilt since ``merged`` (see :meth:`unmerged`).
 
         Give the merge the IDs came from (:meth:`search_merged`); the default is
-        the index on disk now.
+        the index on disk now. Every row returned was read from a chunk that was
+        the merged build both before and after the read: a row from a chunk that
+        a build replaced meanwhile is dropped, however many chunks are changing.
         """
         if not cids:
             return {}
         merged = merged or self.merged
-        rows: dict[int, dict[str, Any]] = {}
         for attempt in range(3):
             stale = set(self.unmerged(merged))
             chunks = [n for n in merged.manifest.chunks if n not in stale]
             try:
-                rows = self._metadata(cids, chunks)
+                found = self._metadata(cids, chunks)
             except duckdb.Error:
                 # A build replaced or removed a file while it was being read.
                 if attempt == 2:
@@ -369,17 +378,21 @@ class LocalIndex:
                 with self._lock:
                     self._db = None
                 continue
-            # A build may have replaced a chunk while its file was being read.
-            if set(self.unmerged(merged)) == stale:
-                break
-        return rows
+            stale |= set(self.unmerged(merged))
+            rows: dict[int, dict[str, Any]] = {}
+            for chunk, row in found:
+                if chunk not in stale:
+                    rows.setdefault(int(row["cid"]), row)
+            return rows
+        return {}  # not reached: the third failure raises
 
     def _metadata(
         self, cids: list[int], chunks: list[str]
-    ) -> dict[int, dict[str, Any]]:
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Rows for ``cids``, each with the chunk whose file it was read from."""
         files = self.paths.metadata_files(chunks)
         if not files:
-            return {}
+            return []
         with self._lock:
             if self._db is None or self._db_files != files:
                 self._db = duckdb.connect(":memory:")
@@ -387,12 +400,16 @@ class LocalIndex:
                 # A relation, not SQL text, so file paths need no quoting. By name:
                 # chunks written by different versions may not share every column.
                 self._db.read_parquet(
-                    [str(f) for f in files], union_by_name=True
+                    [duckdb_path(f) for f in files], union_by_name=True, filename=True
                 ).create_view("meta")
             cursor = self._db.cursor()
         ids = ", ".join(str(int(c)) for c in cids)
         # Integers only; a literal IN list lets DuckDB push the filter into the scan.
         rows = cursor.execute(
-            f"SELECT {', '.join(METADATA_COLUMNS)} FROM meta WHERE cid IN ({ids})"  # noqa: S608
+            f"SELECT {', '.join(METADATA_COLUMNS)}, filename FROM meta "  # noqa: S608
+            f"WHERE cid IN ({ids})"
         ).fetchall()
-        return {int(r[0]): dict(zip(METADATA_COLUMNS, r, strict=True)) for r in rows}
+        return [
+            (Path(r[-1]).stem, dict(zip(METADATA_COLUMNS, r[:-1], strict=True)))
+            for r in rows
+        ]

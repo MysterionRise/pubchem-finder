@@ -650,7 +650,7 @@ def test_in_memory_searches_of_one_array_never_overlap(substructure_home, monkey
 # --- Chunks rebuilt since the merge ---------------------------------------------
 
 
-def _chunk(name, build_id, source=True):
+def _chunk(name, build_id, source=True, modified_ns=1):
     from pubchem_finder.index.layout import ChunkStats, SourceFile
 
     return ChunkStats(
@@ -661,7 +661,7 @@ def _chunk(name, build_id, source=True):
         fp_type="Morgan",
         fp_params={"radius": 2, "fpSize": 1024},
         build_id=build_id,
-        source=SourceFile(path=f"/data/{name}.sdf", size=1, mtime_ns=1)
+        source=SourceFile(path=f"/data/{name}.sdf", size=1, mtime_ns=modified_ns)
         if source
         else None,
     )
@@ -707,6 +707,17 @@ def test_unmerged_under_a_manifest_without_build_ids(built_home):
     assert unmerged(legacy, on_disk, newer={"lib"}) == ["lib"]
     # 2.2.1 rebuilt "old" and failed before the merge: no build id, newer stats.
     assert unmerged(legacy, on_disk, newer={"lib", "old", "pubchem"}) == ["lib", "old"]
+    # The same home after a copy that kept no file times, or after 2.2.1 rewrote
+    # the manifest to add substructure search: the chunk still records a file
+    # modified after the merge, which no chunk in that merge can have been built
+    # from.
+    after = int(legacy.built_at.timestamp() * 1e9) + 1
+    rebuilt = [_chunk("lib", "7"), _chunk("old", None, modified_ns=after)]
+    assert unmerged(legacy, [*rebuilt, on_disk[2]]) == ["old"]
+    ids = {"lib": "7", "old": None, "pubchem": "8"}
+    held = legacy.model_copy(update={"chunk_builds": ids})
+    # Only where the manifest has no ids: with them, the ids decide.
+    assert unmerged(held, [*rebuilt, on_disk[2]]) == []
 
 
 def _written(path, when_ns):
@@ -745,6 +756,31 @@ def test_chunks_merged_by_2_2_1_after_this_version_built_them_are_not_stale(
     assert "was indexed again after the last merge" in found.warning
     _written(stats, merged_at)  # written in the same clock tick: not after
     assert service.index_status(paths.home).unmerged_chunks == []
+
+
+def test_a_stats_file_is_not_trusted_from_memory_while_it_is_new(tmp_path, sample_sdfs):
+    """A running server remembers the stats it has read, by inode number, time and
+    size. A rebuild within one tick of a coarse clock, at a reused inode number,
+    leaves a file that looks the same: for a few seconds it is read again."""
+    paths = IndexPaths(tmp_path / "home")
+    build_chunks(paths, sources(sample_sdfs[:1]), workers=1)
+    finalize(paths)
+    index = LocalIndex(paths.home)
+    assert index.unmerged() == {}
+    stats = paths.chunk_stats(CHUNK_NAMES[0])
+    before = stats.stat()
+    text = stats.read_text()
+    build_id = json.loads(text)["build_id"]
+    with stats.open("r+") as handle:  # in place: the same inode and size
+        handle.write(text.replace(build_id, "f" * len(build_id)))
+    os.utime(stats, ns=(before.st_atime_ns, before.st_mtime_ns))
+    after = stats.stat()
+    assert (after.st_ino, after.st_mtime_ns, after.st_size) == (
+        before.st_ino,
+        before.st_mtime_ns,
+        before.st_size,
+    )
+    assert list(index.unmerged()) == [CHUNK_NAMES[0]]
 
 
 def test_metadata_reads_again_when_a_file_changes_under_it(built_home, monkeypatch):

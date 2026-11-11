@@ -753,6 +753,10 @@ def test_rebuilt_chunk_is_not_read_with_the_fingerprints_it_replaced(
     assert found["hits"] == []  # not benzene's ID with another structure
     assert "library was indexed again" in found["warning"]
     assert "its compounds cannot be checked and are left out" in found["warning"]
+    # In words: raising --max would not help, the warning says what will.
+    text = runner.invoke(app, ["substructure", "c1ccccc1", "--home", str(home)])
+    assert "0 hit(s) (more may exist; see the warning); 2 of 2" in text.output
+    assert "raise --max" not in text.output
     # Two candidates passed the screen and neither could be checked: the answer
     # used to call itself exhaustive.
     assert (found["n_candidates"], found["exhaustive"]) == (2, False)
@@ -880,6 +884,68 @@ def test_a_merge_that_completes_under_a_search_does_not_lend_it_structures(
         [(1, CAFFEINE)],
         None,
     )
+
+
+def test_a_lookup_never_returns_rows_it_could_not_verify(renumbered, monkeypatch):
+    """The lookup read again when a chunk changed under it, three times at most,
+    and then returned the last read as it was. With three or more files being
+    rebuilt (or one rebuilt three times) during one lookup, a 1.000 hit carried
+    another build's structure: 12 times in 43,349 searches next to a real build
+    of 24 files. A row now counts only if its own chunk was the merged build both
+    before and after it was read."""
+    from pubchem_finder import service
+    from pubchem_finder.index.builder import SdfSource, build_chunks
+    from pubchem_finder.index.engine import LocalIndex
+    from pubchem_finder.index.layout import IndexPaths
+    from tests.conftest import CHUNK_B, write_sdf
+
+    home, library = renumbered
+    paths = IndexPaths(home)
+    other = write_sdf(home.parent / "other.sdf.gz", CHUNK_B)
+    write_sdf(library, EXPORT_1)
+    assert _sdf_build(home, library, other).exit_code == 0
+    exports = [EXPORT_2, EXPORT_1]
+    real = LocalIndex._metadata
+    reads = []
+
+    def a_build_replaces_the_library_during_every_read(self, cids, chunks):
+        found = real(self, cids, chunks)
+        write_sdf(library, exports[len(reads) % 2])
+        build_chunks(paths, [SdfSource(name="library", local_path=library)])
+        reads.append(chunks)
+        return found
+
+    monkeypatch.setattr(
+        LocalIndex, "_metadata", a_build_replaces_the_library_during_every_read
+    )
+    result = service.similarity_search(ASPIRIN, threshold=0.9, home=home)
+    assert [(h.cid, h.smiles) for h in result.hits] == [(1, None)]
+    assert "library was indexed again" in result.warning
+    assert len(reads) == 1  # nothing to gain from reading again
+    # The chunk that did not change is read as before, in the same lookup.
+    index = service.get_index(home)
+    rows = index.metadata([1, 2519], index.merged)
+    assert list(rows) == [2519]
+    assert rows[2519]["smiles"] == CAFFEINE
+
+
+def test_a_file_name_duckdb_reads_as_a_pattern_is_read_as_a_name(tmp_path):
+    """DuckDB takes [ ] * and ? in a path for a pattern: asked for
+    "lib[1].parquet" it opened "lib1.parquet". A hit from one library came back
+    without its structure, or with the one the other library has under that ID."""
+    from pubchem_finder.index.layout import duckdb_path
+    from tests.conftest import write_sdf
+
+    assert duckdb_path("/data/a*b?c[1].parquet") == "/data/a[*]b[?]c[[]1].parquet"
+    assert duckdb_path("/data/plain-name_1.parquet") == "/data/plain-name_1.parquet"
+    home = tmp_path / "home [x]"
+    first = write_sdf(tmp_path / "lib[1].sdf", [(11, ASPIRIN, "a", "new")], gz=False)
+    second = write_sdf(tmp_path / "lib1.sdf", [(12, CAFFEINE, "c", "new")], gz=False)
+    assert _sdf_build(home, first, second).exit_code == 0
+    hits = json.loads(_search(home, ASPIRIN, "--json").output)["hits"]
+    assert [(h["cid"], h["smiles"]) for h in hits] == [(11, ASPIRIN)]
+    hits = json.loads(_search(home, CAFFEINE, "--json").output)["hits"]
+    assert [(h["cid"], h["smiles"]) for h in hits] == [(12, CAFFEINE)]
 
 
 def test_a_chunk_whose_stats_are_gone_is_not_called_indexed_again(renumbered):

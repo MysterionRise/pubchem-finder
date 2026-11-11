@@ -394,11 +394,13 @@ def substructure(
     if as_json:
         typer.echo(result.model_dump_json(indent=2))
         return
-    more = (
-        ""
-        if result.exhaustive
-        else " (more may exist; raise --max or --max-candidates)"
-    )
+    if result.exhaustive:
+        more = ""
+    elif result.n_checked == result.n_candidates:
+        # Every candidate was looked at, and some had no structure to check.
+        more = " (more may exist; see the warning)"
+    else:
+        more = " (more may exist; raise --max or --max-candidates)"
     typer.echo(
         f"{len(result.hits)} hit(s){more}; {result.n_candidates:,} of "
         f"{result.n_indexed:,} compounds passed the screen, {result.n_checked:,} checked"
