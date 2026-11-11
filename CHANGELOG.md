@@ -38,16 +38,19 @@ All notable changes to this project are documented here. The format follows
   where 5 differ. About one analogue pair in eleven hit the limit. A search that was
   cut short is no longer used; a second method (RDKit's RASCAL, which answers for
   close analogues in milliseconds) is asked instead. It is not asked about
-  macrocycles and not believed when its answer is implausibly small; then, and with
-  RDKit 2024.09, the panel has no highlights and its caption says "difference not
-  computed". In Python, `drawing.diff_highlights` now returns a third list, the
-  positions of those panels.
+  macrocycles, not believed when its answer is implausibly small, and not asked when
+  the first search was stopped by a busy machine without having worked (that search
+  is repeated once); then, and with RDKit 2024.09, the panel has no highlights and
+  its caption says "difference not computed". Stereoisomers and other molecules with
+  the same atoms and bonds need no search at all. In Python,
+  `drawing.diff_highlights` now returns a third list, the positions of the panels
+  that were not computed.
 - `highlight="diff"` no longer shows a changed ring as unchanged, or a molecule that
   shares nothing with the reference as identical to it. An aromatic ring matched a
   saturated one (a phenyl that became cyclohexyl was drawn without any highlight),
   and a molecule with no common substructure was drawn blank, like an exact copy.
-  Bond orders now have to match, and a molecule that shares nothing is highlighted
-  whole.
+  Atoms whose ring went from aromatic to saturated, or back, are now highlighted, and
+  a molecule that shares nothing is highlighted whole.
 - `standardize` keeps sulfoxides as `S=O`. RDKit's cleanup redraws them `[S+]-[O-]`,
   so the "standardized" omeprazole no longer matched omeprazole: 0.63 against itself
   in a similarity search, no substructure hit, a different QED and a Brenk alert for

@@ -6,15 +6,17 @@ Highlight modes:
 - ``diff``: for each molecule, the atoms that are *not* part of its maximum
   common substructure with a reference: "what changed in this analogue".
   Depictions are aligned to the shared core so the changes line up visually.
-  Rings are shared whole or not at all, and an aromatic ring is not a saturated
-  one. A molecule that shares nothing with the reference is highlighted whole. A
-  panel whose common substructure could not be found in time is drawn without
+  Rings are shared whole or not at all; a ring that went from aromatic to
+  saturated (or back) is lined up with its counterpart and highlighted. A
+  molecule that shares nothing with the reference is highlighted whole. A panel
+  whose common substructure could not be found in time is drawn without
   highlights and says so in its caption.
 - ``similarity_map``: atom contributions to ECFP4 similarity with a reference
   (green raises similarity, pink lowers it).
 """
 
 import io
+import time
 from collections.abc import Sequence
 from typing import Literal
 
@@ -136,33 +138,55 @@ def diff_highlights(
             except ValueError:
                 rdDepictor.Compute2DCoords(mol)
         changed = {a.GetIdx() for a in mol.GetAtoms()} - {m for _, m in shared}
+        # The search lets an aromatic bond stand for a single or double one, so
+        # that a ring keeps its place when it is reduced; such atoms did change.
+        changed |= {
+            m
+            for r, m in shared
+            if reference.GetAtomWithIdx(r).GetIsAromatic()
+            != mol.GetAtomWithIdx(m).GetIsAromatic()
+        }
         atom_lists.append(sorted(changed))
         bond_lists.append(_bonds_touching(mol, changed))
     return atom_lists, bond_lists, not_computed
+
+
+# Processor time of this thread: FindMCS stops by the wall clock.
+_thread_seconds = time.thread_time
 
 
 def _shared_atoms(reference: Chem.Mol, mol: Chem.Mol) -> list[tuple[int, int]] | None:
     """(reference atom, molecule atom) pairs of the maximum common substructure;
     empty when the two share none, None when it was not found in time.
 
-    Bond orders have to match exactly: by FindMCS's default an aromatic bond
-    matches a single or a double one, and a phenyl ring that became cyclohexyl
-    counted as unchanged.
-
     FindMCS stops at its time limit with whatever it has: for fused-ring analogues
     such as dolutegravir and cabotegravir that is 2 atoms of a 25-atom core, and
     about one drug-like analogue pair in eleven runs into the limit. A search
     that was cut short is therefore never used; RASCAL is asked instead.
+
+    The limit is wall-clock time. On a busy machine it can pass before the search
+    has had the processor at all, for a pair it answers in milliseconds, and those
+    are pairs RASCAL can get badly wrong. So a search that was stopped without
+    having worked for half its limit is run once more, and is "not found in time"
+    if that happens again; RASCAL is asked only about pairs that are hard.
     """
-    result = rdFMCS.FindMCS(
-        [reference, mol],
-        timeout=MCS_TIMEOUT_S,
-        ringMatchesRingOnly=True,
-        completeRingsOnly=True,
-        bondCompare=rdFMCS.BondCompare.CompareOrderExact,
-    )
-    if result.canceled:
-        return _rascal_atoms(reference, mol, at_least=result.numAtoms)
+    same = _same_graph(reference, mol)
+    if same is not None:
+        return same
+    for _ in range(2):
+        started = _thread_seconds()
+        result = rdFMCS.FindMCS(
+            [reference, mol],
+            timeout=MCS_TIMEOUT_S,
+            ringMatchesRingOnly=True,
+            completeRingsOnly=True,
+        )
+        if not result.canceled:
+            break
+        if _thread_seconds() - started >= MCS_TIMEOUT_S / 2:
+            return _rascal_atoms(reference, mol, at_least=result.numAtoms)
+    else:
+        return None
     core = Chem.MolFromSmarts(result.smartsString) if result.numAtoms else None
     if core is None:
         return []
@@ -171,6 +195,21 @@ def _shared_atoms(reference: Chem.Mol, mol: Chem.Mol) -> list[tuple[int, int]] |
     if not ref_match or not mol_match:
         return []
     return list(zip(ref_match, mol_match, strict=True))
+
+
+def _same_graph(reference: Chem.Mol, mol: Chem.Mol) -> list[tuple[int, int]] | None:
+    """The atom pairs when the two are the same atoms and bonds (stereoisomers,
+    isotopologues, the molecule itself): no search is needed, and none can time
+    out or go wrong. None when they are not."""
+    if (reference.GetNumAtoms(), reference.GetNumBonds()) != (
+        mol.GetNumAtoms(),
+        mol.GetNumBonds(),
+    ):
+        return None
+    match = mol.GetSubstructMatch(reference)
+    if len(match) != reference.GetNumAtoms():
+        return None
+    return list(enumerate(match))
 
 
 def _rascal_atoms(

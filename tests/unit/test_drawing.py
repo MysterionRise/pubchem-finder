@@ -74,20 +74,49 @@ def test_diff_highlights_show_added_atoms_only():
 
 
 def test_an_aromatic_ring_is_not_a_saturated_one():
-    """FindMCS lets an aromatic bond match a single one by default: a phenyl that
-    became cyclohexyl was drawn as no change at all (0 of 15 atoms)."""
+    """An aromatic bond matches a single one in the search, so that a reduced ring
+    keeps its place; nothing then said that it had changed. A phenyl that became
+    cyclohexyl was drawn as no change at all (0 of 15 atoms)."""
     ref = Chem.MolFromSmiles("O=C(Nc1ccccc1)c1ccccc1")
     mol = Chem.MolFromSmiles("O=C(Nc1ccccc1)C1CCCCC1")
     atoms, _, not_computed = drawing.diff_highlights([mol], ref)
-    ring = set(mol.GetSubstructMatch(Chem.MolFromSmarts("C1CCCCC1")))
-    assert len(atoms[0]) >= 5
-    assert set(atoms[0]) <= ring
+    assert set(atoms[0]) == set(mol.GetSubstructMatch(Chem.MolFromSmarts("C1CCCCC1")))
     assert not_computed == []
     benzene, cyclohexane = (
         Chem.MolFromSmiles("c1ccccc1"),
         Chem.MolFromSmiles("C1CCCCC1"),
     )
     assert drawing.diff_highlights([cyclohexane], benzene)[0] == [[0, 1, 2, 3, 4, 5]]
+
+
+def test_a_ring_fused_on_does_not_mark_the_rings_next_to_it():
+    """Requiring every bond order to match exactly was tried first: diazepam
+    against alprazolam then had 15 of 22 atoms highlighted, both benzene rings
+    among them, because the seven-ring they are fused to gained an aromatic bond.
+    What changed is the triazole and its methyl."""
+    diazepam = Chem.MolFromSmiles("CN1C(=O)CN=C(c2ccccc2)c2cc(Cl)ccc12")
+    alprazolam = Chem.MolFromSmiles("Cc1nnc2CN=C(c3ccccc3)c3cc(Cl)ccc3-n12")
+    atoms, _, not_computed = drawing.diff_highlights([alprazolam], diazepam)
+    triazole = set(alprazolam.GetSubstructMatch(Chem.MolFromSmarts("Cc1nncn1")))
+    assert set(atoms[0]) == triazole
+    assert not_computed == []
+
+
+def test_the_same_atoms_and_bonds_need_no_search(monkeypatch):
+    """Stereoisomers, the molecule itself, a charged form: nothing to search for,
+    so nothing that can time out. (RASCAL, asked about citalopram against
+    escitalopram, marked 10 of 24 atoms that are the same.)"""
+    monkeypatch.setattr(
+        drawing.rdFMCS, "FindMCS", lambda *a, **k: pytest.fail("no search is needed")
+    )
+    citalopram = "CN(C)CCC[C@@]1(OCc2cc(C#N)ccc21)c1ccc(F)cc1"
+    mols = [
+        Chem.MolFromSmiles(s)
+        for s in (citalopram, citalopram.replace("[C@@]", "[C@]"), DOLUTEGRAVIR)
+    ]
+    refs = [mols[0], mols[0], Chem.MolFromSmiles(DOLUTEGRAVIR)]
+    for mol, ref in zip(mols, refs, strict=True):
+        assert drawing.diff_highlights([mol], ref) == ([[]], [[]], [])
 
 
 # FindMCS returns whatever it has when its 2 s run out, and the code took that for
@@ -107,6 +136,20 @@ class _CutShort:
     smartsString = "[#6]-[#6]"
 
 
+def _cut_short(monkeypatch, worked=True):
+    """Make every FindMCS call end cancelled: after working through its time
+    limit, or (``worked=False``) without having had the processor."""
+    import itertools
+
+    clock = itertools.count(step=drawing.MCS_TIMEOUT_S if worked else 0)
+    monkeypatch.setattr(drawing, "_thread_seconds", lambda: next(clock))
+    calls = []
+    monkeypatch.setattr(
+        drawing.rdFMCS, "FindMCS", lambda *a, **k: calls.append(a) or _CutShort()
+    )
+    return calls
+
+
 # RDKit 2024.09 cannot run the fallback the way FindMCS answers (see drawing.py).
 needs_fallback = pytest.mark.skipif(
     not drawing._RASCAL_USABLE, reason="this RDKit has no completeSmallestRings"
@@ -115,7 +158,7 @@ needs_fallback = pytest.mark.skipif(
 
 @needs_fallback
 def test_a_search_that_timed_out_is_not_taken_for_the_answer(monkeypatch):
-    monkeypatch.setattr(drawing.rdFMCS, "FindMCS", lambda *a, **k: _CutShort())
+    _cut_short(monkeypatch)
     mol = Chem.MolFromSmiles(DOLUTEGRAVIR)
     atoms, bonds, not_computed = drawing.diff_highlights(
         [mol], Chem.MolFromSmiles(CABOTEGRAVIR)
@@ -146,13 +189,41 @@ def test_the_fallback_agrees_with_a_search_that_finishes(monkeypatch):
         drawing.diff_highlights([Chem.MolFromSmiles(b)], Chem.MolFromSmiles(a))[0]
         for a, b in pairs
     ]
-    monkeypatch.setattr(drawing.rdFMCS, "FindMCS", lambda *a, **k: _CutShort())
+    _cut_short(monkeypatch)
     fallback = [
         drawing.diff_highlights([Chem.MolFromSmiles(b)], Chem.MolFromSmiles(a))[0]
         for a, b in pairs
     ]
     assert fallback == finished
     assert all(len(atoms[0]) >= 1 for atoms in finished)
+
+
+def test_a_search_stopped_before_it_could_work_is_run_again(monkeypatch):
+    """The 2 s limit is wall-clock time. Under load it passed after 0.06 s of
+    work on a pair the search answers at once, and the fallback is weakest on
+    exactly such pairs. A search stopped without having worked is repeated; only
+    one that used its time is handed to the fallback."""
+    real = drawing.rdFMCS.FindMCS
+    mol, ref = Chem.MolFromSmiles(METHYL_SALICYLATE), Chem.MolFromSmiles(ASPIRIN)
+    expected = drawing.diff_highlights([mol], ref)
+    monkeypatch.setattr(
+        drawing.rdRascalMCES,
+        "FindMCES",
+        lambda *a, **k: pytest.fail("the fallback is for searches that worked"),
+    )
+    answers = [_CutShort()]
+    monkeypatch.setattr(drawing, "_thread_seconds", lambda: 0.0)
+    monkeypatch.setattr(
+        drawing.rdFMCS,
+        "FindMCS",
+        lambda *a, **k: answers.pop() if answers else real(*a, **k),
+    )
+    assert drawing.diff_highlights([mol], ref) == expected
+    assert answers == []
+    # Stopped again without working: not computed, after two tries and no more.
+    calls = _cut_short(monkeypatch, worked=False)
+    assert drawing.diff_highlights([mol], ref) == ([[]], [[]], [0])
+    assert len(calls) == 2
 
 
 def _not_computed(reference, smiles):
@@ -168,7 +239,7 @@ def test_without_a_usable_fallback_a_cut_short_search_is_not_computed(monkeypatc
     """RDKit's option objects accept names they do not know: on 2024.09, which has
     no completeSmallestRings, the fallback shared part of a ring and highlighted 2
     atoms where 5 differ."""
-    monkeypatch.setattr(drawing.rdFMCS, "FindMCS", lambda *a, **k: _CutShort())
+    _cut_short(monkeypatch)
     monkeypatch.setattr(drawing, "_RASCAL_USABLE", False)
     monkeypatch.setattr(
         drawing.rdRascalMCES,
@@ -189,7 +260,7 @@ class _Found:
 
 @needs_fallback
 def test_a_fallback_that_timed_out_is_not_used_either(monkeypatch):
-    monkeypatch.setattr(drawing.rdFMCS, "FindMCS", lambda *a, **k: _CutShort())
+    _cut_short(monkeypatch)
     found = _Found([(i, i) for i in range(25)], timed_out=True)
     monkeypatch.setattr(drawing.rdRascalMCES, "FindMCES", lambda *a, **k: [found])
     assert _not_computed(CABOTEGRAVIR, DOLUTEGRAVIR)
@@ -203,7 +274,7 @@ def test_a_fallback_answer_too_small_to_be_the_core_is_not_used(monkeypatch, n_s
     53 atoms were highlighted as changed. Smaller than what FindMCS had when it
     was stopped (2 atoms here), or than half of the smaller molecule (29 atoms):
     not the common substructure."""
-    monkeypatch.setattr(drawing.rdFMCS, "FindMCS", lambda *a, **k: _CutShort())
+    _cut_short(monkeypatch)
     found = _Found([(i, i) for i in range(n_shared)])
     monkeypatch.setattr(drawing.rdRascalMCES, "FindMCES", lambda *a, **k: [found])
     assert _not_computed(CABOTEGRAVIR, DOLUTEGRAVIR)
@@ -211,7 +282,7 @@ def test_a_fallback_answer_too_small_to_be_the_core_is_not_used(monkeypatch, n_s
 
 @needs_fallback
 def test_the_fallback_is_not_tried_on_macrocycles(monkeypatch):
-    monkeypatch.setattr(drawing.rdFMCS, "FindMCS", lambda *a, **k: _CutShort())
+    _cut_short(monkeypatch)
     monkeypatch.setattr(
         drawing.rdRascalMCES,
         "FindMCES",
@@ -227,7 +298,7 @@ def test_the_fallback_is_not_tried_on_macrocycles(monkeypatch):
 def test_the_fallback_compares_molecules_that_are_not_alike(monkeypatch):
     """RASCAL's own default skips pairs below 0.7 similarity; the caller chose the
     pair, so a distant analogue still gets its difference."""
-    monkeypatch.setattr(drawing.rdFMCS, "FindMCS", lambda *a, **k: _CutShort())
+    _cut_short(monkeypatch)
     mol = Chem.MolFromSmiles(ASPIRIN)
     atoms, _, not_computed = drawing.diff_highlights(
         [mol], Chem.MolFromSmiles("c1ccccc1")
@@ -237,7 +308,7 @@ def test_the_fallback_compares_molecules_that_are_not_alike(monkeypatch):
 
 
 def test_a_difference_that_cannot_be_computed_is_labelled(monkeypatch):
-    monkeypatch.setattr(drawing.rdFMCS, "FindMCS", lambda *a, **k: _CutShort())
+    _cut_short(monkeypatch)
     monkeypatch.setattr(drawing.rdRascalMCES, "FindMCES", lambda *a, **k: [])
     seen = {}
     real = drawing.Draw.MolsToGridImage
