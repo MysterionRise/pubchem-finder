@@ -361,6 +361,9 @@ async def test_triage_structures_prompt():
     assert "medchem_profile" in listed
     empty = await text_of("triage_structures", {})
     assert "ask me for them as SMILES" in empty
+    # The assistant has to pass on what standardizing changed.
+    assert "say what it removed" in listed
+    assert "pass its note on" in listed
 
 
 # --- Resources ----------------------------------------------------------------

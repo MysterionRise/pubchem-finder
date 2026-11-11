@@ -46,7 +46,7 @@ def test_standardize_says_when_the_input_is_returned_as_given():
     result = runner.invoke(app, ["standardize", "N.N.Cl[Pt]Cl"])
     assert result.exit_code == 0
     assert "Pt" in result.stdout
-    assert "note: Contains bonded Pt" in result.stderr
+    assert "note: Contains Pt" in result.stderr
 
 
 def test_compare():
@@ -1369,6 +1369,22 @@ def test_batch_props_standardize_triage(tmp_path):
     std = list(csv.DictReader((tmp_path / "standardize.csv").open()))
     assert std[0]["standardized_smiles"] == "CC(=O)O"
     assert std[0]["changed"] == "True"
+    assert (std[0]["removed"], std[0]["note"]) == ("[Na+]", "")
+    assert (std[2]["removed"], std[2]["note"]) == ("", "")
+
+
+def test_standardize_batch_says_what_was_left_out_and_why(tmp_path):
+    src = tmp_path / "in.smi"
+    src.write_text(
+        "N.N.Cl[Pt]Cl cisplatin\nCC(C)(C)NCC(O)c1ccc(O)c(CO)c1.OS(=O)(=O)O.[Na+] two\n"
+    )
+    out = tmp_path / "standardize.csv"
+    result = runner.invoke(app, ["standardize", "--input", str(src), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    std = list(csv.DictReader(out.open()))
+    assert std[0]["removed"] == ""
+    assert std[0]["note"].startswith("Contains Pt")
+    assert std[1]["removed"] == "O=S(=O)(O)O.[Na+]"  # one SMILES, dot-separated
 
 
 def test_batch_to_stdout_and_argument_checks(tmp_path):

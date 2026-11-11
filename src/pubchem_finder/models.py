@@ -68,7 +68,8 @@ class Standardized(BaseModel):
     note: str | None = Field(
         default=None,
         description="Set when the input was returned as given (a metal compound, "
-        "or nothing organic) or a metal was left out; tell the user",
+        "or nothing organic), or when what was left out may matter: a metal, or an "
+        "organic component that is not a common counter-ion or solvent. Tell the user",
     )
 
 

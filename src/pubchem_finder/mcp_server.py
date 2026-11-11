@@ -209,11 +209,12 @@ async def standardize(smiles: str) -> Standardized:
     """Standardize a structure: remove salts/counter-ions, neutralize charges,
     normalize functional groups, and return canonical SMILES of the parent.
 
-    The parent is the largest organic component; `removed` lists everything left
-    out, so for a mixture of two drugs it names the one that was dropped. Metal
-    compounds (cisplatin) and inputs with nothing organic (sodium chloride) are
-    returned as given, with a `note`. Sulfoxides stay S=O, the form PubChem and
-    the local index use."""
+    The parent is the largest organic component that is not a common counter-ion
+    or solvent (meglumine, pamoate, tartrate, ethanol); `removed` lists everything
+    left out, and `note` says when that includes another organic component, as in
+    a mixture of two drugs. Metal compounds (cisplatin, ferrous fumarate) and
+    inputs with nothing organic (sodium chloride) are returned as given, with a
+    `note`. Sulfoxides stay S=O, the form PubChem and the local index use."""
     return await _run(service.standardize, smiles)
 
 

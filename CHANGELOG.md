@@ -37,14 +37,21 @@ All notable changes to this project are documented here. The format follows
   a charged sulfur that the drug does not have. 15 of the 1,932 demo drugs were
   affected, and the `triage_structures` prompt standardizes before it profiles.
 - `standardize` no longer returns the counter-ion or a ligand as the parent. For
-  pyrantel pamoate it returned pamoic acid (the larger fragment); cisplatin came back
-  as ammonia, carboplatin and oxaliplatin as their ligands, sodium chloride as HCl.
-  Pamoate is now passed over as a counter-ion; a compound with a bonded metal other
-  than an alkali or alkaline-earth metal, and an input with nothing organic in it, are
-  returned as given with a `note`; and the new `removed` field lists every fragment
-  left out, so the dropped half of a two-drug mixture, or an iron or lithium ion, no
-  longer disappears silently. The CLI prints both on stderr, and batch output gains
-  `removed` and `note` columns.
+  pyrantel pamoate it returned pamoic acid, for diatrizoate meglumine the meglumine
+  and for fosfomycin tromethamine the tromethamine (RDKit's "largest fragment" counts
+  hydrogens); cisplatin came back as ammonia, carboplatin and oxaliplatin as their
+  ligands, sodium chloride as HCl. The parent is now the organic component with the
+  most heavy atoms, passing over about 55 common salt formers and solvents (pamoate,
+  meglumine, tromethamine, tartrate, citrate, benzathine, ethanol) while the input
+  has another. A compound of a metal other than an alkali or alkaline-earth metal,
+  drawn with bonds or as ions, and an input with nothing organic in it are returned
+  as given with a `note`. The new `removed` field lists every fragment left out, and
+  the note says when one of them is an organic component that is not a common
+  counter-ion (the other half of a two-drug mixture) or a metal such as lithium. The
+  CLI prints both on stderr, and batch output gains `removed` and `note` columns.
+  Salts of zinc, iron, silver or bismuth are no longer stripped to the acid: they
+  come back as given, with the note. In Python,
+  `MoleculeStandardizer.standardize_detailed` returns the same three parts.
 - `index build --sdf` could leave an index that searched an old version of a file while
   reporting it ready. 2.2.1 rebuilt the chunk of a changed file but decided whether to
   merge from what the same run had done, so a rebuild that failed part-way (a full disk,

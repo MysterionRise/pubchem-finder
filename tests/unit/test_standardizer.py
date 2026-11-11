@@ -191,6 +191,7 @@ def test_pamoate_is_the_counter_ion_not_the_parent():
     assert _smiles(_detailed(salt)) == Chem.CanonSmiles(PYRANTEL)
     # On its own, or with only its sodium, it is the compound.
     assert _smiles(_detailed(PAMOIC_ACID)) == Chem.CanonSmiles(PAMOIC_ACID)
+    assert _detailed(PAMOIC_ACID).note is None
     disodium = "[Na+].[Na+].[O-]C(=O)c1cc2ccccc2c(Cc2c(O)c(C(=O)[O-])cc3ccccc23)c1O"
     result = _detailed(disodium)
     assert _smiles(result) == Chem.CanonSmiles(PAMOIC_ACID)
@@ -211,7 +212,42 @@ def test_metal_compounds_are_returned_as_given():
         result = MoleculeStandardizer().standardize_detailed(mol)
         assert _smiles(result) == Chem.MolToSmiles(mol)
         assert result.removed == []
-        assert f"Contains bonded {metal}" in result.note
+        assert f"Contains {metal}" in result.note
+
+
+def test_metal_compounds_drawn_as_ions_are_returned_as_given_too():
+    """PubChem, and so this tool's own lookup, writes carboplatin and oxaliplatin
+    as separate ions. Only compounds drawn with bonds to the metal were kept:
+    these still came back as the ligand, and nitroprusside as hydrogen cyanide."""
+    for smiles, metal in (
+        ("C1CC(C1)(C(=O)O)C(=O)O.[NH2-].[NH2-].[Pt+2]", "Pt"),  # CID 426756
+        ("C1CC[C@H]([C@@H](C1)[NH-])[NH-].C(=O)(C(=O)O)O.[Pt+2]", "Pt"),  # CID 9887053
+        ("[C-]#N.[C-]#N.[C-]#N.[C-]#N.[C-]#N.N=O.[Fe+4].[Na+].[Na+]", "Fe"),
+        ("[Fe+2].[O-]C(=O)/C=C/C(=O)[O-]", "Fe"),  # ferrous fumarate
+        ("[Ag+].Nc1ccc(cc1)S(=O)(=O)[N-]c1ncccn1", "Ag"),  # silver sulfadiazine
+    ):
+        mol = Chem.MolFromSmiles(smiles)
+        result = MoleculeStandardizer().standardize_detailed(mol)
+        assert _smiles(result) == Chem.MolToSmiles(mol)
+        assert result.removed == []
+        assert f"Contains {metal}: without the metal only a ligand" in result.note
+
+
+def test_group_1_and_2_metals_are_counter_ions_unless_bonded_to_carbon():
+    """Sodium acetate drawn with an O-Na bond is a salt; butyllithium is not, and
+    was said to have had its lithium "left out" while it was still there."""
+    result = _detailed("CC(=O)O[Na]")
+    assert (_smiles(result), result.removed, result.note) == (
+        "CC(=O)O",
+        ["[Na+]"],
+        None,
+    )
+    for smiles, metal in (("[Li]CCCC", "Li"), ("C[Mg]Br", "Mg")):
+        mol = Chem.MolFromSmiles(smiles)
+        result = MoleculeStandardizer().standardize_detailed(mol)
+        assert _smiles(result) == Chem.MolToSmiles(mol)
+        assert result.removed == []
+        assert result.note.startswith(f"Contains {metal}")
 
 
 def test_inputs_without_an_organic_part_are_returned_as_given():
@@ -235,9 +271,126 @@ def test_removed_fragments_are_reported():
 
 
 def test_a_metal_left_out_is_pointed_at():
-    """Ferrous fumarate became fumaric acid and lithium carbonate carbonic acid,
-    with nothing saying the active ion was gone."""
-    result = _detailed("[Fe+2].[O-]C(=O)/C=C/C(=O)[O-]")
-    assert result.removed == ["[Fe+2]"]
-    assert "Left out Fe" in result.note
-    assert "Left out Li" in _detailed("[Li+].[Li+].[O-]C([O-])=O").note
+    """Lithium carbonate became carbonic acid, with nothing saying the active ion
+    was gone."""
+    result = _detailed("[Li+].[Li+].[O-]C([O-])=O")
+    assert result.removed == ["[Li+]", "[Li+]"]
+    assert result.note == (
+        "Left out Li: if the metal is the active part, use the input as it is."
+    )
+    # Sodium, potassium, magnesium and calcium go without comment.
+    assert _detailed("[Ca+2].CC(=O)[O-].CC(=O)[O-]").note is None
+
+
+SALTS = {
+    # name: (as given, parent, counter-ion as reported)
+    "fosfomycin tromethamine (CID 10199068)": (
+        "C[C@H]1[C@H](O1)P(=O)(O)O.C(C(CO)(CO)N)O",
+        "C[C@H]1[C@H](O1)P(=O)(O)O",
+        "NC(CO)(CO)CO",
+    ),
+    "diatrizoate meglumine": (
+        "CC(=O)Nc1c(I)c(NC(C)=O)c(I)c(C(=O)O)c1I"
+        ".CNC[C@H](O)[C@@H](O)[C@H](O)[C@H](O)CO",
+        "CC(=O)Nc1c(I)c(NC(C)=O)c(I)c(C(=O)O)c1I",
+        "CNC[C@H](O)[C@@H](O)[C@H](O)[C@H](O)CO",
+    ),
+    "choline salicylate": (
+        "C[N+](C)(C)CCO.[O-]C(=O)c1ccccc1O",
+        "OC(=O)c1ccccc1O",
+        "C[N+](C)(C)CCO",
+    ),
+    "trolamine salicylate": (
+        "OCCN(CCO)CCO.OC(=O)c1ccccc1O",
+        "OC(=O)c1ccccc1O",
+        "OCCN(CCO)CCO",
+    ),
+    "lysine acetylsalicylate": (
+        "NCCCC[C@H](N)C(=O)O.CC(=O)Oc1ccccc1C(=O)O",
+        "CC(=O)Oc1ccccc1C(=O)O",
+        "NCCCC[C@H](N)C(=O)O",
+    ),
+    "cysteamine bitartrate": (
+        "NCCS.O[C@H]([C@@H](O)C(=O)O)C(=O)O",
+        "NCCS",
+        "O[C@H]([C@@H](O)C(=O)O)C(=O)O",
+    ),
+    "piperazine citrate": (
+        "C1CNCCN1.OC(=O)CC(O)(CC(=O)O)C(=O)O",
+        "C1CNCCN1",
+        "OC(=O)CC(O)(CC(=O)O)C(=O)O",
+    ),
+    "methenamine hippurate": (
+        "C1N2CN3CN1CN(C2)C3.OC(=O)CNC(=O)c1ccccc1",
+        "C1N2CN3CN1CN(C2)C3",
+        "OC(=O)CNC(=O)c1ccccc1",
+    ),
+    "dextroamphetamine saccharate": (
+        "C[C@H](N)Cc1ccccc1.O[C@@H]([C@H](O)[C@@H](O)C(=O)O)[C@@H](O)C(=O)O",
+        "C[C@H](N)Cc1ccccc1",
+        "O[C@@H]([C@H](O)[C@@H](O)C(=O)O)[C@@H](O)C(=O)O",
+    ),
+    "penicillin G benzathine": (
+        "CC1(C)S[C@@H]2[C@H](NC(=O)Cc3ccccc3)C(=O)N2[C@H]1C(=O)O"
+        ".C(CNCc1ccccc1)NCc1ccccc1",
+        "CC1(C)S[C@@H]2[C@H](NC(=O)Cc3ccccc3)C(=O)N2[C@H]1C(=O)O",
+        "C(CNCc1ccccc1)NCc1ccccc1",
+    ),
+}
+
+
+def test_the_counter_ion_of_a_marketed_salt_is_never_the_parent():
+    """RDKit's "largest fragment" counts hydrogens: meglumine (30 atoms) beat
+    diatrizoic acid (29) and tromethamine beat fosfomycin, and the counter-ion
+    came back as the parent with no note. So did tartrate, citrate, hippurate and
+    saccharate next to a small drug."""
+    for name, (given, parent, partner) in SALTS.items():
+        result = _detailed(given)
+        assert _smiles(result) == Chem.CanonSmiles(parent), name
+        assert result.removed == [Chem.CanonSmiles(partner)], name
+        assert result.note is None, name
+
+
+def test_another_copy_of_the_parent_was_not_removed():
+    """A 2:1 salt: `removed` listed the second salbutamol next to the sulfate, and
+    the prompt tells the assistant to report what was removed."""
+    salbutamol = "CC(C)(C)NCC(O)c1ccc(O)c(CO)c1"
+    result = _detailed(f"{salbutamol}.{salbutamol}.OS(=O)(=O)O")
+    assert _smiles(result) == Chem.CanonSmiles(salbutamol)
+    assert result.removed == ["O=S(=O)(O)O"]
+    acetates = _detailed("[Ca+2].CC(=O)[O-].CC(=O)[O-]")
+    assert (_smiles(acetates), acetates.removed) == ("CC(=O)O", ["[Ca+2]"])
+
+
+def test_an_organic_component_that_is_no_counter_ion_is_pointed_at():
+    trimethoprim = "COc1cc(Cc2cnc(N)nc2N)cc(OC)c1OC"
+    sulfamethoxazole = "Cc1cc(NS(=O)(=O)c2ccc(N)cc2)no1"
+    result = _detailed(f"{trimethoprim}.{sulfamethoxazole}")
+    assert result.note == (
+        f"Left out {Chem.CanonSmiles(sulfamethoxazole)}, which is not a common "
+        "counter-ion or solvent: the input may be a mixture, and the parent returned "
+        "is only its largest component."
+    )
+
+
+def test_solvents_and_counter_ions_alone():
+    """Pamoic acid with ethanol or DMSO came back as the solvent."""
+    for solvent in ("CCO", "CS(C)=O"):
+        result = _detailed(f"{solvent}.{PAMOIC_ACID}")
+        assert _smiles(result) == Chem.CanonSmiles(PAMOIC_ACID)
+        assert result.removed == [solvent]
+        assert result.note == (
+            "Every organic component is a common counter-ion or solvent; the "
+            "largest was kept."
+        )
+    # One of them on its own, or with its metal, is simply the compound.
+    assert _detailed("CCO").note is None
+    stearate = "CCCCCCCCCCCCCCCCCC(=O)[O-]"
+    assert _detailed(f"{stearate}.{stearate}.[Mg+2]").note is None
+
+
+def test_a_removed_sulfoxide_is_reported_neutral_too():
+    """A DMSO solvate: `removed` must show what was given, not C[S+](C)[O-]."""
+    result = _detailed("CS(C)=O.CC(=O)Oc1ccccc1C(=O)O")
+    assert _smiles(result) == "CC(=O)Oc1ccccc1C(=O)O"
+    assert result.removed == ["CS(C)=O"]
