@@ -21,7 +21,7 @@ import json
 import os
 import re
 import unicodedata
-from collections.abc import Collection, Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -268,13 +268,12 @@ class IndexPaths:
             )
         return Merged(Manifest.model_validate(data), written_ns)
 
-    def built_after(self, names: Iterable[str], when_ns: int) -> set[str]:
-        """The chunks among ``names`` whose stats file was written after ``when_ns``."""
-        out: set[str] = set()
+    def stats_written(self, names: Iterable[str]) -> dict[str, int]:
+        """When the stats file of each complete chunk among ``names`` was written."""
+        out: dict[str, int] = {}
         for name in names:
             try:
-                if self.chunk_stats(name).stat().st_mtime_ns > when_ns:
-                    out.add(name)
+                out[name] = self.chunk_stats(name).stat().st_mtime_ns
             except OSError:  # no stats: not a complete chunk
                 continue
         return out
@@ -293,7 +292,9 @@ class Merged(NamedTuple):
 
 
 def unmerged(
-    manifest: Manifest, chunks: Iterable[ChunkStats], newer: Collection[str] = ()
+    merged: Merged | Manifest,
+    chunks: Iterable[ChunkStats],
+    written: Mapping[str, int] | None = None,
 ) -> list[str]:
     """The chunks of a merged index that are no longer the builds it holds.
 
@@ -302,10 +303,14 @@ def unmerged(
     fingerprints are still the old one's, so the two must not be read together. A
     chunk without stats is being replaced right now, or is gone.
 
-    ``newer`` names the chunks whose stats were written after the manifest (see
-    :meth:`IndexPaths.built_after`). It decides for an index merged by 2.2.1 or
-    earlier, which recorded no build ids.
+    ``written`` says when each chunk's stats file was written (see
+    :meth:`IndexPaths.stats_written`). Together with the time ``merged`` carries
+    it decides for an index merged by 2.2.1 or earlier, which recorded no build
+    ids; a bare manifest stands for one whose file times are not known.
     """
+    manifest, manifest_written = (
+        merged if isinstance(merged, Merged) else (merged, None)
+    )
     on_disk = {c.name: c for c in chunks}
     merged_at = int(manifest.built_at.timestamp() * 1_000_000_000)
     out: list[str] = []
@@ -319,11 +324,21 @@ def unmerged(
             # newer than the manifest (those versions wrote the manifest last), and
             # a chunk built from a file that was modified after the merge. The
             # second also holds in a copy of the home that lost its file times, and
-            # after 2.2.1 rewrote the manifest to add substructure search. A build
-            # id alone says nothing: 2.2.1 may have merged a chunk that has one.
-            if stats.source is not None and (
-                name in newer or stats.source.mtime_ns > merged_at
-            ):
+            # after 2.2.1 rewrote the manifest to add substructure search; it says
+            # nothing when the file is dated later than the chunk built from it (a
+            # clock that is ahead, a date in the future). A build id alone says
+            # nothing either: 2.2.1 may have merged a chunk that has one.
+            if stats.source is None:
+                continue
+            at = (written or {}).get(name)
+            newer = (
+                at is not None
+                and manifest_written is not None
+                and at > manifest_written
+            )
+            modified = stats.source.mtime_ns
+            later = modified > merged_at and (at is None or modified <= at)
+            if newer or later:
                 out.append(name)
         elif manifest.chunk_builds.get(name) != stats.build_id:
             out.append(name)
@@ -334,7 +349,19 @@ def duckdb_path(path: Path | str) -> str:
     """``path`` as DuckDB has to be given one file. It reads ``*``, ``?`` and ``[``
     in a path as a pattern: asked for ``lib[1].parquet`` it opened ``lib1.parquet``,
     and gave a hit of one library the structure the other has under that ID."""
-    return re.sub(r"([*?\[])", r"[\1]", str(path))
+    text = str(path)
+    if os.sep == "/" and "\\" in text:
+        # No pattern stands for a backslash there, and DuckDB takes one in a
+        # pattern for an escape. Left as it is, the path is still found: DuckDB
+        # tries the name itself when the pattern matches no file.
+        return text
+    return re.sub(r"([*?\[])", r"[\1]", text)
+
+
+def chunk_of(parquet: Path | str) -> str:
+    """The chunk a Parquet file holds, from the path DuckDB reports for a row."""
+    name = Path(parquet).name
+    return name.removesuffix(".parquet")
 
 
 def chunk_key(name: str) -> str:

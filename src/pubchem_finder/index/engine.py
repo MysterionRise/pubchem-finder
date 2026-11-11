@@ -20,7 +20,15 @@ from rdkit import Chem
 from .. import hints
 from ..config import INDEX_MODE_ENV
 from ..core.exceptions import IndexNotBuilt
-from .layout import ChunkStats, IndexPaths, Manifest, Merged, duckdb_path, unmerged
+from .layout import (
+    ChunkStats,
+    IndexPaths,
+    Manifest,
+    Merged,
+    chunk_of,
+    duckdb_path,
+    unmerged,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -319,8 +327,8 @@ class LocalIndex:
         merged = merged or self.merged
         seen = self._chunk_stats(merged.manifest.chunks)
         stats = {name: found for name, (found, _) in seen.items()}
-        newer = {name for name, (_, at) in seen.items() if at > merged.written_ns}
-        stale = unmerged(merged.manifest, stats.values(), newer)
+        written = {name: at for name, (_, at) in seen.items()}
+        stale = unmerged(merged, stats.values(), written)
         return {name: stats.get(name) for name in stale}
 
     def _chunk_stats(self, names: list[str]) -> dict[str, tuple[ChunkStats, int]]:
@@ -381,8 +389,12 @@ class LocalIndex:
             stale |= set(self.unmerged(merged))
             rows: dict[int, dict[str, Any]] = {}
             for chunk, row in found:
-                if chunk not in stale:
-                    rows.setdefault(int(row["cid"]), row)
+                if chunk in stale:
+                    continue
+                # One row per ID; one with a structure before one without.
+                kept = rows.setdefault(int(row["cid"]), row)
+                if not kept["smiles"] and row["smiles"]:
+                    rows[int(row["cid"])] = row
             return rows
         return {}  # not reached: the third failure raises
 
@@ -410,6 +422,6 @@ class LocalIndex:
             f"WHERE cid IN ({ids})"
         ).fetchall()
         return [
-            (Path(r[-1]).stem, dict(zip(METADATA_COLUMNS, r[:-1], strict=True)))
+            (chunk_of(r[-1]), dict(zip(METADATA_COLUMNS, r[:-1], strict=True)))
             for r in rows
         ]

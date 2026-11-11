@@ -933,11 +933,16 @@ def test_a_file_name_duckdb_reads_as_a_pattern_is_read_as_a_name(tmp_path):
     """DuckDB takes [ ] * and ? in a path for a pattern: asked for
     "lib[1].parquet" it opened "lib1.parquet". A hit from one library came back
     without its structure, or with the one the other library has under that ID."""
-    from pubchem_finder.index.layout import duckdb_path
+    from pubchem_finder.index.layout import chunk_of, duckdb_path
     from tests.conftest import write_sdf
 
     assert duckdb_path("/data/a*b?c[1].parquet") == "/data/a[*]b[?]c[[]1].parquet"
     assert duckdb_path("/data/plain-name_1.parquet") == "/data/plain-name_1.parquet"
+    if os.sep == "/":  # no pattern stands for a backslash: such a path is left alone
+        assert duckdb_path("/data/a\\b[1].parquet") == "/data/a\\b[1].parquet"
+    # Back from the path of a row to its chunk, also for a file called ".sdf".
+    assert chunk_of("/data/chunks/lib.v2.parquet") == "lib.v2"
+    assert chunk_of("/data/chunks/.parquet") == ""
     home = tmp_path / "home [x]"
     first = write_sdf(tmp_path / "lib[1].sdf", [(11, ASPIRIN, "a", "new")], gz=False)
     second = write_sdf(tmp_path / "lib1.sdf", [(12, CAFFEINE, "c", "new")], gz=False)
@@ -946,6 +951,41 @@ def test_a_file_name_duckdb_reads_as_a_pattern_is_read_as_a_name(tmp_path):
     assert [(h["cid"], h["smiles"]) for h in hits] == [(11, ASPIRIN)]
     hits = json.loads(_search(home, CAFFEINE, "--json").output)["hits"]
     assert [(h["cid"], h["smiles"]) for h in hits] == [(12, CAFFEINE)]
+
+
+@pytest.mark.skipif(os.sep != "/", reason="a backslash separates folders here")
+def test_a_home_with_a_backslash_and_a_bracket_in_its_name_is_searched(tmp_path):
+    """Escaping the bracket for DuckDB made the backslash an escape too, and a home
+    that had worked ended in a traceback."""
+    from tests.conftest import write_sdf
+
+    home = tmp_path / "back\\slash [1]" / "home"
+    library = write_sdf(tmp_path / "lib.sdf", [(11, ASPIRIN, "a", "new")], gz=False)
+    assert _sdf_build(home, library).exit_code == 0
+    hits = json.loads(_search(home, ASPIRIN, "--json").output)["hits"]
+    assert [(h["cid"], h["smiles"]) for h in hits] == [(11, ASPIRIN)]
+
+
+def test_a_record_with_a_structure_is_shown_before_one_without(tmp_path):
+    """One ID in two files, in one of them as a record without atoms: the hit
+    showed whichever row was read first, and so sometimes no structure at all."""
+    from rdkit import Chem
+
+    from tests.conftest import write_sdf
+
+    home = tmp_path / "home"
+    blank = tmp_path / "a_blank.sdf"
+    with Chem.SDWriter(str(blank)) as writer:
+        mol = Chem.Mol()
+        mol.SetProp("_Name", "11")
+        writer.write(mol)
+        other = Chem.MolFromSmiles("CCO")
+        other.SetProp("_Name", "12")
+        writer.write(other)
+    library = write_sdf(tmp_path / "z_lib.sdf", [(11, ASPIRIN, "a", "new")], gz=False)
+    assert _sdf_build(home, blank, library).exit_code == 0
+    hits = json.loads(_search(home, ASPIRIN, "--json").output)["hits"]
+    assert [(h["cid"], h["smiles"]) for h in hits] == [(11, ASPIRIN)]
 
 
 def test_a_chunk_whose_stats_are_gone_is_not_called_indexed_again(renumbered):

@@ -692,7 +692,7 @@ def test_unmerged_under_a_manifest_without_build_ids(built_home):
     """Merged by 2.2.1 or earlier, which wrote the manifest last: a chunk of the
     user's own file with newer stats was built since. PubChem's chunks are never
     rebuilt, and a build id says nothing (2.2.1 can merge a chunk that has one)."""
-    from pubchem_finder.index.layout import unmerged
+    from pubchem_finder.index.layout import Merged, unmerged
 
     manifest = IndexPaths(built_home).load_manifest()
     legacy = manifest.model_copy(
@@ -703,21 +703,31 @@ def test_unmerged_under_a_manifest_without_build_ids(built_home):
         _chunk("old", None),
         _chunk("pubchem", "8", source=False),
     ]
+    at_100 = Merged(legacy, 100)  # manifest.json written at 100
     assert unmerged(legacy, on_disk) == []
-    assert unmerged(legacy, on_disk, newer={"lib"}) == ["lib"]
+    assert unmerged(at_100, on_disk, {"lib": 50, "old": 100, "pubchem": 50}) == []
+    assert unmerged(at_100, on_disk, {"lib": 101, "old": 50, "pubchem": 50}) == ["lib"]
     # 2.2.1 rebuilt "old" and failed before the merge: no build id, newer stats.
-    assert unmerged(legacy, on_disk, newer={"lib", "old", "pubchem"}) == ["lib", "old"]
+    late = {"lib": 101, "old": 102, "pubchem": 103}
+    assert unmerged(at_100, on_disk, late) == ["lib", "old"]
+
     # The same home after a copy that kept no file times, or after 2.2.1 rewrote
     # the manifest to add substructure search: the chunk still records a file
     # modified after the merge, which no chunk in that merge can have been built
     # from.
     after = int(legacy.built_at.timestamp() * 1e9) + 1
-    rebuilt = [_chunk("lib", "7"), _chunk("old", None, modified_ns=after)]
-    assert unmerged(legacy, [*rebuilt, on_disk[2]]) == ["old"]
+    rebuilt = [_chunk("lib", "7"), _chunk("old", None, modified_ns=after), on_disk[2]]
+    assert unmerged(legacy, rebuilt) == ["old"]
+    copied = Merged(legacy, after + 10)  # every file as new as the copy
+    everything = dict.fromkeys(("lib", "old", "pubchem"), after + 5)
+    assert unmerged(copied, rebuilt, everything) == ["old"]
+    # Unless the file is dated later than the chunk that was built from it: a
+    # clock that is ahead, or a date in the future, in a home that is fine.
+    assert unmerged(copied, rebuilt, {**everything, "old": after - 1}) == []
     ids = {"lib": "7", "old": None, "pubchem": "8"}
     held = legacy.model_copy(update={"chunk_builds": ids})
     # Only where the manifest has no ids: with them, the ids decide.
-    assert unmerged(held, [*rebuilt, on_disk[2]]) == []
+    assert unmerged(held, rebuilt) == []
 
 
 def _written(path, when_ns):

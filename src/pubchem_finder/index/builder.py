@@ -820,8 +820,8 @@ def rebuilt_since_merge(paths: IndexPaths) -> list[str]:
     manifest = merged.manifest
     chunks = paths.completed_chunks()
     built = {c.name for c in chunks}
-    newer = paths.built_after(manifest.chunks, merged.written_ns)
-    return [name for name in unmerged(manifest, chunks, newer) if name in built]
+    written = paths.stats_written(manifest.chunks)
+    return [name for name in unmerged(merged, chunks, written) if name in built]
 
 
 def _remove_pattern_data(paths: IndexPaths) -> bool:
