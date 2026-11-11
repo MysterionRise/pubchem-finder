@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Similarity search breaks score ties at the `top_k` cut by CID, so the answer no
+  longer depends on FPSim2's thread order (#159). With identical fingerprints,
+  as in aspirin and its 11C-labelled twin, `--top 1` could return either
+  compound; the lower CID now wins. The search asks FPSim2 for one hit past the
+  cut and widens the ask only while the cut is tied, instead of stopping at
+  whichever tied compound FPSim2 happened to place in the slot.
+
 ## [2.2.3] - 2026-11-11
 
 ### Fixed
