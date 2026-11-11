@@ -92,6 +92,16 @@ def test_index_build_requires_one_source(tmp_path):
     assert "exactly one" in result.output
 
 
+def test_index_build_rejects_sdf_without_a_chunk_name(tmp_path):
+    path = tmp_path / ".sdf"
+    path.touch()
+    result = runner.invoke(
+        app, ["index", "build", "--sdf", str(path), "--home", str(tmp_path / "home")]
+    )
+    assert result.exit_code == 1
+    assert "no chunk name" in result.output
+
+
 def test_index_build_from_sdf_then_status_and_search(tmp_path, sample_sdfs):
     home = tmp_path / "home"
     args = ["index", "build", "--home", str(home), "--workers", "1"]

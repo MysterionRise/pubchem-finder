@@ -30,7 +30,7 @@ from typing import Any, NamedTuple
 from pydantic import BaseModel, Field
 
 from .. import __version__
-from ..core.exceptions import IndexIncompatible
+from ..core.exceptions import IndexBuildError, IndexIncompatible
 
 FORMAT_VERSION = 1
 """Version of the index format this release writes and the newest it reads.
@@ -372,10 +372,13 @@ def chunk_key(name: str) -> str:
 
 def chunk_name(path: Path | str) -> str:
     """``Compound_000000001_000500000.sdf.gz`` -> ``Compound_000000001_000500000``."""
-    name = Path(path).name
+    filename = Path(path).name
+    name = filename
     for suffix in (".gz", ".sdf", ".sd", ".mol"):
-        if name.endswith(suffix):
+        if name.lower().endswith(suffix):
             name = name[: -len(suffix)]
+    if not name:
+        raise IndexBuildError(f"SDF filename {filename!r} has no chunk name")
     return name
 
 

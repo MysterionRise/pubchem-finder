@@ -26,6 +26,11 @@ def sources(paths):
     return [SdfSource(name=chunk_name(p), local_path=p) for p in paths]
 
 
+@pytest.mark.parametrize("name", ["Library.SDF", "Library.Sd.GZ", "Library.MOL.gz"])
+def test_chunk_name_strips_case_insensitive_suffixes(name):
+    assert chunk_name(name) == "Library"
+
+
 def test_finalized_layout_and_manifest(built_home):
     paths = IndexPaths(built_home)
     manifest = paths.load_manifest()

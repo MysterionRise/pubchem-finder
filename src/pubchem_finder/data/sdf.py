@@ -68,7 +68,7 @@ class SdfReader:
         self.skipped_id: str | None = None
 
     def _open(self) -> BinaryIO:
-        if self.path.suffix == ".gz":
+        if self.path.suffix.lower() == ".gz":
             return cast(BinaryIO, gzip.open(self.path, "rb"))
         return open(self.path, "rb")
 
