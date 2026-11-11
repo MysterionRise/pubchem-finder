@@ -78,7 +78,8 @@ All notable changes to this project are documented here. The format follows
   CLI prints both on stderr, and batch output gains `removed` and `note` columns.
   Salts of zinc, iron, silver or bismuth are no longer stripped to the acid: they
   come back as given, with the note. In Python,
-  `MoleculeStandardizer.standardize_detailed` returns the same three parts.
+  `MoleculeStandardizer.standardize_detailed` returns the same three parts, and the
+  `triage_structures` prompt tells the assistant to pass `removed` and `note` on.
 - `index build --sdf` could leave an index that searched an old version of a file while
   reporting it ready (#102). 2.2.1 rebuilt the chunk of a changed file but decided whether to
   merge from what the same run had done, so a rebuild that failed part-way (a full disk,

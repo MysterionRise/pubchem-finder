@@ -182,14 +182,16 @@ Check the setup with an MCP request through the proxy, not with `/health`, which
 even when the `Host` header is wrong and every `/mcp` request gets a 421:
 
 ```bash
-curl -s -u alice -X POST https://pubchem.example.com/mcp \
+curl -si -u alice -X POST https://pubchem.example.com/mcp \
   -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
-# 200 and a line with "serverInfo":{"name":"pubchem-finder",...}: it works. 421: Host is not rewritten.
+# HTTP 200 and a "data:" line containing "name":"pubchem-finder": it works.
+# HTTP 421 "Invalid Host header": the proxy does not rewrite Host.
 ```
 
 Clients send the same credentials as an `Authorization` header (in Claude Code,
-`claude mcp add --transport http --header "Authorization: Basic ..."`). `scripts/smoke.py`
+`claude mcp add --transport http pubchem-finder https://pubchem.example.com/mcp --header "Authorization: Basic ..."`,
+with the header after the name and the URL). `scripts/smoke.py`
 sends none, so it cannot check a server behind authentication. Clients that run in a web
 page are not supported through the proxy: they would also need CORS headers.
 

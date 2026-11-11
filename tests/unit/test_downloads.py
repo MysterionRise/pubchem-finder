@@ -43,6 +43,27 @@ def test_list_chunks(api, mirror):
     assert mirror.list_chunks() == [NAME, "Compound_000500001_001000000.sdf.gz"]
 
 
+def test_mirror_keeps_no_cookies():
+    """One client downloads every chunk of a build; NCBI's session cookie must not
+    go back with the next request."""
+    cookie = {"set-cookie": "ncbi_sid=ABC123; domain=.nih.gov; path=/"}
+    with respx.mock() as router, SdfMirror() as mirror:
+        router.get(DEFAULT_SDF_URL).respond(
+            200, text=f'<a href="{NAME}">{NAME}</a>', headers=cookie
+        )
+        md5 = router.get(DEFAULT_SDF_URL + NAME + ".md5").respond(
+            200, text=f"{'0' * 32}  {NAME}\n", headers=cookie
+        )
+        assert mirror.list_chunks() == [NAME]
+        mirror.expected_md5(NAME)
+        mirror.expected_md5(NAME)
+        assert [call.request.headers.get("cookie") for call in md5.calls] == [
+            None,
+            None,
+        ]
+        assert len(mirror._client.cookies.jar) == 0
+
+
 def test_list_chunks_errors(mirror):
     with respx.mock() as router:
         router.get(URL).respond(200, text="<html>nothing here</html>")

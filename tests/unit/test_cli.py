@@ -72,8 +72,17 @@ def test_lookup_not_found(pubchem_api, monkeypatch):
     assert "error:" in result.output
     # `lookup 2244` and `lookup <SMILES>` end here too: say what --by is for.
     assert "--by cid, --by smiles or --by inchikey" in result.output
+    # By CID there is nothing to suggest. PubChem answers a CID it does not have
+    # with a row that holds the CID alone; without this route the command died on
+    # the unmocked request and the assertion below held for an empty output.
+    from tests.conftest import property_table
+
+    pubchem_api.get(path__regex=r"/compound/cid/999999999/property/.*").respond(
+        200, json=property_table({"CID": 999999999})
+    )
     by_cid = runner.invoke(app, ["lookup", "999999999", "--by", "cid"])
     assert by_cid.exit_code == 1
+    assert "error: No PubChem compound found for cid='999999999'" in by_cid.output
     assert "--by cid" not in by_cid.output
 
 

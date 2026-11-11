@@ -343,7 +343,8 @@ So to keep a structure confidential, search it with the local tools and do not a
 PubChem's live searches on it (`pubchem_similarity_search`, `pubchem_substructure_search`,
 `pubchem_exact_match`, or `pubchem_lookup` by SMILES). The assistant picks the tools, and
 two of the built-in prompts point it at PubChem: `compound_dossier` starts with a lookup,
-and `find_analogues` offers PubChem's search when only the demo set was searched. For a
+and `find_analogues` looks up a name or CID first and offers PubChem's search when only
+the demo set was searched. For a
 confidential structure, say so in your request or switch the `pubchem_*` tools off in
 your client. Your AI assistant is separate from all this: whatever you type into it, and
 whatever the tools return, goes to its provider. A client that shows server icons

@@ -202,6 +202,9 @@ def test_similarity_search_without_an_index_searches_the_demo_set(demo_built, de
     assert "`pubchem-finder pubchem" not in found.note.replace(
         hints.command("pubchem similarity SMILES"), ""
     )
+    # Spelled out: the two lines above build their text with the function under
+    # test, and passed when it printed a command only an installed copy can run.
+    assert "(`uvx --python 3.14 pubchem-finder==" in found.note
 
 
 def test_substructure_search_without_an_index_searches_the_demo_set(
