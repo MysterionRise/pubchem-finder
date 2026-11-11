@@ -1553,7 +1553,7 @@ requires-dist = [
     { name = "psutil", specifier = ">=5.9" },
     { name = "pyarrow", specifier = ">=17" },
     { name = "pydantic", specifier = ">=2.7" },
-    { name = "rdkit", specifier = ">=2024.9" },
+    { name = "rdkit", specifier = ">=2024.9,!=2026.9.2" },
     { name = "starlette", specifier = ">=1" },
     { name = "tables", specifier = ">=3.10" },
     { name = "typer", specifier = ">=0.16" },

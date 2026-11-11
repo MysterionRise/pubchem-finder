@@ -23,7 +23,9 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Chemistry",
 ]
 dependencies = [
-    "rdkit>=2024.9",
+    # 2026.9.2's macOS wheels raise "bad any cast" from MurckoDecompose, which breaks
+    # every scaffold. Drop the exclusion once RDKit ships a fixed release.
+    "rdkit>=2024.9,!=2026.9.2",
     "numpy>=2",
     "httpx>=0.28",
     "pydantic>=2.7",

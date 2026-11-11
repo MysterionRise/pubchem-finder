@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- On a Mac, a new install crashed in everything that needs a Bemis-Murcko scaffold:
+  `triage`, the `medchem_profile` tool, and grouping search hits by scaffold all ended in
+  `RuntimeError: bad any cast`. RDKit 2026.9.2, published on 2026-11-11, raises it from
+  `MurckoDecompose` for every molecule in its macOS wheels (its Linux wheels are fine),
+  and an install picks the newest RDKit. That release is now excluded, so installs get
+  2026.9.1 until RDKit publishes a fixed one. Upgrading pubchem-finder repairs an
+  install that already has RDKit 2026.9.2.
+
 ## [2.2.2] - 2026-11-11
 
 ### Fixed
