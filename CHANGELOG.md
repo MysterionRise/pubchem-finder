@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.2.2] - 2026-11-11
+
 ### Fixed
 
 - `pubchem_bioactivity` listed measurements that are not potencies among a compound's
@@ -442,7 +444,8 @@ with a local index you can build on a laptop.
 An Indigo + Elasticsearch indexer for PubChem SDF dumps. It was never released as a
 package.
 
-[Unreleased]: https://github.com/MysterionRise/pubchem-finder/compare/v2.2.1...HEAD
+[Unreleased]: https://github.com/MysterionRise/pubchem-finder/compare/v2.2.2...HEAD
+[2.2.2]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.2.2
 [2.2.1]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.2.1
 [2.2.0]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.2.0
 [2.1.1]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.1.1

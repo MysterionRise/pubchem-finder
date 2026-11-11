@@ -5,8 +5,8 @@ type: software
 authors:
   - family-names: Perikov
     given-names: Konstantin
-version: 2.2.1
-date-released: "2026-11-04"
+version: 2.2.2
+date-released: "2026-11-11"
 license: MIT
 repository-code: "https://github.com/MysterionRise/pubchem-finder"
 keywords:
