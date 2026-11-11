@@ -369,6 +369,11 @@ SALTS.update(
             "OC(=O)c1cc(=O)[nH]c(=O)[nH]1",
         ),
         "guanidine carbonate": ("NC(N)=N.OC(O)=O", "NC(N)=N", "OC(O)=O"),
+        "metformin orotate, the orotate drawn as a dihydroxypyrimidine": (
+            "CN(C)C(=N)NC(N)=N.OC(=O)c1cc(O)nc(O)n1",
+            "CN(C)C(=N)NC(N)=N",
+            "OC(=O)c1cc(O)nc(O)n1",
+        ),
     }
 )
 

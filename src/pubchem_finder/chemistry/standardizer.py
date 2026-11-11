@@ -99,6 +99,7 @@ _PARTNERS = frozenset(
         "COS(O)(=O)=O",  # methylsulfuric (metilsulfate)
         "OC(C(O)=O)c1ccccc1",  # mandelic
         "OC(=O)c1cc(=O)[nH]c(=O)[nH]1",  # orotic
+        "OC(=O)c1cc(O)nc(O)n1",  # orotic, drawn as the dihydroxypyrimidine
         "OC(=O)c1ccccc1C(=O)c1ccc(O)c(c1)-c1ccccc1",  # fendizoic
         "OC(=O)c1ccccc1C(=O)c1ccc(O)cc1",  # hibenzic
         "OC(=O)C(c1ccccc1)(c1ccccc1)c1ccccc1",  # triphenylacetic (trifenatate)
