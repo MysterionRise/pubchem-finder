@@ -711,7 +711,7 @@ def finalize(
         compared = current is not None and current.chunk_builds is not None
         _check_ids(paths, chunks, settled, emit, checked=settled if compared else ())
     if current is not None and not merged and not force:
-        for line in _merge_notes(current, chunks):
+        for line in _merge_notes(current, chunks, built):
             emit(line)
     old_sub = current.substructure if current is not None else None
     if substructure is None:
@@ -797,16 +797,32 @@ def _nothing_to_merge(paths: IndexPaths, built: Sequence[ChunkStats]) -> str:
     )
 
 
-def _merge_notes(manifest: Manifest, chunks: Sequence[ChunkStats]) -> list[str]:
-    """What to say before a merge whose reason the build output does not show."""
+def _merge_notes(
+    manifest: Manifest, chunks: Sequence[ChunkStats], built: Sequence[ChunkStats]
+) -> list[str]:
+    """What to say before a merge whose reason the build output does not show.
+
+    ``chunks`` are the chunks being merged, ``built`` every complete chunk on
+    disk: a chunk whose file gave no record is complete, and is not merged.
+    """
     names = [c.name for c in chunks]
-    gone = [n for n in manifest.chunks if n not in names]
+    empty = {c.name for c in built if not c.n_records}
+    emptied = [n for n in manifest.chunks if n in empty]
+    gone = [n for n in manifest.chunks if n not in names and n not in empty]
+    notes = []
+    if emptied:
+        notes.append(
+            f"warning: {_some(emptied)}: in the index, but its file has no record "
+            "the index can hold any more, so this merge leaves it out."
+        )
     if gone:
-        return [
+        notes.append(
             f"warning: {_some(gone)}: in the index, but no longer complete in the "
             "chunks directory, so this merge leaves it out. Build from its file "
             "again to put it back."
-        ]
+        )
+    if notes:
+        return notes
     if (
         manifest.chunks == names
         and manifest.chunk_builds is None

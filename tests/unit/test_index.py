@@ -793,6 +793,22 @@ def test_a_stats_file_is_not_trusted_from_memory_while_it_is_new(tmp_path, sampl
     assert list(index.unmerged()) == [CHUNK_NAMES[0]]
 
 
+def test_status_has_no_2_2_1_note_for_an_index_of_pubchem_chunks(tmp_path, sample_sdfs):
+    """2.2.1 could only miss a rebuilt --sdf file; PubChem's chunks are never
+    rebuilt, so their index is not merged again and nothing is said."""
+    paths = IndexPaths(tmp_path / "home")
+    name = chunk_name(sample_sdfs[0])
+    build_chunks(paths, [SdfSource(name=name, fetch=lambda: sample_sdfs[0])])
+    finalize(paths)
+    data = json.loads(paths.manifest.read_text())
+    del data["chunk_builds"]
+    paths.manifest.write_text(json.dumps(data))
+    _written(paths.chunk_stats(name), paths.manifest.stat().st_mtime_ns + 10**9)
+    status = service.index_status(paths.home)
+    assert "2.2.1 or earlier" not in (status.hint or "")
+    assert status.unmerged_chunks == []
+
+
 def test_metadata_reads_again_when_a_file_changes_under_it(built_home, monkeypatch):
     """A build replacing a Parquet file while DuckDB read it surfaced as a raw
     "TProtocolException: Invalid data" from a search."""

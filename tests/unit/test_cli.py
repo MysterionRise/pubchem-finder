@@ -338,6 +338,12 @@ def test_the_way_out_of_an_empty_file_is_one_that_works(
         stats.unlink()
         result = _sdf_build(home, *files)
         assert result.exit_code == 0, result.output
+        # The chunk is complete, and empty: "no longer complete ... Build from
+        # its file again to put it back" was the wrong thing to say about it.
+        assert "warning: library: in the index, but its file has no record" in (
+            result.output
+        )
+        assert "no longer complete" not in result.output
         cids = _cids(home)
         assert 1983 in cids
         assert 2244 not in cids
@@ -358,6 +364,25 @@ def test_the_way_out_of_an_empty_file_is_one_that_works(
     shutil.rmtree(home / "chunks")
     status = runner.invoke(app, ["index", "status", "--home", str(home), "--json"])
     assert json.loads(status.output)["state"] == "not_built"
+
+
+def test_an_empty_chunk_may_be_replaced_by_another_empty_one(tmp_path):
+    """The refusal is for a chunk that holds compounds; a file that never gave any
+    is simply read again."""
+    from rdkit import Chem
+
+    home = tmp_path / "home"
+    lib = tmp_path / "chembl.sdf"
+    for name in ("CHEMBL25", "CHEMBL26"):
+        mol = Chem.MolFromSmiles("CCO")
+        mol.SetProp("_Name", name)
+        with Chem.SDWriter(str(lib)) as writer:
+            writer.write(mol)
+        result = _sdf_build(home, lib)
+        assert result.exit_code == 1
+        assert "None of the 1 chunk(s)" in result.output
+        assert f"skipped {name!r}" in result.output
+        assert "keeps the" not in result.output
 
 
 def test_rebuild_from_a_damaged_file_leaves_the_chunk_as_it_was(
@@ -1023,6 +1048,9 @@ def test_a_chunk_whose_stats_are_gone_is_not_called_indexed_again(renumbered):
     from pubchem_finder import service
 
     home, _ = renumbered
+    # A process that has read the stats before must notice too (the MCP server
+    # keeps them between searches).
+    assert service.index_status(home).unmerged_chunks == []
     (home / "chunks" / "library.json").unlink()
     found = service.similarity_search(ASPIRIN, threshold=0.9, home=home)
     assert [(h.cid, h.smiles) for h in found.hits] == [(1, None)]
@@ -1054,6 +1082,25 @@ def test_failed_build_merges_what_it_had_already_replaced(renumbered, tmp_path):
     assert hits["warning"] is None
     found = json.loads(_search(home, PARACETAMOL, "--json").output)
     assert [h["cid"] for h in found["hits"]] == [5]
+
+
+def test_failed_build_does_not_merge_out_a_chunk_that_lost_its_stats(
+    tmp_path, sample_sdfs
+):
+    """Only chunks the failed build replaced are merged; one whose stats file is
+    gone would be merged out of the index."""
+    import shutil
+
+    home = tmp_path / "home"
+    library = shutil.copyfile(sample_sdfs[0], tmp_path / "library.sdf.gz")
+    assert _sdf_build(home, library).exit_code == 0
+    (home / "chunks" / "library.json").unlink()
+    broken = tmp_path / "broken.sdf.gz"
+    broken.write_bytes(sample_sdfs[1].read_bytes()[:200])
+    failed = _sdf_build(home, broken)
+    assert failed.exit_code == 1
+    assert "merging" not in failed.output
+    assert _status(home)["chunks_in_index"] == 1
 
 
 def test_failed_build_that_replaced_nothing_merges_nothing(

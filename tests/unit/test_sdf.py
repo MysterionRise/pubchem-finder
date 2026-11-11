@@ -200,3 +200,13 @@ def test_damaged_gzip_is_named_as_the_problem(tmp_path, damage):
     assert str(path) in message
     assert "damaged or incomplete" in message
     assert "Boost" not in message
+
+
+def test_a_stream_that_is_not_deflate_is_named_as_the_problem(tmp_path):
+    """zlib.error: the "corrupt" case above fails its CRC, which is an OSError."""
+    from pubchem_finder.core.exceptions import IndexBuildError
+
+    path = tmp_path / "lib.sdf.gz"
+    path.write_bytes(b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03\x07" + bytes(32))
+    with pytest.raises(IndexBuildError, match="damaged or incomplete"):
+        list(SdfReader(path))
