@@ -351,6 +351,67 @@ def test_the_counter_ion_of_a_marketed_salt_is_never_the_parent():
         assert result.note is None, name
 
 
+SALTS.update(
+    {
+        "ibuprofen arginine, arginine as PubChem draws it (CID 6322)": (
+            "CC(C)Cc1ccc(cc1)C(C)C(=O)O.C(C[C@@H](C(=O)O)N)CN=C(N)N",
+            "CC(C)Cc1ccc(cc1)C(C)C(=O)O",
+            "C(C[C@@H](C(=O)O)N)CN=C(N)N",
+        ),
+        "methenamine mandelate": (
+            "C1N2CN3CN1CN(C2)C3.OC(C(=O)O)c1ccccc1",
+            "C1N2CN3CN1CN(C2)C3",
+            "OC(C(=O)O)c1ccccc1",
+        ),
+        "metformin orotate": (
+            "CN(C)C(=N)NC(N)=N.OC(=O)c1cc(=O)[nH]c(=O)[nH]1",
+            "CN(C)C(=N)NC(N)=N",
+            "OC(=O)c1cc(=O)[nH]c(=O)[nH]1",
+        ),
+        "guanidine carbonate": ("NC(N)=N.OC(O)=O", "NC(N)=N", "OC(O)=O"),
+    }
+)
+
+
+def test_a_carbonate_or_cyanide_is_not_the_organic_part():
+    """Anything with a carbon counted as organic, and an unlisted fragment beat a
+    listed one: choline bicarbonate came back as carbonic acid, with no note, where
+    2.2.1 had returned choline."""
+    choline = "C[N+](C)(C)CCO"
+    for partner, acid in (
+        ("OC([O-])=O", "O=C(O)O"),
+        ("[C-]#N", "C#N"),
+        ("[S-]C#N", "N#CS"),
+        ("[N-]=C=O", "N=C=O"),
+    ):
+        result = _detailed(f"{choline}.{partner}")
+        assert _smiles(result) == choline, partner
+        assert result.removed == [Chem.CanonSmiles(partner)]
+        # Choline is a counter-ion too, so the choice is pointed out.
+        assert result.note.startswith("Every organic component is a common")
+        # On its own, with its metal, it is what there is.
+        alone = _detailed(f"[Na+].{partner}")
+        assert (_smiles(alone), alone.removed, alone.note) == (acid, ["[Na+]"], None)
+    # Citric acid with sodium bicarbonate, an effervescent mixture.
+    mixture = _detailed("OC(=O)CC(O)(CC(O)=O)C(O)=O.[Na+].OC([O-])=O")
+    assert _smiles(mixture) == "O=C(O)CC(O)(CC(=O)O)C(=O)O"
+
+
+def test_a_stereoisomer_of_the_parent_is_not_another_copy_of_it():
+    """Racemic amphetamine written as its two enantiomers, or quinine next to
+    quinidine: the second one was left out and not reported, as if it were the
+    second cation of a 2:1 salt."""
+    dextro, levo = "C[C@H](N)Cc1ccccc1", "C[C@@H](N)Cc1ccccc1"
+    result = _detailed(f"{dextro}.{levo}")
+    assert sorted([_smiles(result), *result.removed]) == sorted(
+        [Chem.CanonSmiles(dextro), Chem.CanonSmiles(levo)]
+    )
+    assert "which is not a common counter-ion or solvent" in result.note
+    acids = _detailed("OC(=O)/C=C/C(O)=O.OC(=O)/C=C\\C(O)=O")
+    assert len(acids.removed) == 1
+    assert acids.note.startswith("Every organic component is a common")
+
+
 def test_another_copy_of_the_parent_was_not_removed():
     """A 2:1 salt: `removed` listed the second salbutamol next to the sulfate, and
     the prompt tells the assistant to report what was removed."""

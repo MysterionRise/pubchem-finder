@@ -46,10 +46,15 @@ _QUIET_METALS = frozenset({11, 19, 12, 20})  # Na, K, Mg, Ca
 _CHARGED_SULFOXIDE = Chem.MolFromSmarts("[!O][S+1;X3]([O-1;X1])[!O]")
 
 
+def _neutral(mol: Chem.Mol, stereo: bool = True) -> str:
+    """A fragment as the SMILES of its neutral form."""
+    neutral = rdMolStandardize.Uncharger().uncharge(Chem.Mol(mol))
+    return str(Chem.MolToSmiles(neutral, isomericSmiles=stereo))
+
+
 def _flat(mol: Chem.Mol) -> str:
     """A fragment as its neutral form without stereo: how partners are compared."""
-    neutral = rdMolStandardize.Uncharger().uncharge(Chem.Mol(mol))
-    return str(Chem.MolToSmiles(neutral, isomericSmiles=False))
+    return _neutral(mol, stereo=False)
 
 
 # Salt formers and solvents: what a drug is formulated or crystallized with. Any of
@@ -91,6 +96,20 @@ _PARTNERS = frozenset(
         "OC(=O)c1ccc2ccccc2c1O",  # 1-hydroxy-2-naphthoic (xinafoate)
         "CCCCCCCCCCCCCCCCCC(O)=O",  # stearic
         "CCCCCCCCCCCCOS(O)(=O)=O",  # lauryl sulfate (estolate)
+        "COS(O)(=O)=O",  # methylsulfuric (metilsulfate)
+        "OC(C(O)=O)c1ccccc1",  # mandelic
+        "OC(=O)c1cc(=O)[nH]c(=O)[nH]1",  # orotic
+        "OC(=O)c1ccccc1C(=O)c1ccc(O)c(c1)-c1ccccc1",  # fendizoic
+        "OC(=O)c1ccccc1C(=O)c1ccc(O)cc1",  # hibenzic
+        "OC(=O)C(c1ccccc1)(c1ccccc1)c1ccccc1",  # triphenylacetic (trifenatate)
+        # carbon-containing, but no more organic than chloride: without them a
+        # bicarbonate or a cyanide would be the "organic" part of any salt
+        "OC(O)=O",  # carbonic (carbonate, bicarbonate)
+        "C#N",  # hydrocyanic
+        "N#CO",  # cyanic
+        "N=C=O",  # isocyanic
+        "N#CS",  # thiocyanic
+        "N=C=S",  # isothiocyanic
         # bases
         "CNCC(O)C(O)C(O)C(O)CO",  # meglumine
         "NC(CO)(CO)CO",  # tromethamine
@@ -101,6 +120,7 @@ _PARTNERS = frozenset(
         "C(CNCc1ccccc1)NCc1ccccc1",  # benzathine
         "NCCCCC(N)C(O)=O",  # lysine
         "NC(CCCNC(N)=N)C(O)=O",  # arginine
+        "NC(CCCN=C(N)N)C(O)=O",  # arginine, the tautomer PubChem draws
         "CCNCC",  # diethylamine
         "CC(C)(C)N",  # tert-butylamine (erbumine)
         "C1CCC(CC1)NC1CCCCC1",  # dicyclohexylamine
@@ -145,9 +165,10 @@ class MoleculeStandardizer:
        group 1 and 2 metals, normalize functional groups, reionize, sanitize.
        Sulfoxides stay ``S=O``.
     2. Keep the organic fragment with the most heavy atoms, passing over common
-       salt formers and solvents (pamoate, meglumine, tartrate, ethanol) while
-       there is another. Everything else is reported as removed, with a note
-       when it includes an organic component that is not one of those.
+       salt formers and solvents (pamoate, meglumine, tartrate, carbonate,
+       ethanol) while there is another. Everything else is reported as removed,
+       with a note when it includes an organic component that is not one of
+       those.
     3. Neutralize charges (optional, default on).
 
     Two kinds of input have no parent to extract and are returned as given, with
@@ -206,10 +227,11 @@ class MoleculeStandardizer:
         chosen = max(candidates or organic, key=_size)
         parent = self._uncharger.uncharge(chosen) if self.neutralize else chosen
         Chem.SanitizeMol(parent)
-        # A 2:1 salt holds the parent twice: the second copy was not removed.
-        same = _flat(chosen)
+        # A 2:1 salt holds the parent twice: the second copy was not removed. Its
+        # mirror image, or any other stereoisomer, was.
+        same = _neutral(chosen)
         others = [
-            frag for frag in fragments if frag is not chosen and _flat(frag) != same
+            frag for frag in fragments if frag is not chosen and _neutral(frag) != same
         ]
         return Standardization(
             parent,

@@ -41,9 +41,9 @@ All notable changes to this project are documented here. The format follows
   and for fosfomycin tromethamine the tromethamine (RDKit's "largest fragment" counts
   hydrogens); cisplatin came back as ammonia, carboplatin and oxaliplatin as their
   ligands, sodium chloride as HCl. The parent is now the organic component with the
-  most heavy atoms, passing over about 55 common salt formers and solvents (pamoate,
-  meglumine, tromethamine, tartrate, citrate, benzathine, ethanol) while the input
-  has another. A compound of a metal other than an alkali or alkaline-earth metal,
+  most heavy atoms, passing over about 70 common salt formers and solvents (pamoate,
+  meglumine, tromethamine, tartrate, citrate, benzathine, carbonate, ethanol) while
+  the input has another. A compound of a metal other than an alkali or alkaline-earth metal,
   drawn with bonds or as ions, and an input with nothing organic in it are returned
   as given with a `note`. The new `removed` field lists every fragment left out, and
   the note says when one of them is an organic component that is not a common
