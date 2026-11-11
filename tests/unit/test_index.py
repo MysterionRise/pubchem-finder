@@ -1,6 +1,7 @@
 """Tests for building and searching the local index."""
 
 import json
+import os
 
 import pytest
 
@@ -276,7 +277,7 @@ def test_search_breaks_ties_by_cid(built_home, monkeypatch):
             return hits
 
     index = LocalIndex(built_home, mode="memory")
-    monkeypatch.setattr(index, "_ensure_loaded", StubEngine)
+    monkeypatch.setattr(index, "_ensure_loaded", lambda: (StubEngine(), index.merged))
     index._in_memory = True
     assert index.search(Chem.MolFromSmiles(ASPIRIN), 0.5, 5) == [
         (2244, 1.0),
@@ -469,7 +470,7 @@ def test_search_asks_for_more_when_duplicates_crowd_out_hits(built_home, monkeyp
             return rows[:k]
 
     index = LocalIndex(built_home, mode="memory")
-    monkeypatch.setattr(index, "_ensure_loaded", StubEngine)
+    monkeypatch.setattr(index, "_ensure_loaded", lambda: (StubEngine(), index.merged))
     index._in_memory = True
     assert index.search(Chem.MolFromSmiles(ASPIRIN), 0.5, 3) == [
         (2244, 1.0),
@@ -688,8 +689,9 @@ def test_unmerged_compares_build_ids(built_home):
 
 
 def test_unmerged_under_a_manifest_without_build_ids(built_home):
-    """Merged by 2.2.1 or earlier. Only a chunk of the user's own file that has a
-    build id was rebuilt since; PubChem's chunks are never rebuilt."""
+    """Merged by 2.2.1 or earlier, which wrote the manifest last: a chunk of the
+    user's own file with newer stats was built since. PubChem's chunks are never
+    rebuilt, and a build id says nothing (2.2.1 can merge a chunk that has one)."""
     from pubchem_finder.index.layout import unmerged
 
     manifest = IndexPaths(built_home).load_manifest()
@@ -701,14 +703,22 @@ def test_unmerged_under_a_manifest_without_build_ids(built_home):
         _chunk("old", None),
         _chunk("pubchem", "8", source=False),
     ]
-    assert unmerged(legacy, on_disk) == ["lib"]
+    assert unmerged(legacy, on_disk) == []
+    assert unmerged(legacy, on_disk, newer={"lib"}) == ["lib"]
+    # 2.2.1 rebuilt "old" and failed before the merge: no build id, newer stats.
+    assert unmerged(legacy, on_disk, newer={"lib", "old", "pubchem"}) == ["lib", "old"]
 
 
-def test_status_says_when_an_index_was_merged_before_build_ids(tmp_path, sample_sdfs):
-    import json
+def _written(path, when_ns):
+    os.utime(path, ns=(when_ns, when_ns))
 
-    from pubchem_finder import service
 
+def test_chunks_merged_by_2_2_1_after_this_version_built_them_are_not_stale(
+    tmp_path, sample_sdfs
+):
+    """Every chunk built by this version was reported as indexed again, and lost
+    its structures, once 2.2.1 had written the manifest: for instance after
+    `index build --with-substructure`, the command 2.2.1's own hint prints."""
     paths = IndexPaths(tmp_path / "home")
     build_chunks(paths, sources(sample_sdfs[:1]), workers=1)
     finalize(paths)
@@ -716,7 +726,43 @@ def test_status_says_when_an_index_was_merged_before_build_ids(tmp_path, sample_
     data = json.loads(paths.manifest.read_text())
     del data["chunk_builds"]
     paths.manifest.write_text(json.dumps(data))
+    stats = paths.chunk_stats(CHUNK_NAMES[0])
+    merged_at = stats.stat().st_mtime_ns + 10**9
+    _written(paths.manifest, merged_at)
+
     status = service.index_status(paths.home)
     assert "merged by pubchem-finder 2.2.1 or earlier" in status.hint
-    # Its chunk has a build id, which no merge by 2.2.1 could have seen.
-    assert status.unmerged_chunks == [CHUNK_NAMES[0]]
+    assert status.unmerged_chunks == []
+    found = service.similarity_search(ASPIRIN, threshold=0.9, home=paths.home)
+    assert [(h.cid, h.smiles) for h in found.hits] == [(2244, ASPIRIN)]
+    assert found.warning is None
+
+    # Indexed again after that merge, by any version, and not merged since.
+    _written(stats, merged_at + 10**9)
+    assert service.index_status(paths.home).unmerged_chunks == [CHUNK_NAMES[0]]
+    found = service.similarity_search(ASPIRIN, threshold=0.9, home=paths.home)
+    assert [(h.cid, h.smiles) for h in found.hits] == [(2244, None)]
+    assert "was indexed again after the last merge" in found.warning
+    _written(stats, merged_at)  # written in the same clock tick: not after
+    assert service.index_status(paths.home).unmerged_chunks == []
+
+
+def test_metadata_reads_again_when_a_file_changes_under_it(built_home, monkeypatch):
+    """A build replacing a Parquet file while DuckDB read it surfaced as a raw
+    "TProtocolException: Invalid data" from a search."""
+    import duckdb
+
+    index = LocalIndex(built_home)
+    real = index._metadata
+    failures = [duckdb.IOException("Invalid data"), duckdb.IOException("Invalid data")]
+
+    def flaky(cids, chunks):
+        if failures:
+            raise failures.pop()
+        return real(cids, chunks)
+
+    monkeypatch.setattr(index, "_metadata", flaky)
+    assert index.metadata([2244])[2244]["smiles"] == ASPIRIN
+    failures.extend(duckdb.IOException("Invalid data") for _ in range(3))
+    with pytest.raises(duckdb.IOException):
+        index.metadata([2244])

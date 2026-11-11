@@ -752,11 +752,29 @@ def test_rebuilt_chunk_is_not_read_with_the_fingerprints_it_replaced(
     found = json.loads(sub.output)
     assert found["hits"] == []  # not benzene's ID with another structure
     assert "library was indexed again" in found["warning"]
+    assert "its compounds cannot be checked and are left out" in found["warning"]
+    # Two candidates passed the screen and neither could be checked: the answer
+    # used to call itself exhaustive.
+    assert (found["n_candidates"], found["exhaustive"]) == (2, False)
 
     status = _status(home)
     assert status["state"] == "ready"
     assert status["unmerged_chunks"] == ["library"]
     assert "The index is behind its files" in status["hint"]
+    # The text form skipped every list, and so the one line that says which.
+    text = runner.invoke(app, ["index", "status", "--home", str(home)])
+    assert "unmerged_chunks      library" in text.output
+
+    # Batch mode has no column for the warning: it wrote the hit without its
+    # structure, "0 error(s)", and nothing else.
+    queries = home.parent / "queries.csv"
+    queries.write_text(f"smiles,name\n{ASPIRIN},a\n{ASPIRIN},b\n")
+    for command, query in (("search", ASPIRIN), ("substructure", "c1ccccc1")):
+        queries.write_text(f"smiles,name\n{query},a\n{query},b\n")
+        args = [command, "--input", str(queries), "--output", str(home.parent / "out")]
+        batch = runner.invoke(app, [*args, "--home", str(home)])
+        assert batch.exit_code == 0, batch.output
+        assert batch.output.count("warning: The index is behind its files") == 1
 
     monkeypatch.setattr(builder, "sort_fpsim2_file", real)
     again = _sdf_build(home, library)
@@ -792,6 +810,90 @@ def test_a_running_server_sees_a_chunk_change_under_it(renumbered):
     assert top(CAFFEINE) == ([(1, CAFFEINE)], None)
     assert top(ASPIRIN) == ([], None)
     assert service.index_status(home).unmerged_chunks == []
+
+
+def test_a_merge_that_completes_under_a_search_does_not_lend_it_structures(
+    renumbered, monkeypatch
+):
+    """The hits were looked up against the manifest on disk at that moment. When a
+    build finished between the search and the lookup, aspirin's hit from the old
+    fingerprints came back as caffeine at 1.000, with no warning: once in 763
+    searches run next to a rebuild loop."""
+    from rdkit import Chem
+
+    from pubchem_finder import service
+    from pubchem_finder.index.builder import SdfSource, build_chunks, finalize
+    from pubchem_finder.index.engine import LocalIndex
+    from pubchem_finder.index.layout import IndexPaths
+
+    home, library = renumbered
+    paths = IndexPaths(home)
+    index = service.get_index(home)
+
+    def rebuild():
+        build_chunks(paths, [SdfSource(name="library", local_path=library)])
+        finalize(paths)
+
+    pairs, merged = index.search_merged(Chem.MolFromSmiles(ASPIRIN), 0.9, 5)
+    assert pairs == [(1, 1.0)]
+    rebuild()
+    assert index.metadata([1])[1]["smiles"] == CAFFEINE  # what ID 1 is now
+    assert index.metadata([1], merged) == {}  # and not what the hit was
+    assert list(index.unmerged(merged)) == ["library"]
+    assert index.unmerged() == {}
+
+    # The same through the service, for both searches. The index holds export 2
+    # now (ID 1 is caffeine); each search is overtaken by a build of the other
+    # export, in which ID 1 has a carbonyl too.
+    from tests.conftest import write_sdf
+
+    def overtaken(method, run):
+        real = getattr(LocalIndex, method)
+
+        def then_a_build_finishes(self, *args, **kwargs):
+            found = real(self, *args, **kwargs)
+            rebuild()
+            return found
+
+        with monkeypatch.context() as patched:
+            patched.setattr(LocalIndex, method, then_a_build_finishes)
+            return run()
+
+    write_sdf(library, EXPORT_1)
+    similar = overtaken(
+        "search_merged", lambda: service.similarity_search(CAFFEINE, 0.9, home=home)
+    )
+    assert [(h.cid, h.smiles) for h in similar.hits] == [(1, None)]
+    assert "library was indexed again" in similar.warning
+
+    write_sdf(library, EXPORT_2)
+    containing = overtaken(
+        "_screen", lambda: service.substructure_search("C=O", home=home)
+    )
+    assert containing.n_candidates == 1  # aspirin, in the fingerprints searched
+    assert containing.hits == []  # not caffeine, which has its ID now
+    assert containing.exhaustive is False
+    assert "library was indexed again" in containing.warning
+
+    after = service.similarity_search(CAFFEINE, 0.9, home=home)
+    assert ([(h.cid, h.smiles) for h in after.hits], after.warning) == (
+        [(1, CAFFEINE)],
+        None,
+    )
+
+
+def test_a_chunk_whose_stats_are_gone_is_not_called_indexed_again(renumbered):
+    from pubchem_finder import service
+
+    home, _ = renumbered
+    (home / "chunks" / "library.json").unlink()
+    found = service.similarity_search(ASPIRIN, threshold=0.9, home=home)
+    assert [(h.cid, h.smiles) for h in found.hits] == [(1, None)]
+    assert "library is no longer complete in the chunks directory" in found.warning
+    assert "indexed again" not in found.warning
+    # No file is on record for it, so the hint cannot name one.
+    assert "the `index build` command they were built with" in found.warning
+    assert service.index_status(home).unmerged_chunks == ["library"]
 
 
 def test_failed_build_merges_what_it_had_already_replaced(renumbered, tmp_path):

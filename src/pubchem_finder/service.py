@@ -38,6 +38,7 @@ from .fingerprints import MACCSFingerprint, MorganFingerprint
 from .index import demo
 from .index.builder import DEFAULT_FP_PARAMS
 from .index.engine import LocalIndex, Metric
+from .index.layout import Merged
 from .models import (
     AnnotationSection,
     BioactivitySummary,
@@ -213,20 +214,52 @@ def _search_index(home: Path | str | None) -> tuple[LocalIndex, str, str | None]
     return demo_index, "demo", note
 
 
-def _unmerged_warning(index: LocalIndex) -> str | None:
-    """What to tell the user when chunks were rebuilt after the index was merged."""
-    stale = index.unmerged()
+_UNMERGED_EFFECT = {
+    "similarity": "hits from there come without a structure",
+    "substructure": "its compounds cannot be checked and are left out",
+    "status": "similarity hits from there come without a structure, substructure "
+    "search leaves its compounds out",
+}
+
+
+def _unmerged_warning(
+    index: LocalIndex,
+    merged: Merged | None,
+    kind: Literal["similarity", "substructure", "status"],
+) -> str | None:
+    """What to tell the user when chunks changed after the index was merged.
+
+    ``merged`` is the merge the answer came from (None: the index on disk now).
+    """
+    stale = index.unmerged(merged)
     if not stale:
         return None
-    names = ", ".join(list(stale)[:3]) + (
-        f" and {len(stale) - 3} more" if len(stale) > 3 else ""
-    )
+
+    def some(names: list[str]) -> str:
+        more = f" and {len(names) - 3} more" if len(names) > 3 else ""
+        return ", ".join(names[:3]) + more
+
+    rebuilt = [name for name, stats in stale.items() if stats is not None]
+    missing = [name for name, stats in stale.items() if stats is None]
+    what = []
+    if rebuilt:
+        what.append(
+            f"{some(rebuilt)} was indexed again after the last merge (a build "
+            "failed, was stopped, or is still running)"
+        )
+    if missing:
+        what.append(
+            f"{some(missing)} is no longer complete in the chunks directory (a "
+            "build of it is running or was stopped, or its files were removed)"
+        )
+    files = [
+        stats.source.path if stats is not None and stats.source is not None else None
+        for stats in stale.values()
+    ]
     return (
-        f"The index is behind its files: {names} was indexed again after the last "
-        "merge (a build failed, was stopped, or is still running). Until a build "
-        "completes, hits from it come without a structure and compounds added "
-        "since are not found. Finish with "
-        f"{hints.merge_rebuilt(list(stale.values()), index.paths.home)}."
+        f"The index is behind its files: {'; '.join(what)}. Until a build "
+        f"completes, {_UNMERGED_EFFECT[kind]}, and compounds added since are not "
+        f"found. Finish with {hints.merge_rebuilt(files, index.paths.home)}."
     )
 
 
@@ -247,9 +280,13 @@ def similarity_search(
         raise PubChemFinderError(f"Unknown metric {metric!r}")
     mol = parse_smiles(smiles)
     index, scope, note = _search_index(home)
-    manifest = index.manifest
-    pairs = index.search(mol, threshold=threshold, top_k=top_k, metric=metric)
-    meta = index.metadata([cid for cid, _ in pairs])
+    # The hits are looked up, and judged, against the merge that gave them: a
+    # build can finish between the two steps.
+    pairs, merged = index.search_merged(
+        mol, threshold=threshold, top_k=top_k, metric=metric
+    )
+    manifest = merged.manifest
+    meta = index.metadata([cid for cid, _ in pairs], merged)
     hits = [
         SimilarityHit.model_validate(
             {**meta.get(cid, {}), "cid": cid, "similarity": sim}
@@ -266,7 +303,7 @@ def similarity_search(
         note=note,
         hits=hits,
         scaffolds=medchem.group_by_scaffold(hits) if group_by_scaffold else None,
-        warning=_unmerged_warning(index),
+        warning=_unmerged_warning(index, merged, "similarity"),
     )
 
 
@@ -285,8 +322,8 @@ def substructure_search(
     mol = parse_query(query, query_type)
     index, scope, note = _search_index(home)
     found = index.substructure(mol, max_hits=max_hits, max_candidates=max_candidates)
-    sub = index.manifest.substructure
-    warnings = [_unmerged_warning(index)]
+    sub = found.merged.manifest.substructure
+    warnings = [_unmerged_warning(index, found.merged, "substructure")]
     if sub is not None and sub.rdkit_version != rdkit.__version__:
         warnings.append(
             f"The substructure index was built with RDKit {sub.rdkit_version}, but "
@@ -314,7 +351,8 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
     index = get_index(home)
     paths = index.paths
     built = paths.completed_chunks()
-    manifest = paths.load_manifest()
+    merged = paths.read_manifest()
+    manifest = merged.manifest if merged is not None else None
     demo_compounds = int(demo.provenance()["n_compounds"]) if demo_enabled() else 0
     if manifest is None:
         until_then = (
@@ -333,7 +371,7 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
         )
     sub = manifest.substructure if paths.pattern_fingerprints.exists() else None
     hint_parts = [
-        _unmerged_warning(index),
+        _unmerged_warning(index, merged, "status"),
         None
         if sub is not None
         else (
@@ -358,7 +396,7 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
         memory_bytes=manifest.memory_bytes(),
         chunks_in_index=len(manifest.chunks),
         chunks_built=len(built),
-        unmerged_chunks=list(index.unmerged(manifest)),
+        unmerged_chunks=list(index.unmerged(merged)),
         loaded=index.loaded,
         mode=None
         if index.in_memory is None

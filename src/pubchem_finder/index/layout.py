@@ -20,11 +20,11 @@
 import json
 import os
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from pydantic import BaseModel, Field
 
@@ -241,9 +241,20 @@ class IndexPaths:
         Raises:
             IndexIncompatible: a newer pubchem-finder wrote the index.
         """
-        if not self.manifest.exists() or not self.fingerprints.exists():
+        merged = self.read_manifest()
+        return merged.manifest if merged is not None else None
+
+    def read_manifest(self) -> "Merged | None":
+        """:meth:`load_manifest`, with the time the manifest was written."""
+        if not self.fingerprints.exists():
             return None
-        data = json.loads(self.manifest.read_text(encoding="utf-8"))
+        try:
+            with self.manifest.open("rb") as stream:
+                # Of the file being read, not of one a merge puts there meanwhile.
+                written_ns = os.fstat(stream.fileno()).st_mtime_ns
+                data = json.load(stream)
+        except FileNotFoundError:  # no index, or a merge is swapping it right now
+            return None
         # Before validating: a newer format may not fit this version's model.
         found = data.get("format_version", 1) if isinstance(data, dict) else 1
         if isinstance(found, int) and found > FORMAT_VERSION:
@@ -254,16 +265,45 @@ class IndexPaths:
                 f"{FORMAT_VERSION} and older. Upgrade pubchem-finder, or build an "
                 "index for this version in another data directory (--home)."
             )
-        return Manifest.model_validate(data)
+        return Merged(Manifest.model_validate(data), written_ns)
+
+    def built_after(self, names: Iterable[str], when_ns: int) -> set[str]:
+        """The chunks among ``names`` whose stats file was written after ``when_ns``."""
+        out: set[str] = set()
+        for name in names:
+            try:
+                if self.chunk_stats(name).stat().st_mtime_ns > when_ns:
+                    out.add(name)
+            except OSError:  # no stats: not a complete chunk
+                continue
+        return out
 
 
-def unmerged(manifest: Manifest, chunks: Iterable[ChunkStats]) -> list[str]:
+class Merged(NamedTuple):
+    """A manifest as it was read, and when its file was written.
+
+    A search keeps the one its fingerprints were loaded under and looks structures
+    up against it: a merge that completes in between has put other records under
+    the same IDs.
+    """
+
+    manifest: Manifest
+    written_ns: int
+
+
+def unmerged(
+    manifest: Manifest, chunks: Iterable[ChunkStats], newer: Collection[str] = ()
+) -> list[str]:
     """The chunks of a merged index that are no longer the builds it holds.
 
     ``chunks`` are the complete chunks on disk. A chunk rebuilt since the merge has
     another build id: its Parquet file describes the new file while the merged
     fingerprints are still the old one's, so the two must not be read together. A
     chunk without stats is being replaced right now, or is gone.
+
+    ``newer`` names the chunks whose stats were written after the manifest (see
+    :meth:`IndexPaths.built_after`). It decides for an index merged by 2.2.1 or
+    earlier, which recorded no build ids.
     """
     on_disk = {c.name: c for c in chunks}
     out: list[str] = []
@@ -272,9 +312,11 @@ def unmerged(manifest: Manifest, chunks: Iterable[ChunkStats]) -> list[str]:
         if stats is None:
             out.append(name)
         elif manifest.chunk_builds is None:
-            # Merged by 2.2.1 or earlier, which knew no build ids: a chunk of the
-            # user's own file that has one was rebuilt after that merge.
-            if stats.build_id is not None and stats.source is not None:
+            # Merged by 2.2.1 or earlier. Those wrote the manifest last, so a chunk
+            # of the user's own file with newer stats was built after the merge
+            # (2.2.1 could rebuild one and fail before merging it). A build id
+            # alone does not say so: 2.2.1 may have merged a chunk that has one.
+            if stats.source is not None and name in newer:
                 out.append(name)
         elif manifest.chunk_builds.get(name) != stats.build_id:
             out.append(name)

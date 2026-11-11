@@ -19,7 +19,7 @@ from rdkit import Chem
 from .. import hints
 from ..config import INDEX_MODE_ENV
 from ..core.exceptions import IndexNotBuilt
-from .layout import ChunkStats, IndexPaths, Manifest, unmerged
+from .layout import ChunkStats, IndexPaths, Manifest, Merged, unmerged
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +74,14 @@ def _open_engine(path: Path, in_memory: bool) -> Any:
 class SubstructureMatches:
     """Verified substructure matches, in CID order, plus how far the search got."""
 
+    merged: Merged
+    """The merge whose pattern fingerprints gave the candidates."""
     rows: list[dict[str, Any]] = field(default_factory=list)
     n_candidates: int = 0
     n_checked: int = 0
+    n_unverified: int = 0
+    """Candidates with no stored structure to check: their chunk was rebuilt, or
+    removed, after the merge. They are counted in ``n_checked``."""
     exhaustive: bool = True
 
 
@@ -108,10 +113,10 @@ class LocalIndex:
         self._pattern_search_lock = threading.Lock()
         self._engine: Any = None
         self._in_memory: bool | None = None
-        self._manifest: Manifest | None = None
+        self._merged: Merged | None = None
         self._pattern_engine: Any = None
         self._pattern_in_memory: bool | None = None
-        self._pattern_manifest: Manifest | None = None
+        self._pattern_merged: Merged | None = None
         self._db: duckdb.DuckDBPyConnection | None = None
         self._db_files: list[Path] = []
         # Chunk stats already read, by chunk name, with what os.stat said then.
@@ -120,14 +125,19 @@ class LocalIndex:
         self._stats_lock = threading.Lock()
 
     @property
-    def manifest(self) -> Manifest:
-        manifest = self.paths.load_manifest()
-        if manifest is None:
+    def merged(self) -> Merged:
+        """The manifest on disk now, and when it was written."""
+        merged = self.paths.read_manifest()
+        if merged is None:
             raise IndexNotBuilt(
                 f"No local index in {self.paths.home}. "
                 + hints.build_index(self.paths.home)
             )
-        return manifest
+        return merged
+
+    @property
+    def manifest(self) -> Manifest:
+        return self.merged.manifest
 
     @property
     def loaded(self) -> bool:
@@ -137,11 +147,12 @@ class LocalIndex:
     def in_memory(self) -> bool | None:
         return self._in_memory
 
-    def _ensure_loaded(self) -> Any:
+    def _ensure_loaded(self) -> tuple[Any, Merged]:
+        """The similarity engine, and the merge it was loaded under."""
         with self._lock:
-            manifest = self.manifest
-            if self._engine is None or self._manifest != manifest:
-                in_memory = choose_in_memory(manifest.memory_bytes(), self.mode)
+            merged = self.merged
+            if self._engine is None or self._merged != merged:
+                in_memory = choose_in_memory(merged.manifest.memory_bytes(), self.mode)
                 logger.info(
                     "loading %s (%s mode)",
                     self.paths.fingerprints,
@@ -149,8 +160,8 @@ class LocalIndex:
                 )
                 self._engine = _open_engine(self.paths.fingerprints, in_memory)
                 self._in_memory = in_memory
-                self._manifest = manifest
-            return self._engine
+                self._merged = merged
+            return self._engine, merged
 
     def search(
         self, query: Chem.Mol, threshold: float, top_k: int, metric: Metric = "tanimoto"
@@ -162,7 +173,19 @@ class LocalIndex:
         so the search asks for more until it has ``top_k`` distinct CIDs or no
         more hits exist; without duplicates that is a single FPSim2 call.
         """
-        engine = self._ensure_loaded()
+        return self.search_merged(query, threshold, top_k, metric)[0]
+
+    def search_merged(
+        self, query: Chem.Mol, threshold: float, top_k: int, metric: Metric = "tanimoto"
+    ) -> tuple[list[tuple[int, float]], Merged]:
+        """:meth:`search`, and the merge that answered it.
+
+        Pass that on to :meth:`metadata` and :meth:`unmerged`. A build can finish
+        between the search and the lookup of its hits; judged against the manifest
+        then on disk, a hit from the old fingerprints would be given the structure
+        the new file has under the same ID.
+        """
+        engine, merged = self._ensure_loaded()
         k = top_k
         while True:
             hits = self._top_k(engine, query, threshold, k, metric)
@@ -176,7 +199,8 @@ class LocalIndex:
         # FPSim2 returns equal scores in whatever order its threads finish. Break
         # ties by CID so results are stable and long-known compounds come first
         # (e.g. aspirin, CID 2244, before its 11C-labelled twin, CID 450661).
-        return sorted(best.items(), key=lambda pair: (-pair[1], pair[0]))[:top_k]
+        ranked = sorted(best.items(), key=lambda pair: (-pair[1], pair[0]))[:top_k]
+        return ranked, merged
 
     def _top_k(
         self, engine: Any, query: Chem.Mol, threshold: float, k: int, metric: Metric
@@ -197,16 +221,16 @@ class LocalIndex:
             query, k=k, threshold=threshold, metric=metric, n_workers=1
         )
 
-    def _ensure_pattern_loaded(self) -> Any:
+    def _ensure_pattern_loaded(self) -> tuple[Any, Merged]:
         with self._lock:
-            manifest = self.manifest
-            sub = manifest.substructure
+            merged = self.merged
+            sub = merged.manifest.substructure
             if sub is None or not self.paths.pattern_fingerprints.exists():
                 raise IndexNotBuilt(
                     f"The local index in {self.paths.home} has no substructure search. "
                     f"Add it with {hints.add_substructure(self.paths.home)}."
                 )
-            if self._pattern_engine is None or self._pattern_manifest != manifest:
+            if self._pattern_engine is None or self._pattern_merged != merged:
                 in_memory = choose_in_memory(sub.memory_bytes(), self.mode)
                 logger.info(
                     "loading %s (%s mode)",
@@ -217,14 +241,17 @@ class LocalIndex:
                     self.paths.pattern_fingerprints, in_memory
                 )
                 self._pattern_in_memory = in_memory
-                self._pattern_manifest = manifest
-            return self._pattern_engine
+                self._pattern_merged = merged
+            return self._pattern_engine, merged
 
     def screen(self, query: Chem.Mol) -> np.ndarray:
         """Sorted, distinct CIDs whose pattern fingerprint has every bit of the
         query's: a superset of the compounds containing ``query``. Distinct because
         overlapping chunks can hold a CID more than once."""
-        engine = self._ensure_pattern_loaded()
+        return self._screen(query)[0]
+
+    def _screen(self, query: Chem.Mol) -> tuple[np.ndarray, Merged]:
+        engine, merged = self._ensure_pattern_loaded()
         # Fingerprint the query here rather than letting FPSim2 parse it, so
         # SMARTS query molecules work too.
         pattern_fp = Chem.PatternFingerprint(query)
@@ -233,7 +260,7 @@ class LocalIndex:
                 cids = engine.substructure(pattern_fp, n_workers=self.n_workers)
         else:  # single process on disk, see search()
             cids = engine.on_disk_substructure(pattern_fp, n_workers=1)
-        return np.unique(np.asarray(cids, dtype=np.int64))
+        return np.unique(np.asarray(cids, dtype=np.int64)), merged
 
     def substructure(
         self,
@@ -250,18 +277,19 @@ class LocalIndex:
         ``max_candidates`` have been checked. Metadata is fetched in batches that
         start small (most queries finish early) and double up to ``max_batch``.
         """
-        candidates = self.screen(query)
-        result = SubstructureMatches(n_candidates=int(candidates.size))
+        candidates, merged = self._screen(query)
+        result = SubstructureMatches(merged, n_candidates=int(candidates.size))
         limit = min(candidates.size, max_candidates)
         size = min(max_batch, max(256, 2 * max_hits))
         while result.n_checked < limit and len(result.rows) < max_hits:
             start = result.n_checked
             batch = [int(c) for c in candidates[start : min(start + size, limit)]]
-            rows = self.metadata(batch)
+            rows = self.metadata(batch, merged)
             for cid in batch:
                 result.n_checked += 1
                 row = rows.get(cid)
                 if row is None or not row["smiles"]:
+                    result.n_unverified += 1
                     continue
                 mol = Chem.MolFromSmiles(row["smiles"])
                 if mol is not None and mol.HasSubstructMatch(query):
@@ -269,33 +297,36 @@ class LocalIndex:
                     if len(result.rows) >= max_hits:
                         break
             size = min(size * 2, max_batch)
-        result.exhaustive = result.n_checked == result.n_candidates
+        # A candidate that could not be checked may be a match: not the whole answer.
+        result.exhaustive = (
+            result.n_checked == result.n_candidates and not result.n_unverified
+        )
         return result
 
-    def unmerged(self, manifest: Manifest | None = None) -> dict[str, str | None]:
-        """Chunks rebuilt, or removed, since the index was merged (see
-        :func:`~pubchem_finder.index.layout.unmerged`), each with the file it was
-        last built from when that is known.
+    def unmerged(self, merged: Merged | None = None) -> dict[str, ChunkStats | None]:
+        """Chunks rebuilt, or removed, since ``merged`` (default: the index on disk
+        now; see :func:`~pubchem_finder.index.layout.unmerged`), each with its
+        stats, or None when it is not complete on disk.
 
         The index still holds their earlier fingerprints, so :meth:`metadata` leaves
         their Parquet files out: a hit from one comes back without a structure
         rather than with the structure another build filed under the same ID.
         """
-        manifest = manifest or self.manifest
-        stats = {c.name: c for c in self._chunk_stats(manifest.chunks)}
-        files: dict[str, str | None] = {}
-        for name in unmerged(manifest, stats.values()):
-            source = stats[name].source if name in stats else None
-            files[name] = source.path if source is not None else None
-        return files
+        merged = merged or self.merged
+        seen = self._chunk_stats(merged.manifest.chunks)
+        stats = {name: found for name, (found, _) in seen.items()}
+        newer = {name for name, (_, at) in seen.items() if at > merged.written_ns}
+        stale = unmerged(merged.manifest, stats.values(), newer)
+        return {name: stats.get(name) for name in stale}
 
-    def _chunk_stats(self, names: list[str]) -> list[ChunkStats]:
-        """The stats of the chunks in ``names`` that are complete on disk.
+    def _chunk_stats(self, names: list[str]) -> dict[str, tuple[ChunkStats, int]]:
+        """The stats of the chunks in ``names`` that are complete on disk, each with
+        the time its file was written.
 
         One os.stat per chunk and search; a stats file is parsed again only when it
         was replaced (a build writes a new file, so its inode changes with it).
         """
-        found: list[ChunkStats] = []
+        found: dict[str, tuple[ChunkStats, int]] = {}
         with self._stats_lock:
             for name in names:
                 path = self.paths.chunk_stats(name)
@@ -310,21 +341,36 @@ class LocalIndex:
                 except (OSError, ValueError):  # no stats: not a complete chunk
                     self._stats_seen.pop(name, None)
                     continue
-                found.append(seen[1])
+                found[name] = (seen[1], seen[0][1])
         return found
 
-    def metadata(self, cids: list[int]) -> dict[int, dict[str, Any]]:
+    def metadata(
+        self, cids: list[int], merged: Merged | None = None
+    ) -> dict[int, dict[str, Any]]:
         """Metadata rows for ``cids`` from the chunk Parquet files, leaving out
-        chunks rebuilt since the index was merged (see :meth:`unmerged`)."""
+        chunks rebuilt since ``merged`` (see :meth:`unmerged`).
+
+        Give the merge the IDs came from (:meth:`search_merged`); the default is
+        the index on disk now.
+        """
         if not cids:
             return {}
+        merged = merged or self.merged
         rows: dict[int, dict[str, Any]] = {}
-        for _ in range(3):
-            manifest = self.manifest
-            stale = set(self.unmerged(manifest))
-            rows = self._metadata(cids, [n for n in manifest.chunks if n not in stale])
+        for attempt in range(3):
+            stale = set(self.unmerged(merged))
+            chunks = [n for n in merged.manifest.chunks if n not in stale]
+            try:
+                rows = self._metadata(cids, chunks)
+            except duckdb.Error:
+                # A build replaced or removed a file while it was being read.
+                if attempt == 2:
+                    raise
+                with self._lock:
+                    self._db = None
+                continue
             # A build may have replaced a chunk while its file was being read.
-            if set(self.unmerged(manifest)) == stale:
+            if set(self.unmerged(merged)) == stale:
                 break
         return rows
 

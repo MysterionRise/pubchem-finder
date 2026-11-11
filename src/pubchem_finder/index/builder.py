@@ -814,12 +814,14 @@ def rebuilt_since_merge(paths: IndexPaths) -> list[str]:
     they replaced, and searches leave their structures out (see
     :func:`~pubchem_finder.index.layout.unmerged`).
     """
-    manifest = paths.load_manifest()
-    if manifest is None:
+    merged = paths.read_manifest()
+    if merged is None:
         return []
+    manifest = merged.manifest
     chunks = paths.completed_chunks()
     built = {c.name for c in chunks}
-    return [name for name in unmerged(manifest, chunks) if name in built]
+    newer = paths.built_after(manifest.chunks, merged.written_ns)
+    return [name for name in unmerged(manifest, chunks, newer) if name in built]
 
 
 def _remove_pattern_data(paths: IndexPaths) -> bool:

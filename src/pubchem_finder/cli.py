@@ -137,16 +137,28 @@ def _main(
     pass
 
 
-def _emit(model: BaseModel, as_json: bool) -> None:
+def _emit(model: BaseModel, as_json: bool, lists: tuple[str, ...] = ()) -> None:
+    """Print a model as JSON, or one "field value" line per field. A list is
+    printed only when it is named in ``lists`` and has something in it."""
     if as_json:
         typer.echo(model.model_dump_json(indent=2))
         return
     for key, value in model.model_dump().items():
+        if isinstance(value, list) and value and key in lists:
+            value = ", ".join(str(item) for item in value)
         if value is None or isinstance(value, list):
             continue
         if isinstance(value, float):
             value = f"{value:.3f}"
         typer.echo(f"{key:<20} {value}")
+
+
+def _warn_once(warning: str | None, seen: list[str]) -> None:
+    """Batch mode: a warning goes to stderr the first time a row meets it; the
+    output file has no place for it."""
+    if warning and warning not in seen:
+        seen.append(warning)
+        typer.echo(f"warning: {warning}", err=True)
 
 
 def _fail(exc: Exception) -> None:
@@ -267,6 +279,7 @@ def search(
     With no index built, searches the built-in demo set of FDA-approved drugs.
     """
     if _batch_requested(smiles, input_file):
+        warned: list[str] = []
 
         def one(row: batch.InputRow) -> list[dict[str, Any]]:
             found = service.similarity_search(
@@ -276,6 +289,7 @@ def search(
                 metric=metric.value,
                 home=home,
             )
+            _warn_once(found.warning, warned)
             return [
                 {"rank": rank, **hit.model_dump()}
                 for rank, hit in enumerate(found.hits, start=1)
@@ -360,11 +374,14 @@ def substructure(
         )
 
     if _batch_requested(query, input_file):
+        warned: list[str] = []
 
         def one(row: batch.InputRow) -> list[dict[str, Any]]:
+            found = run(row.smiles)
+            _warn_once(found.warning, warned)
             return [
                 {"rank": rank, **hit.model_dump()}
-                for rank, hit in enumerate(run(row.smiles).hits, start=1)
+                for rank, hit in enumerate(found.hits, start=1)
             ]
 
         _run_batch(input_file, output, SUBSTRUCTURE_COLUMNS, one)
@@ -776,7 +793,7 @@ def index_status_cmd(home: HomeOpt = None, as_json: JsonFlag = False) -> None:
     except (PubChemFinderError, OSError, ValueError) as exc:  # e.g. a damaged manifest
         _fail(exc)
         return
-    _emit(status, as_json)
+    _emit(status, as_json, lists=("unmerged_chunks",))
 
 
 def _emit_hits(result: RemoteSearchResults, as_json: bool) -> None:
