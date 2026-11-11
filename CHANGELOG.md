@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `lookup` and the `pubchem ...` commands honour `--home DIR`. They now declare the option
+  the README documents, and the shared PubChem client is built per data directory, so
+  their response cache lands in `DIR/cache`, which is what `cache info --home DIR`
+  reports (#161).
+
 ## [2.2.3] - 2026-11-11
 
 ### Fixed

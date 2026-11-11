@@ -75,24 +75,33 @@ _STANDARDIZER = MoleculeStandardizer()
 QueryType = Literal["smiles", "smarts"]
 
 _client_lock = threading.Lock()
-_client: PubChemClient | None = None
+_clients: dict[Path, PubChemClient] = {}
 _indexes: dict[Path, LocalIndex] = {}
 
 
-def get_client() -> PubChemClient:
-    """Process-wide PubChem client, created on first use, with the on-disk
-    response cache unless ``PUBCHEM_FINDER_CACHE=0``."""
-    global _client
+def get_client(home: Path | str | None = None) -> PubChemClient:
+    """PubChem client for the data directory ``home`` (default: the resolved data
+    directory), created on first use, with the on-disk response cache unless
+    ``PUBCHEM_FINDER_CACHE=0``.
+
+    One client per data directory, so ``--home`` also moves the response cache.
+    Each client paces its own requests (PubChem allows 5 a second), so one process
+    that works in several data directories can send that many per client; the CLI
+    and the MCP server use one directory and so one client.
+    """
+    key = resolve_home(home)
     with _client_lock:
-        if _client is None:
+        client = _clients.get(key)
+        if client is None:
             cache = None
             if cache_enabled():
                 try:
-                    cache = ResponseCache(cache_path())
+                    cache = ResponseCache(cache_path(key))
                 except (OSError, sqlite3.Error) as exc:
                     logger.warning("PubChem response cache disabled: %s", exc)
-            _client = PubChemClient(cache=cache)
-        return _client
+            client = PubChemClient(cache=cache)
+            _clients[key] = client
+        return client
 
 
 def parse_smiles(smiles: str) -> Chem.Mol:
@@ -124,9 +133,11 @@ def parse_query(query: str, query_type: QueryType = "smiles") -> Chem.Mol:
     return mol
 
 
-def lookup(query: str, by: Namespace = "name", limit: int = 5) -> LookupResult:
+def lookup(
+    query: str, by: Namespace = "name", limit: int = 5, home: Path | str | None = None
+) -> LookupResult:
     """Look compounds up in PubChem."""
-    compounds = get_client().lookup(query, by=by, limit=limit)
+    compounds = get_client(home).lookup(query, by=by, limit=limit)
     return LookupResult(query=query, by=by, compounds=compounds)
 
 
@@ -464,11 +475,14 @@ def _rank(query: Chem.Mol, records: list[CompoundRecord]) -> list[RemoteHit]:
 
 
 def pubchem_similarity_search(
-    smiles: str, threshold: int = 90, max_records: int = 25
+    smiles: str,
+    threshold: int = 90,
+    max_records: int = 25,
+    home: Path | str | None = None,
 ) -> RemoteSearchResults:
     """Similar compounds across all of PubChem (PubChem's fast 2D similarity search)."""
     mol = parse_smiles(smiles)
-    records = get_client().similarity_search(
+    records = get_client(home).similarity_search(
         smiles, threshold=threshold, max_records=max_records
     )
     return RemoteSearchResults(
@@ -483,11 +497,11 @@ def pubchem_similarity_search(
 
 
 def pubchem_substructure_search(
-    smiles: str, max_records: int = 25
+    smiles: str, max_records: int = 25, home: Path | str | None = None
 ) -> RemoteSearchResults:
     """Compounds across all of PubChem that contain ``smiles``."""
     mol = parse_smiles(smiles)
-    records = get_client().substructure_search(smiles, max_records=max_records)
+    records = get_client(home).substructure_search(smiles, max_records=max_records)
     return RemoteSearchResults(
         query_smiles=smiles,
         search="substructure",
@@ -499,12 +513,14 @@ def pubchem_substructure_search(
 
 
 def pubchem_exact_match(
-    smiles: str, identity_type: IdentityType = "same_stereo_isotope"
+    smiles: str,
+    identity_type: IdentityType = "same_stereo_isotope",
+    home: Path | str | None = None,
 ) -> RemoteSearchResults:
     """PubChem compounds identical to ``smiles``."""
     mol = parse_smiles(smiles)
     max_records = 25
-    records = get_client().exact_match(
+    records = get_client(home).exact_match(
         smiles, identity_type=identity_type, max_records=max_records
     )
     return RemoteSearchResults(
@@ -517,11 +533,13 @@ def pubchem_exact_match(
     )
 
 
-def pubchem_synonyms(cid: int, limit: int = 25) -> Synonyms:
+def pubchem_synonyms(
+    cid: int, limit: int = 25, home: Path | str | None = None
+) -> Synonyms:
     """Names, CAS numbers and other identifiers PubChem lists for a CID."""
     if not 1 <= limit <= 500:
         raise BadQuery("limit must be between 1 and 500")
-    payload = get_client().compound_json(cid, "synonyms")
+    payload = get_client(home).compound_json(cid, "synonyms")
     try:
         names = parsers.parse_synonyms(payload)
     except parsers.PayloadError as exc:
@@ -540,18 +558,20 @@ _XREF_PATENTS = ("PatentID",)
 _XREF_OTHERS = tuple(t for t in XREF_TYPES if t not in _XREF_PATENTS)
 
 
-def _require_compound(cid: int) -> None:
+def _require_compound(cid: int, home: Path | str | None = None) -> None:
     """Raise ``CompoundNotFound`` unless PubChem has ``cid``.
 
     PubChem answers "no such compound" and "a compound without this data" with the
     same 404, so an empty result is checked once; the answer is cached.
     """
-    get_client().lookup(str(cid), by="cid", limit=1)
+    get_client(home).lookup(str(cid), by="cid", limit=1)
 
 
-def _xrefs(cid: int, types: tuple[str, ...]) -> dict[str, list[str]]:
+def _xrefs(
+    cid: int, types: tuple[str, ...], home: Path | str | None = None
+) -> dict[str, list[str]]:
     try:
-        payload = get_client().compound_json(cid, "xrefs/" + ",".join(types))
+        payload = get_client(home).compound_json(cid, "xrefs/" + ",".join(types))
         return parsers.parse_xrefs(payload, types)
     except CompoundNotFound:  # PubChem's answer when a compound has none of these
         return {t: [] for t in types}
@@ -559,7 +579,9 @@ def _xrefs(cid: int, types: tuple[str, ...]) -> dict[str, list[str]]:
         raise PubChemError(f"Unexpected xrefs response: {exc}") from exc
 
 
-def pubchem_xrefs(cid: int, sample: int = 10) -> CrossRefs:
+def pubchem_xrefs(
+    cid: int, sample: int = 10, home: Path | str | None = None
+) -> CrossRefs:
     """Registry IDs, PubMed articles and patents linked to a CID.
 
     When only the patent request fails (PubChem runs out of time, is busy, or its
@@ -568,11 +590,11 @@ def pubchem_xrefs(cid: int, sample: int = 10) -> CrossRefs:
     """
     if not 1 <= sample <= 100:
         raise BadQuery("sample must be between 1 and 100")
-    refs = _xrefs(cid, _XREF_OTHERS)
+    refs = _xrefs(cid, _XREF_OTHERS, home)
     unavailable: list[str] = []
     note: str | None = None
     try:
-        refs |= _xrefs(cid, _XREF_PATENTS)
+        refs |= _xrefs(cid, _XREF_PATENTS, home)
     except BadQuery:
         raise
     except PubChemError as exc:
@@ -580,7 +602,7 @@ def pubchem_xrefs(cid: int, sample: int = 10) -> CrossRefs:
         unavailable = list(_XREF_PATENTS)
         note = _patents_note(exc)
     if not any(refs.values()):
-        _require_compound(cid)
+        _require_compound(cid, home)
     return CrossRefs(
         cid=cid,
         counts={t: len(v) for t, v in refs.items()},
@@ -606,9 +628,9 @@ def _patents_note(exc: PubChemError) -> str:
     return f"The patent list could not be read ({exc}); ask again later. {rest}"
 
 
-def pubchem_description(cid: int) -> Description:
+def pubchem_description(cid: int, home: Path | str | None = None) -> Description:
     """Short curated descriptions of a compound, with their sources."""
-    payload = get_client().compound_json(cid, "description")
+    payload = get_client(home).compound_json(cid, "description")
     try:
         title, texts = parsers.parse_descriptions(payload)
     except parsers.PayloadError as exc:
@@ -616,12 +638,12 @@ def pubchem_description(cid: int) -> Description:
     return Description(cid=cid, title=title, descriptions=texts)
 
 
-def pubchem_bioactivity(cid: int) -> BioactivitySummary:
+def pubchem_bioactivity(cid: int, home: Path | str | None = None) -> BioactivitySummary:
     """Summary of PubChem BioAssay results for a CID."""
     try:
-        payload = get_client().compound_json(cid, "assaysummary")
+        payload = get_client(home).compound_json(cid, "assaysummary")
     except CompoundNotFound:
-        _require_compound(cid)  # untested, or not a compound at all?
+        _require_compound(cid, home)  # untested, or not a compound at all?
         return BioactivitySummary(
             cid=cid,
             tested=False,
@@ -637,12 +659,15 @@ def pubchem_bioactivity(cid: int) -> BioactivitySummary:
 
 
 def pubchem_annotations(
-    cid: int, heading: AnnotationHeading, max_chars: int = 6000
+    cid: int,
+    heading: AnnotationHeading,
+    max_chars: int = 6000,
+    home: Path | str | None = None,
 ) -> AnnotationSection:
     """Curated annotations from one section of a compound's PubChem page."""
     if not 500 <= max_chars <= 30000:
         raise BadQuery("max_chars must be between 500 and 30000")
-    client = get_client()
+    client = get_client(home)
     try:
         payload = client.view_data(cid, heading)
     except (CompoundNotFound, BadQuery) as exc:
