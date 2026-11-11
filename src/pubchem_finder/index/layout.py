@@ -19,10 +19,13 @@
 
 import json
 import os
+import re
+import unicodedata
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from pydantic import BaseModel, Field
 
@@ -75,6 +78,16 @@ class ChunkStats(BaseModel):
         default=None,
         description="The file given with --sdf (None: a PubChem chunk, or a chunk "
         "built by 2.2.0 or earlier)",
+    )
+    skipped_id: str | None = Field(
+        default=None,
+        description="The first record ID that could not be used (IDs must be whole "
+        "numbers from 1 to 4,294,967,295)",
+    )
+    build_id: str | None = Field(
+        default=None,
+        description="Unique to each build of the chunk; the manifest records which "
+        "builds its merged files hold (None: built by 2.2.1 or earlier)",
     )
 
 
@@ -135,6 +148,11 @@ class Manifest(BaseModel):
     fpsim2_version: str
     substructure: SubstructureInfo | None = Field(
         default=None, description="Present when substructure search is enabled"
+    )
+    chunk_builds: dict[str, str | None] | None = Field(
+        default=None,
+        description="Each merged chunk's build_id, so a chunk rebuilt under its old "
+        "name is noticed (None: merged by 2.2.1 or earlier)",
     )
 
     @property
@@ -224,9 +242,20 @@ class IndexPaths:
         Raises:
             IndexIncompatible: a newer pubchem-finder wrote the index.
         """
-        if not self.manifest.exists() or not self.fingerprints.exists():
+        merged = self.read_manifest()
+        return merged.manifest if merged is not None else None
+
+    def read_manifest(self) -> "Merged | None":
+        """:meth:`load_manifest`, with the time the manifest was written."""
+        if not self.fingerprints.exists():
             return None
-        data = json.loads(self.manifest.read_text(encoding="utf-8"))
+        try:
+            with self.manifest.open("rb") as stream:
+                # Of the file being read, not of one a merge puts there meanwhile.
+                written_ns = os.fstat(stream.fileno()).st_mtime_ns
+                data = json.load(stream)
+        except FileNotFoundError:  # no index, or a merge is swapping it right now
+            return None
         # Before validating: a newer format may not fit this version's model.
         found = data.get("format_version", 1) if isinstance(data, dict) else 1
         if isinstance(found, int) and found > FORMAT_VERSION:
@@ -237,7 +266,108 @@ class IndexPaths:
                 f"{FORMAT_VERSION} and older. Upgrade pubchem-finder, or build an "
                 "index for this version in another data directory (--home)."
             )
-        return Manifest.model_validate(data)
+        return Merged(Manifest.model_validate(data), written_ns)
+
+    def stats_written(self, names: Iterable[str]) -> dict[str, int]:
+        """When the stats file of each complete chunk among ``names`` was written."""
+        out: dict[str, int] = {}
+        for name in names:
+            try:
+                out[name] = self.chunk_stats(name).stat().st_mtime_ns
+            except OSError:  # no stats: not a complete chunk
+                continue
+        return out
+
+
+class Merged(NamedTuple):
+    """A manifest as it was read, and when its file was written.
+
+    A search keeps the one its fingerprints were loaded under and looks structures
+    up against it: a merge that completes in between has put other records under
+    the same IDs.
+    """
+
+    manifest: Manifest
+    written_ns: int
+
+
+def unmerged(
+    merged: Merged | Manifest,
+    chunks: Iterable[ChunkStats],
+    written: Mapping[str, int] | None = None,
+) -> list[str]:
+    """The chunks of a merged index that are no longer the builds it holds.
+
+    ``chunks`` are the complete chunks on disk. A chunk rebuilt since the merge has
+    another build id: its Parquet file describes the new file while the merged
+    fingerprints are still the old one's, so the two must not be read together. A
+    chunk without stats is being replaced right now, or is gone.
+
+    ``written`` says when each chunk's stats file was written (see
+    :meth:`IndexPaths.stats_written`). Together with the time ``merged`` carries
+    it decides for an index merged by 2.2.1 or earlier, which recorded no build
+    ids; a bare manifest stands for one whose file times are not known.
+    """
+    manifest, manifest_written = (
+        merged if isinstance(merged, Merged) else (merged, None)
+    )
+    on_disk = {c.name: c for c in chunks}
+    merged_at = int(manifest.built_at.timestamp() * 1_000_000_000)
+    out: list[str] = []
+    for name in manifest.chunks:
+        stats = on_disk.get(name)
+        if stats is None:
+            out.append(name)
+        elif manifest.chunk_builds is None:
+            # Merged by 2.2.1 or earlier, which could rebuild a chunk of the user's
+            # own file and fail before merging it. Two things show that: stats
+            # newer than the manifest (those versions wrote the manifest last), and
+            # a chunk built from a file that was modified after the merge. The
+            # second also holds in a copy of the home that lost its file times, and
+            # after 2.2.1 rewrote the manifest to add substructure search; it says
+            # nothing when the file is dated later than the chunk built from it (a
+            # clock that is ahead, a date in the future). A build id alone says
+            # nothing either: 2.2.1 may have merged a chunk that has one.
+            if stats.source is None:
+                continue
+            at = (written or {}).get(name)
+            newer = (
+                at is not None
+                and manifest_written is not None
+                and at > manifest_written
+            )
+            modified = stats.source.mtime_ns
+            later = modified > merged_at and (at is None or modified <= at)
+            if newer or later:
+                out.append(name)
+        elif manifest.chunk_builds.get(name) != stats.build_id:
+            out.append(name)
+    return out
+
+
+def duckdb_path(path: Path | str) -> str:
+    """``path`` as DuckDB has to be given one file. It reads ``*``, ``?`` and ``[``
+    in a path as a pattern: asked for ``lib[1].parquet`` it opened ``lib1.parquet``,
+    and gave a hit of one library the structure the other has under that ID."""
+    text = str(path)
+    if os.sep == "/" and "\\" in text:
+        # No pattern stands for a backslash there, and DuckDB takes one in a
+        # pattern for an escape. Left as it is, the path is still found: DuckDB
+        # tries the name itself when the pattern matches no file.
+        return text
+    return re.sub(r"([*?\[])", r"[\1]", text)
+
+
+def chunk_of(parquet: Path | str) -> str:
+    """The chunk a Parquet file holds, from the path DuckDB reports for a row."""
+    name = Path(parquet).name
+    return name.removesuffix(".parquet")
+
+
+def chunk_key(name: str) -> str:
+    """How chunk names are compared: ``Library`` and ``library`` are one set of files
+    on macOS and Windows, so they are one chunk everywhere."""
+    return unicodedata.normalize("NFC", name).casefold()
 
 
 def chunk_name(path: Path | str) -> str:

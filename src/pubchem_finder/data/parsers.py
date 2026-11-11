@@ -109,6 +109,57 @@ _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+# PubChem's assay summary puts every measurement a depositor reported in micromolar
+# into one column and names it in another. These names are potencies or affinities,
+# where lower means stronger. Vmax, Km, Cp, Cmax, Solubility and unnamed values share
+# the column and must not be ranked with them.
+POTENCY_MEASURES = frozenset(
+    {"ic50", "ec50", "ac50", "potency", "ki", "kd", "id50", "ed50", "mic", "gi50"}
+)
+_UNIPROT = re.compile(
+    r"[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9](?:[A-Z][A-Z0-9]{2}[0-9]){1,2}"
+)
+
+
+_Key = tuple[str, str]  # ("gene", id) or ("accession", id)
+
+
+class _Groups:
+    """Keys joined into groups; each group is known by one of its keys."""
+
+    def __init__(self) -> None:
+        self._parent: dict[_Key, _Key] = {}
+
+    def of(self, key: _Key) -> _Key:
+        """The key that stands for ``key``'s group (itself if it was never joined)."""
+        root = key
+        while self._parent.get(root, root) != root:
+            root = self._parent[root]
+        while self._parent.get(key, key) != root:  # shorten the path for next time
+            self._parent[key], key = root, self._parent[key]
+        return root
+
+    def join(self, a: _Key, b: _Key) -> None:
+        root_a, root_b = self.of(a), self.of(b)
+        if root_a != root_b:
+            self._parent[root_b] = root_a
+
+
+def _representative(active: Counter[str], listed: Counter[str]) -> str | None:
+    """One accession for a target PubChem lists under several: UniProt's if there
+    is one, otherwise the most frequent.
+
+    ``active`` counts the accessions on the target's active rows, ``listed`` those
+    on every row of the target that names a gene: PubChem may give the UniProt
+    accession only on rows with another outcome.
+    """
+    for accessions in (active, listed):
+        uniprot = [a for a, _ in accessions.most_common() if _UNIPROT.fullmatch(a)]
+        if uniprot:
+            return uniprot[0]
+    return active.most_common(1)[0][0] if active else None
+
+
 def _column_index(columns: Sequence[str]) -> dict[str, int]:
     lowered = {c.strip().lower(): i for i, c in enumerate(columns)}
     index: dict[str, int] = {}
@@ -128,7 +179,8 @@ def summarize_assays(
     The raw table has one row per (assay, substance) and can run to thousands
     of rows for well-studied compounds; the summary keeps what an assistant
     needs: how often the compound was tested, outcome counts, the targets with
-    the most active results, and the most potent active measurements.
+    the most active assays (one per gene), and the lowest potency-type values
+    among active results (see :data:`POTENCY_MEASURES`).
     """
     try:
         table = payload["Table"]
@@ -147,11 +199,40 @@ def summarize_assays(
         value = str(cells[i]).strip()
         return value or None
 
+    # A target is whatever the table ties together. A gene appears with several
+    # protein accessions, or none; an accession appears with its gene on some rows
+    # and without it on others (depositors differ); and one protein can be listed
+    # under two gene IDs (two loci, or two strains, with the same product), in
+    # which case PubChem repeats each of its rows once per gene.
+    targets = _Groups()
+    listed_accessions: dict[_Key, Counter[str]] = defaultdict(Counter)
+    listed_genes: dict[_Key, Counter[str]] = defaultdict(Counter)
+    for row in rows:
+        cells = row.get("Cell", [])
+        accession, gene_id = cell(cells, "accession"), cell(cells, "gene_id")
+        if accession and gene_id:
+            targets.join(("accession", accession), ("gene", gene_id))
+    for row in rows:
+        cells = row.get("Cell", [])
+        accession, gene_id = cell(cells, "accession"), cell(cells, "gene_id")
+        if accession and gene_id:
+            target = targets.of(("gene", gene_id))
+            listed_accessions[target][accession] += 1
+            listed_genes[target][gene_id] += 1
+
+    def gene_of(target: _Key) -> str | None:
+        """The gene a target is shown under: the one most rows name."""
+        named = listed_genes.get(target)
+        if named:
+            return named.most_common(1)[0][0]
+        return target[1] if target[0] == "gene" else None
+
     aids: set[int] = set()
     outcomes: Counter[str] = Counter()
-    target_active: Counter[tuple[str | None, str | None]] = Counter()
-    target_aids: dict[tuple[str | None, str | None], set[int]] = defaultdict(set)
+    target_aids: dict[_Key, set[int]] = defaultdict(set)
+    target_accessions: dict[_Key, Counter[str]] = defaultdict(Counter)
     potent: list[PotentResult] = []
+    seen_potent: set[tuple[int, str, float]] = set()
     for row in rows:
         cells = row.get("Cell", [])
         aid_text = cell(cells, "aid")
@@ -163,34 +244,56 @@ def summarize_assays(
         outcomes[outcome] += 1
         if outcome != "Active":
             continue
-        target = (cell(cells, "accession"), cell(cells, "gene_id"))
-        if any(target) and aid not in target_aids[target]:
+        accession, gene_id = cell(cells, "accession"), cell(cells, "gene_id")
+        if gene_id or accession:
+            target = targets.of(
+                ("gene", gene_id) if gene_id else ("accession", accession or "")
+            )
             target_aids[target].add(aid)
-            target_active[target] += 1
+            if accession:
+                target_accessions[target][accession] += 1
+            gene_id = gene_of(target)
+        activity_name = cell(cells, "activity_name")
+        if not activity_name or activity_name.lower() not in POTENCY_MEASURES:
+            continue
         value_text = cell(cells, "value")
         try:
             value = float(value_text) if value_text else None
         except ValueError:
             value = None
-        if value is not None:
+        # One result, however many rows repeat it: per gene ID, per substance, and
+        # per protein when the assay's target has several (the subunits of a
+        # receptor each get a row with the same value).
+        result = (aid, activity_name.lower(), value or 0.0)
+        if value is not None and result not in seen_potent:
+            seen_potent.add(result)
             potent.append(
                 PotentResult(
                     aid=aid,
                     assay_name=cell(cells, "assay_name"),
-                    activity_name=cell(cells, "activity_name"),
+                    activity_name=activity_name,
                     value_um=value,
-                    target_accession=target[0],
+                    target_accession=accession,
+                    target_gene_id=gene_id,
                 )
             )
     potent.sort(key=lambda p: p.value_um)
+    # Most active assays first; ties keep the order PubChem listed them in.
+    ranked = sorted(target_aids, key=lambda t: -len(target_aids[t]))
     return BioactivitySummary(
         cid=cid,
         tested=bool(aids),
         n_assays=len(aids),
         outcomes=dict(outcomes.most_common()),
         top_targets=[
-            TargetActivity(target_accession=acc, target_gene_id=gene, active_assays=n)
-            for (acc, gene), n in target_active.most_common(top_n)
+            TargetActivity(
+                target_accession=_representative(
+                    target_accessions[target], listed_accessions[target]
+                ),
+                target_gene_id=gene_of(target),
+                active_assays=len(target_aids[target]),
+            )
+            for target in ranked[:top_n]
         ],
         most_potent=potent[:top_n],
     )

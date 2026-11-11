@@ -55,6 +55,19 @@ def add_substructure(home: Path | None = None) -> str:
     )
 
 
+def merge_rebuilt(files: list[str | None], home: Path | None = None) -> str:
+    """How to merge chunks that were rebuilt after the index was merged; ``files``
+    are the files they were built from, None where that is not known."""
+    known = [f for f in files if f is not None]
+    if not known or len(known) < len(files):
+        return (
+            "the `index build` command they were built with (for your own files, "
+            f"`{command('index build --sdf FILE', home)}`)"
+        )
+    sdf = " ".join(f"--sdf {_quote(f)}" for f in known)
+    return f"`{command(f'index build {sdf}', home)}`"
+
+
 def _quote(text: str) -> str:
     # Double quotes work in POSIX shells, PowerShell and cmd.exe alike.
     return f'"{text}"' if any(c.isspace() for c in text) else text

@@ -59,6 +59,18 @@ class Standardized(BaseModel):
     input_smiles: str
     smiles: str = Field(description="Canonical SMILES of the standardized parent")
     changed: bool = Field(description="Whether standardization altered the structure")
+    removed: list[str] = Field(
+        default_factory=list,
+        description="What was left out of the parent, as SMILES: counter-ions and "
+        "solvents, but also the smaller component of a mixture or a metal. Tell the "
+        "user when it is more than a counter-ion",
+    )
+    note: str | None = Field(
+        default=None,
+        description="Set when the input was returned as given (a metal compound, "
+        "or nothing organic), or when what was left out may matter: a metal, or an "
+        "organic component that is not a common counter-ion or solvent. Tell the user",
+    )
 
 
 class Comparison(BaseModel):
@@ -113,6 +125,11 @@ class SimilarityResults(BaseModel):
     scaffolds: list["ScaffoldGroup"] | None = Field(
         default=None, description="Hits grouped by Murcko scaffold, when requested"
     )
+    warning: str | None = Field(
+        default=None,
+        description="Set when the results may be incomplete (files of the index "
+        "changed after it was merged); tell the user",
+    )
 
 
 class SubstructureResults(BaseModel):
@@ -138,13 +155,20 @@ class SubstructureResults(BaseModel):
         description="True if every candidate was checked, so the hits are all the matches"
     )
     hits: list[IndexedCompound] = Field(description="Matches, lowest CID first")
-    warning: str | None = None
+    warning: str | None = Field(
+        default=None,
+        description="Set when matches may be missing (files of the index changed "
+        "after it was merged, or RDKit changed since it was built); tell the user",
+    )
 
 
 class IndexStatus(BaseModel):
     """State of the local index."""
 
-    state: str = Field(description="'ready' or 'not_built'")
+    state: str = Field(
+        description="'ready' or 'not_built'. A ready index with unmerged_chunks "
+        "needs `index build` to finish; see hint"
+    )
     home: str = Field(description="Data directory")
     n_compounds: int = 0
     n_failed: int = 0
@@ -154,6 +178,13 @@ class IndexStatus(BaseModel):
     memory_bytes: int = Field(default=0, description="RAM needed to search in memory")
     chunks_in_index: int = 0
     chunks_built: int = Field(default=0, description="Chunks on disk, merged or not")
+    unmerged_chunks: list[str] = Field(
+        default_factory=list,
+        description="Chunks whose file was indexed again after the index was merged "
+        "(a build failed, was stopped, or is running): until a build completes, "
+        "searches return their earlier compounds without structures and do not "
+        "find compounds added since",
+    )
     loaded: bool = Field(
         default=False, description="Whether this process has the index in use"
     )
@@ -257,17 +288,26 @@ class Description(BaseModel):
 
 
 class TargetActivity(BaseModel):
-    target_accession: str | None
-    target_gene_id: str | None
-    active_assays: int
+    """One target: the gene IDs and protein accessions that PubChem's table lists
+    together, or a protein accession it lists with no gene."""
+
+    target_accession: str | None = Field(
+        description="A protein accession of the target (UniProt's when PubChem has one)"
+    )
+    target_gene_id: str | None = Field(
+        description="NCBI Gene ID (the one most rows name when PubChem lists the "
+        "protein under several); None when PubChem names no gene for the accession"
+    )
+    active_assays: int = Field(description="Distinct assays with an active result")
 
 
 class PotentResult(BaseModel):
     aid: int
     assay_name: str | None
-    activity_name: str | None
+    activity_name: str | None = Field(description="What was measured, e.g. IC50, Ki")
     value_um: float
     target_accession: str | None
+    target_gene_id: str | None = None
 
 
 class BioactivitySummary(BaseModel):
@@ -276,12 +316,22 @@ class BioactivitySummary(BaseModel):
     cid: int
     tested: bool
     n_assays: int = Field(description="Distinct BioAssay AIDs")
-    outcomes: dict[str, int] = Field(description="Result counts by outcome")
+    outcomes: dict[str, int] = Field(
+        description="Result counts by outcome. Results, not assays: one assay can "
+        "report several"
+    )
     top_targets: list[TargetActivity] = Field(
-        description="Targets with the most active results"
+        description="Targets with the most active assays, one row per gene. "
+        "Accessions and gene IDs that PubChem's table lists together are one "
+        "target; a protein listed with no gene is a target by its accession"
     )
     most_potent: list[PotentResult] = Field(
-        description="Active results with the lowest activity values (µM)"
+        description="Active results with the lowest potency-type values in µM (IC50, "
+        "EC50, AC50, Potency, Ki, Kd, ID50, ED50, MIC, GI50). Other measurements "
+        "(Vmax, Km, plasma levels, solubility) and unnamed values are left out. One "
+        "entry per assay and value: when PubChem lists a result under several "
+        "proteins (the subunits of one receptor), the first is named. The lowest "
+        "value is not always the most meaningful: check the assay"
     )
 
     @computed_field  # type: ignore[prop-decorator]

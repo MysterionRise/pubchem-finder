@@ -33,6 +33,7 @@ from .data.pug_rest import (
     PubChemTimeout,
     PubChemUnavailable,
 )
+from .data.sdf import parse_id
 from .models import (
     AnnotationSection,
     BioactivitySummary,
@@ -206,7 +207,14 @@ async def compound_properties(smiles: str) -> Properties:
 @_tool("Standardize a structure", calls_pubchem=False)
 async def standardize(smiles: str) -> Standardized:
     """Standardize a structure: remove salts/counter-ions, neutralize charges,
-    normalize functional groups, and return canonical SMILES of the parent."""
+    normalize functional groups, and return canonical SMILES of the parent.
+
+    The parent is the largest organic component that is not a common counter-ion
+    or solvent (meglumine, pamoate, tartrate, ethanol); `removed` lists everything
+    left out, and `note` says when that includes another organic component, as in
+    a mixture of two drugs. Metal compounds (cisplatin, ferrous fumarate) and
+    inputs with nothing organic (sodium chloride) are returned as given, with a
+    `note`. Sulfoxides stay S=O, the form PubChem and the local index use."""
     return await _run(service.standardize, smiles)
 
 
@@ -375,8 +383,10 @@ async def pubchem_annotations(
 @_tool("PubChem bioactivity summary", calls_pubchem=True)
 async def pubchem_bioactivity(cid: int) -> BioactivitySummary:
     """Summary of PubChem BioAssay results for a compound: how many assays,
-    outcome counts, the targets with the most active results (UniProt
-    accession, NCBI gene ID) and the most potent active measurements (µM)."""
+    outcome counts, the targets with the most active assays (one per gene, with
+    its NCBI gene ID and a protein accession) and the lowest potency-type values
+    among active results (IC50, EC50, AC50, Ki, Kd and similar, in µM). The lowest
+    value is not always the most meaningful one: name the assay when you quote it."""
     return await _run(service.pubchem_bioactivity, cid)
 
 
@@ -393,7 +403,9 @@ async def draw_molecules(
     legends: one caption per molecule (names or CIDs). highlight:
     - "smarts": atoms matching the smarts pattern (e.g. a pharmacophore or an alert),
     - "diff": what each molecule adds relative to reference_smiles (atoms outside
-      their maximum common substructure), with drawings aligned to the shared core,
+      their maximum common substructure), with drawings aligned to the shared core.
+      No highlight means no difference, unless the caption says "difference not
+      computed" (the comparison ran out of time: say so, do not call it identical),
     - "similarity_map": atom contributions to ECFP4 similarity with reference_smiles
       (green raises similarity, pink lowers it).
     Use it to show search hits, analogues or alerts instead of describing structures.
@@ -450,9 +462,10 @@ async def _read(fn: Callable[..., BaseModel], *args: object) -> str:
     mime_type="application/json",
 )
 async def compound_resource(cid: str) -> str:
-    if not cid.isdigit() or int(cid) < 1:
-        raise ResourceNotFoundError(f"Not a PubChem CID: {cid!r}")
-    return await _read(_compound, int(cid))
+    number = parse_id(cid)  # ASCII digits, leading zeros allowed, at most 32 bits
+    if number is None:
+        raise ResourceNotFoundError(f"Not a PubChem CID: {cid[:20]!r}")
+    return await _read(_compound, number)
 
 
 def _compound(cid: int) -> CompoundRecord:
@@ -516,8 +529,9 @@ def find_analogues(compound: str, threshold: str = "0.6") -> str:
         "1. Get its SMILES with pubchem_lookup unless it is one already.\n"
         f"2. Run similarity_search with threshold={value:g} and group_by_scaffold=true. "
         'If the result\'s search_scope is "demo", tell me that only the built-in demo '
-        "set of FDA-approved drugs was searched, and also run pubchem_similarity_search "
-        "to cover all of PubChem.\n"
+        "set of FDA-approved drugs was searched, and offer to run "
+        "pubchem_similarity_search to cover all of PubChem (it sends the structure to "
+        "PubChem, so ask first).\n"
         "3. Draw the closest hits (up to 8, the query first) with draw_molecules, "
         'highlight="diff" and the query as reference_smiles, with CIDs and similarities '
         "as legends.\n"
@@ -539,7 +553,8 @@ def triage_structures(structures: str = "") -> str:
     )
     return (
         f"Triage {target}\n"
-        "For each one, standardize it (salts, charges), then run medchem_profile: QED, "
+        "For each one, standardize it (salts, charges; say what it removed when that "
+        "is more than a counter-ion, and pass its note on), then run medchem_profile: QED, "
         "synthetic accessibility, Lipinski and Veber rules, PAINS/Brenk/NIH alerts. Show "
         "one table ranked from most to least promising, with the reason for each "
         "rank. Then draw the structures that have alerts with draw_molecules, their "

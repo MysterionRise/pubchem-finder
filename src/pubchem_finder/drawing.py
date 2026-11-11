@@ -6,18 +6,30 @@ Highlight modes:
 - ``diff``: for each molecule, the atoms that are *not* part of its maximum
   common substructure with a reference: "what changed in this analogue".
   Depictions are aligned to the shared core so the changes line up visually.
+  Rings are shared whole or not at all; a ring that went from aromatic to
+  saturated (or back) is lined up with its counterpart and highlighted. A
+  molecule that shares nothing with the reference is highlighted whole. A panel
+  whose common substructure could not be found in time is drawn without
+  highlights and says so in its caption.
 - ``similarity_map``: atom contributions to ECFP4 similarity with a reference
   (green raises similarity, pink lowers it).
 """
 
 import io
+import time
 from collections.abc import Sequence
 from typing import Literal
 
 from PIL import Image as PILImage
 from PIL import ImageDraw, ImageFont
 from rdkit import Chem, DataStructs
-from rdkit.Chem import Draw, rdDepictor, rdFingerprintGenerator, rdFMCS
+from rdkit.Chem import (
+    Draw,
+    rdDepictor,
+    rdFingerprintGenerator,
+    rdFMCS,
+    rdRascalMCES,
+)
 from rdkit.Chem.Draw import SimilarityMaps, rdMolDraw2D
 
 from .core.exceptions import InvalidInput, MoleculeValidationError
@@ -26,6 +38,26 @@ from .core.limits import check_atoms, check_length
 Highlight = Literal["none", "smarts", "diff", "similarity_map"]
 MAX_MOLECULES = 24
 MCS_TIMEOUT_S = 2
+NOT_COMPUTED = "difference not computed"
+MACROCYCLE_ATOMS = 12
+# Ways of laying the common core onto a molecule that are looked at (see
+# _shared_atoms); a symmetric molecule has very many.
+MAX_CORE_WAYS = 2000
+# The fallback search, when FindMCS runs out of time (see _shared_atoms).
+_RASCAL_OPTIONS: dict[str, object] = {
+    "similarityThreshold": 0.0,  # the caller chose the pair; compare any two
+    "ringMatchesRingOnly": True,
+    "completeAromaticRings": True,
+    "completeSmallestRings": True,  # as FindMCS's completeRingsOnly
+    "singleLargestFrag": True,
+    "timeout": MCS_TIMEOUT_S,
+}
+# RDKit's option objects take any attribute name without complaint, and RDKit
+# 2024.09 has no completeSmallestRings: RASCAL then shares part of a ring, which
+# FindMCS never does, so with such an RDKit the fallback is not used at all.
+_RASCAL_USABLE = all(
+    hasattr(rdRascalMCES.RascalOptions, name) for name in _RASCAL_OPTIONS
+)
 # Laying a long chain out along the shared core makes its similarity map cost grow
 # with the cube of its size while holding the GIL (18 s at 456 atoms, 0.8 s with
 # RDKit's own layout); larger molecules keep their own layout.
@@ -82,37 +114,153 @@ def smarts_highlights(
 
 def diff_highlights(
     mols: Sequence[Chem.Mol], reference: Chem.Mol
-) -> tuple[list[list[int]], list[list[int]]]:
+) -> tuple[list[list[int]], list[list[int]], list[int]]:
     """Atoms outside each molecule's MCS with ``reference``, and their bonds.
 
-    Also aligns each depiction to the shared core of the reference.
+    Also aligns each depiction to the shared core of the reference. A molecule
+    that shares nothing with the reference has every atom highlighted. The third
+    list holds the positions of molecules whose common substructure could not be
+    found in time: they get no highlights, which must not be read as "the same".
     """
     rdDepictor.Compute2DCoords(reference)
     atom_lists: list[list[int]] = []
     bond_lists: list[list[int]] = []
-    for mol in mols:
+    not_computed: list[int] = []
+    for position, mol in enumerate(mols):
+        shared = _shared_atoms(reference, mol)
+        if shared is None:
+            not_computed.append(position)
+            atom_lists.append([])
+            bond_lists.append([])
+            continue
+        if shared:
+            try:
+                rdDepictor.GenerateDepictionMatching2DStructure(
+                    mol, reference, atomMap=shared
+                )
+            except ValueError:
+                rdDepictor.Compute2DCoords(mol)
+        changed = {a.GetIdx() for a in mol.GetAtoms()} - {m for _, m in shared}
+        # The search lets an aromatic bond stand for a single or double one, so
+        # that a ring keeps its place when it is reduced; such atoms did change.
+        changed |= {
+            m
+            for r, m in shared
+            if reference.GetAtomWithIdx(r).GetIsAromatic()
+            != mol.GetAtomWithIdx(m).GetIsAromatic()
+        }
+        atom_lists.append(sorted(changed))
+        bond_lists.append(_bonds_touching(mol, changed))
+    return atom_lists, bond_lists, not_computed
+
+
+# Processor time of this thread: FindMCS stops by the wall clock.
+_thread_seconds = time.thread_time
+
+
+def _shared_atoms(reference: Chem.Mol, mol: Chem.Mol) -> list[tuple[int, int]] | None:
+    """(reference atom, molecule atom) pairs of the maximum common substructure;
+    empty when the two share none, None when it was not found in time.
+
+    FindMCS stops at its time limit with whatever it has: for fused-ring analogues
+    such as dolutegravir and cabotegravir that is 2 atoms of a 25-atom core, and
+    about one drug-like analogue pair in eleven runs into the limit. A search
+    that was cut short is therefore never used; RASCAL is asked instead.
+
+    The limit is wall-clock time. On a busy machine it can pass before the search
+    has had the processor at all, for a pair it answers in milliseconds, and those
+    are pairs RASCAL can get badly wrong. So a search that was stopped without
+    having worked for half its limit is run once more, and is "not found in time"
+    if that happens again; RASCAL is asked only about pairs that are hard.
+    """
+    same = _same_graph(reference, mol)
+    if same is not None:
+        return same
+    for _ in range(2):
+        started = _thread_seconds()
         result = rdFMCS.FindMCS(
             [reference, mol],
             timeout=MCS_TIMEOUT_S,
             ringMatchesRingOnly=True,
             completeRingsOnly=True,
         )
-        core = Chem.MolFromSmarts(result.smartsString) if result.numAtoms else None
-        match = mol.GetSubstructMatch(core) if core is not None else ()
-        if not match:
-            atom_lists.append([])
-            bond_lists.append([])
-            continue
-        try:
-            rdDepictor.GenerateDepictionMatching2DStructure(
-                mol, reference, refPatt=core
-            )
-        except ValueError:
-            rdDepictor.Compute2DCoords(mol)
-        changed = {a.GetIdx() for a in mol.GetAtoms()} - set(match)
-        atom_lists.append(sorted(changed))
-        bond_lists.append(_bonds_touching(mol, changed))
-    return atom_lists, bond_lists
+        if not result.canceled:
+            break
+        if _thread_seconds() - started >= MCS_TIMEOUT_S / 2:
+            return _rascal_atoms(reference, mol, at_least=result.numAtoms)
+    else:
+        return None
+    core = Chem.MolFromSmarts(result.smartsString) if result.numAtoms else None
+    if core is None:
+        return []
+    ref_match = reference.GetSubstructMatch(core)
+    mol_match = mol.GetSubstructMatch(core)
+    if not ref_match or not mol_match:
+        return []
+
+    def flips(match: Sequence[int]) -> int:
+        return sum(
+            reference.GetAtomWithIdx(r).GetIsAromatic()
+            != mol.GetAtomWithIdx(m).GetIsAromatic()
+            for r, m in zip(ref_match, match, strict=True)
+        )
+
+    if flips(mol_match):
+        # The core can lie on the molecule in more than one way, and since its ring
+        # bonds stand for aromatic and saturated alike, the first way found may put
+        # a phenyl on the reference's cyclohexyl and the cyclohexyl on its phenyl:
+        # both would then count as changed. Take the way that changes least.
+        ways = mol.GetSubstructMatches(core, uniquify=False, maxMatches=MAX_CORE_WAYS)
+        mol_match = min(ways, key=flips, default=mol_match)
+    return list(zip(ref_match, mol_match, strict=True))
+
+
+def _same_graph(reference: Chem.Mol, mol: Chem.Mol) -> list[tuple[int, int]] | None:
+    """The atom pairs when the two are the same atoms and bonds (stereoisomers,
+    isotopologues, the molecule itself): no search is needed, and none can time
+    out or go wrong. None when they are not."""
+    if (reference.GetNumAtoms(), reference.GetNumBonds()) != (
+        mol.GetNumAtoms(),
+        mol.GetNumBonds(),
+    ):
+        return None
+    match = mol.GetSubstructMatch(reference)
+    if len(match) != reference.GetNumAtoms():
+        return None
+    return list(enumerate(match))
+
+
+def _rascal_atoms(
+    reference: Chem.Mol, mol: Chem.Mol, at_least: int
+) -> list[tuple[int, int]] | None:
+    """The common substructure by RASCAL, or None when its answer cannot be relied
+    on. ``at_least`` is the size FindMCS had reached when it was stopped.
+
+    For close analogues without large rings RASCAL finds FindMCS's core in
+    milliseconds (of 21 analogue pairs FindMCS needed more than its limit for, 17
+    gave the same atoms and 2 differed by one). It also gives up without saying
+    so: on a macrocycle it returned 12 atoms of a 65-atom core, not flagged as
+    timed out, after several seconds. So no macrocycles, and no answer smaller
+    than FindMCS's partial one or than half of the smaller molecule.
+    """
+    if not _RASCAL_USABLE or _has_macrocycle(reference) or _has_macrocycle(mol):
+        return None
+    # RDKit's stubs type every option as RascalOptions, hence setattr.
+    options = rdRascalMCES.RascalOptions()
+    for name, value in _RASCAL_OPTIONS.items():
+        setattr(options, name, value)
+    found = rdRascalMCES.FindMCES(reference, mol, options)
+    if not found or found[0].timedOut:
+        return None
+    pairs = [(int(r), int(m)) for r, m in found[0].atomMatches()]
+    smaller = min(reference.GetNumAtoms(), mol.GetNumAtoms())
+    if len(pairs) < at_least or 2 * len(pairs) < smaller:
+        return None
+    return pairs
+
+
+def _has_macrocycle(mol: Chem.Mol) -> bool:
+    return any(len(ring) >= MACROCYCLE_ATOMS for ring in mol.GetRingInfo().AtomRings())
 
 
 _MORGAN = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
@@ -251,7 +399,10 @@ def draw_grid(
     if highlight == "smarts":
         atom_lists, bond_lists = smarts_highlights(mols, smarts or "")
     elif highlight == "diff":
-        atom_lists, bond_lists = diff_highlights(mols, ref)
+        atom_lists, bond_lists, not_computed = diff_highlights(mols, ref)
+        for position in not_computed:
+            label = labels[position]
+            labels[position] = f"{label} ({NOT_COMPUTED})" if label else NOT_COMPUTED
     elif highlight != "none":
         raise InvalidInput(f"Unknown highlight mode {highlight!r}")
 

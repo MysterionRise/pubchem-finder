@@ -214,3 +214,56 @@ def test_unknown_properties_are_ignored_and_bad_values_rejected(fast_client):
         )
         with pytest.raises(PubChemError, match="property values"):
             fast_client.lookup("y")
+
+
+def test_rows_that_hold_only_a_cid_are_not_compounds(fast_client):
+    """PubChem's answer for a CID it does not have: HTTP 200 and ``{"CID": n}``."""
+    with respx.mock() as router:
+        router.get(url__regex=r".*/compound/cid/999999999/property/.*").respond(
+            200, json={"PropertyTable": {"Properties": [{"CID": 999999999}]}}
+        )
+        router.get(url__regex=r".*/compound/cid/2244%2C999999999/property/.*").respond(
+            200,
+            json={
+                "PropertyTable": {
+                    "Properties": [
+                        {"CID": 2244, "Title": "Aspirin"},
+                        {"CID": 999999999},
+                    ]
+                }
+            },
+        )
+        with pytest.raises(CompoundNotFound, match="999999999"):
+            fast_client.lookup("999999999", by="cid")
+        both = fast_client.lookup("2244,999999999", by="cid")
+    assert [record.cid for record in both] == [2244]
+
+
+def test_no_cookies_are_kept_or_sent_back():
+    """NCBI sets a session cookie; one client serves a whole server run, so sending
+    it back tied every later request, of every user, to one session ID."""
+    import httpx
+
+    from pubchem_finder.data.pug_rest import PubChemClient
+
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("cookie"))
+        return httpx.Response(
+            200,
+            headers={"set-cookie": "ncbi_sid=ABC123; domain=.nih.gov; path=/"},
+            json={"InformationList": {"Information": [{"CID": 2244, "Synonym": []}]}},
+        )
+
+    client = PubChemClient(min_interval=0)
+    client._client._transport = httpx.MockTransport(handler)
+    try:
+        for _ in range(3):
+            client._client.get(
+                "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/2244/synonyms/JSON"
+            )
+    finally:
+        client.close()
+    assert seen == [None, None, None]
+    assert len(client._client.cookies.jar) == 0

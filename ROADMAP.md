@@ -106,24 +106,65 @@ MCP over stdio (streamable HTTP optional), uv + hatchling + ruff, Python 3.11 to
       (`pubchem://compound/{cid}`, index status)
 - [x] A format version in the index manifest, checked on read
 
-## 2.3: a library to build on (next)
+## 2.2.1 and 2.2.2: right answers (done)
 
-- [ ] A declared public API (`__all__` for `service` and `models`), documented
-- [ ] Damaged index files reported as such; responses checked before they are cached;
-      PubChem's `Retry-After` and throttling headers honoured; a size cap for the cache
-- [ ] A memory cap for very broad substructure screens and a time budget for verification
-- [ ] Python 3.15, once FPSim2, numexpr and ndindex publish wheels (a weekly job watches)
+- [x] 2.2.1: in-memory searches of one index run one at a time (a race in FPSim2,
+      chembl/FPSim2#140); size limits on structures, so an oversized SMILES is an error
+      and not a crash; batch mode cannot overwrite its input; `pubchem_xrefs` fetches
+      patents on their own
+- [x] 2.2.2: `--sdf` rebuilds that survive failures (the index records which build of
+      each chunk it holds, and nothing is deleted before its replacement is complete);
+      substructure search kept through an interrupted merge; bioassay summaries that rank
+      only potencies and count each gene once; a CID PubChem does not have is "not
+      found"; record IDs the index cannot hold are skipped
+
+## 2.3: first run (next)
+
+- [ ] One-click install for Claude Desktop: an `.mcpb` bundle attached to each release
+      (#109)
+- [ ] Ready-made indexes: `index fetch` downloads a prebuilt slice of PubChem instead of
+      building one from up to 111 GB (#110)
+- [ ] Damaged index files named in the error and repaired by `index build` (#111); first
+      searches from two programs at once (#112)
+- [ ] Batch mode reads CSV files saved from Excel (#113); one-line errors for unwritable
+      paths (#114)
+
+## 2.4: from a list to an answer
+
+- [ ] Resolve a list of names, CAS numbers or InChIKeys in one call, with what did not
+      resolve (#115)
+- [ ] Check structures an assistant proposed: valid, canonical, no duplicates (#116)
+- [ ] SAR tools: clusters, a diverse subset, matched molecular pairs, an R-group table
+      (#117)
+
+## 2.5: see the results
+
+- [ ] Search hits as an interactive grid in the chat, in clients that support MCP Apps
+      (#118)
+
+## 2.6: predictions
+
+- [ ] ADMET predictions as an optional extra, each value marked as a prediction (#119)
 
 ## Ongoing
 
 - [ ] Tested setups for more MCP clients (Cursor, Windsurf, Zed, JetBrains, Antigravity /
       Gemini CLI, Codex CLI, Cline, LM Studio): #23, one good first issue per client
+- [ ] Examples for agent frameworks: LangChain (#34), OpenAI Agents SDK (#106),
+      PydanticAI or LlamaIndex (#107)
 
-## If asked
+## Kept, not scheduled
 
-- A `.mcpb` bundle for one-click install in Claude Desktop (a release asset only:
-  Anthropic's directory no longer lists `.mcpb` files)
-- A Docker image, and `--allowed-host` for the HTTP transport, for shared servers
-- An MCP App that renders `draw_molecules` and search hits in clients that support it
-- Matched molecular pairs across a hit set (`rdMMPA`)
-- ADMET predictions as an optional extra (pulls in PyTorch)
+- Upkeep of indexes you build yourself: retry failed downloads (#121), expiry and a size
+  cap for the response cache (#122), memory of very broad substructure queries (#123)
+- Python 3.15, once FPSim2 publishes wheels (#124; a weekly job watches)
+- Shared servers: a Docker image, `--allowed-host`, per-request limits and time budgets.
+  Designed, and scheduled when a team asks: #125
+
+## Ideas with evidence behind them
+
+- Bioactivity by target ("what is active against EGFR"), probably from ChEMBL
+- Agent Skills for the common workflows (dossier, analogue search, triage)
+- 3D structures: PubChem's conformers, or RDKit-generated ones
+- A try-it-in-the-browser demo of the built-in drug set
+- A short paper (JOSS or ChemRxiv)

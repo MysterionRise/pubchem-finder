@@ -17,6 +17,7 @@ import httpx
 
 from .. import __version__
 from ..core.exceptions import DownloadError
+from .pug_rest import no_cookies
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class SdfMirror:
             timeout=httpx.Timeout(timeout, connect=30.0),
             headers={"User-Agent": f"pubchem-finder/{__version__}"},
             follow_redirects=True,
+            cookies=no_cookies(),
         )
 
     def close(self) -> None:

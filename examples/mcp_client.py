@@ -9,7 +9,8 @@
 
 Lists the tools, computes aspirin's properties (offline) and finds its closest
 analogues: in the local index once one is built (`uvx --python 3.14 pubchem-finder index
-build --limit 1`), until then in the built-in demo set of FDA-approved drugs. No API key
+build --limit 1 --with-substructure`), until then in the built-in demo set of
+FDA-approved drugs. No API key
 needed. Agent frameworks (OpenAI Agents SDK, LangChain, PydanticAI...) connect to the
 same server with the same command; see
 https://github.com/MysterionRise/pubchem-finder/issues/34.

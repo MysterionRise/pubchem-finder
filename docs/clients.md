@@ -63,7 +63,8 @@ settings. The sections below give the exact config for each client someone has t
    images from tools.
 4. Ask *"Find close analogues of aspirin in the local index."* It should call
    `similarity_search` and list CID 2244 first. Without an index built
-   (`pubchem-finder index build --limit 1`, a few minutes), it searches the built-in demo
+   (`pubchem-finder index build --limit 1 --with-substructure`, a few minutes), it
+   searches the built-in demo
    set of FDA-approved drugs, and the answer should say so.
 
 ## Clients
@@ -155,26 +156,54 @@ Any client that supports streamable HTTP can connect, for example Claude Code wi
 curl -s http://127.0.0.1:8000/health
 # {"status":"ok","name":"pubchem-finder","version":"..."}
 uv run python scripts/smoke.py --url http://127.0.0.1:8000/mcp   # every tool, from the repo
+# add --home DIR when the server has an index: the checks then expect that index
 ```
 
-**Beyond your own machine.** The server binds to `127.0.0.1` by default and has no
-authentication or TLS of its own. To share it, keep that default and put an HTTPS reverse
-proxy with authentication in front of it (Caddy, nginx, a Cloudflare Tunnel...), then bind
-to the interface the proxy reaches with `--host`. With Caddy, `/etc/caddy/Caddyfile`:
+**Beyond your own machine (experimental).** The server binds to `127.0.0.1` by default
+and has no authentication or TLS of its own. To share it, put an HTTPS reverse proxy with
+authentication in front of it (Caddy, nginx, a Cloudflare Tunnel...). With the proxy on
+the same machine, keep the default bind. The server then answers only requests whose
+`Host` header is local (DNS-rebinding protection), so the proxy has to send one: nginx's
+`proxy_pass` does by default, Caddy and Cloudflare Tunnel pass the public name through
+unless told otherwise. With Caddy, `/etc/caddy/Caddyfile`:
 
 ```
 pubchem.example.com {
     basic_auth {
         alice <hash from `caddy hash-password`>
     }
-    reverse_proxy 127.0.0.1:8000
+    reverse_proxy 127.0.0.1:8000 {
+        header_up Host {upstream_hostport}
+    }
 }
 ```
 
-Binding to anything but `127.0.0.1` prints a warning. For loopback binds the server
-also rejects requests whose `Host` header is not local (DNS-rebinding protection); for
-other binds it accepts any `Host`, so the proxy is the trust boundary. A Docker image and
-an `--allowed-host` option are on the roadmap if shared servers see use.
+Check the setup with an MCP request through the proxy, not with `/health`, which answers
+even when the `Host` header is wrong and every `/mcp` request gets a 421:
+
+```bash
+curl -si -u alice -X POST https://pubchem.example.com/mcp \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+# HTTP 200 and a "data:" line containing "name":"pubchem-finder": it works.
+# HTTP 421 "Invalid Host header": the proxy does not rewrite Host.
+```
+
+Clients send the same credentials as an `Authorization` header (in Claude Code,
+`claude mcp add --transport http pubchem-finder https://pubchem.example.com/mcp --header "Authorization: Basic ..."`,
+with the header after the name and the URL). `scripts/smoke.py`
+sends none, so it cannot check a server behind authentication. Clients that run in a web
+page are not supported through the proxy: they would also need CORS headers.
+
+With the proxy on another machine, bind to the interface it reaches with `--host`.
+Binding to anything but `127.0.0.1` prints a warning, and the server then accepts any
+`Host`, so the proxy is the trust boundary.
+
+Sharing one server is the least-tested way to run pubchem-finder: a few heavy requests
+can slow everyone down, and the memory limits of containers are not detected. A Docker
+image, an `--allowed-host` option and per-request limits are designed but not scheduled.
+If you run it for a group, or want to, say what you need in
+[#125](https://github.com/MysterionRise/pubchem-finder/issues/125).
 
 **What a shared server shares:**
 
@@ -186,8 +215,7 @@ an `--allowed-host` option are on the roadmap if shared servers see use.
   A full-PubChem index takes tens of seconds to load (and about 17 GB of RAM), so expect
   the first query after a restart to be slow.
 
-Out of scope for now: built-in OAuth, and a Docker image
-([#33](https://github.com/MysterionRise/pubchem-finder/issues/33)).
+Out of scope for now: built-in OAuth.
 
 ## Add your client
 

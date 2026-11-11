@@ -75,6 +75,171 @@ def test_summarize_assays():
     assert summary.pubchem_url.endswith("/2244#section=BioAssay-Results")
 
 
+def _assays(*rows):
+    return {"Table": {"Columns": {"Column": fx.ASSAY_COLUMNS}, "Row": list(rows)}}
+
+
+def test_most_potent_ranks_only_potency_measures():
+    """The micromolar column also holds enzyme rates, plasma levels and solubilities.
+    For quercetin, two Vmax values of a rate assay were listed as its 4th and 5th
+    most potent activities."""
+    summary = parsers.summarize_assays(
+        _assays(
+            fx.assay("200", "Active", "P1", "1", "0.006", "Vmax", "LOX-1 rate"),
+            fx.assay("201", "Active", "P1", "1", "0.052", "Cp", "Plasma level"),
+            fx.assay("202", "Active", "P1", "1", "2.3", "Solubility", "Solubility"),
+            fx.assay("203", "Active", "P1", "1", "0.001", "", "Unnamed value"),
+            fx.assay("204", "Active", "P1", "1", "0.5", "IC50", "X inhibition"),
+            fx.assay("205", "Active", "P1", "1", "0.02", "ki", "X binding"),
+        ),
+        cid=1,
+        top_n=10,
+    )
+    assert [(p.activity_name, p.value_um) for p in summary.most_potent] == [
+        ("ki", 0.02),
+        ("IC50", 0.5),
+    ]
+    assert summary.most_potent[0].target_gene_id == "1"
+    assert summary.top_targets[0].active_assays == 6  # every active assay still counts
+
+
+def test_targets_are_counted_per_gene_across_accessions():
+    """PubChem lists one gene under a UniProt accession, NCBI protein IDs, or none.
+    Each used to be its own target: ESR1 showed 11 active assays of quercetin's 14."""
+    summary = parsers.summarize_assays(
+        _assays(
+            fx.assay("300", "Active", "NP_000116", "2099"),
+            fx.assay("301", "Active", "P03372", "2099"),
+            fx.assay("302", "Active", "", "2099"),
+            fx.assay("302", "Active", "P03372", "2099"),  # one assay, two rows
+            fx.assay("303", "Active", "P04637", "7157"),
+            fx.assay("304", "Active", "P04637", "7157"),
+            fx.assay("305", "Active", "XP_1", ""),  # no gene: the accession is the key
+        ),
+        cid=1,
+    )
+    assert [
+        (t.target_gene_id, t.target_accession, t.active_assays)
+        for t in summary.top_targets
+    ] == [("2099", "P03372", 3), ("7157", "P04637", 2), (None, "XP_1", 1)]
+
+
+def test_rows_without_a_gene_join_the_gene_their_accession_has_elsewhere():
+    """ChEMBL's binding assays carry the accession and no gene, other depositors
+    both. Imatinib showed ABL1 twice in its top five: 141 assays under gene 25 and
+    49 under P00519 alone, where the table supports 190."""
+    summary = parsers.summarize_assays(
+        _assays(
+            fx.assay("400", "Active", "P00519", "25"),
+            fx.assay("401", "Active", "P00519", "", "0.01", "Ki", "ABL1 binding"),
+            fx.assay("402", "Active", "P00519", ""),
+            fx.assay("403", "Unspecified", "P16234", "5156"),  # the gene, not active
+            fx.assay("404", "Active", "P16234", ""),
+            # One accession under two genes is still one protein.
+            fx.assay("405", "Active", "P00760", "615026"),
+            fx.assay("406", "Inactive", "P00760", "780933"),
+            fx.assay("407", "Active", "P00760", ""),
+            fx.assay("408", "Active", "P00760", ""),
+        ),
+        cid=1,
+        top_n=10,
+    )
+    assert [
+        (t.target_gene_id, t.target_accession, t.active_assays)
+        for t in summary.top_targets
+    ] == [
+        ("25", "P00519", 3),
+        ("615026", "P00760", 3),
+        ("5156", "P16234", 1),
+    ]
+    assert [(p.aid, p.target_gene_id) for p in summary.most_potent] == [(401, "25")]
+
+
+def test_a_protein_listed_under_two_gene_ids_is_one_target():
+    """PubChem repeats each row of such a protein once per gene. Isoniazid showed
+    InhA (P9WGR1) twice in its top targets, 5 assays each, and each of its two
+    most potent results twice."""
+    rows = []
+    for aid, value in (("600", "0.05"), ("601", "0.08"), ("602", "")):
+        for gene in ("886523", "45425463"):
+            rows.append(
+                fx.assay(
+                    aid, "Active", "P9WGR1", gene, value, "IC50", "InhA inhibition"
+                )
+            )
+    rows.append(fx.assay("603", "Active", "P9WGR1", ""))
+    # Another protein of the first gene's: the table ties all three together.
+    rows.append(fx.assay("604", "Active", "A0A0H3", "886523"))
+    # Two substances, two values in one assay: both are results.
+    rows.append(fx.assay("605", "Active", "P04637", "7157", "1.5", "IC50", "p53"))
+    rows.append(fx.assay("605", "Active", "P04637", "7157", "2.5", "IC50", "p53"))
+    summary = parsers.summarize_assays(_assays(*rows), cid=3767, top_n=10)
+    assert [
+        (t.target_gene_id, t.target_accession, t.active_assays)
+        for t in summary.top_targets
+    ] == [("886523", "P9WGR1", 5), ("7157", "P04637", 1)]
+    assert [(p.aid, p.value_um, p.target_gene_id) for p in summary.most_potent] == [
+        (600, 0.05, "886523"),
+        (601, 0.08, "886523"),
+        (605, 1.5, "7157"),
+        (605, 2.5, "7157"),
+    ]
+
+
+def test_target_accession_is_uniprots_even_when_only_other_rows_carry_it():
+    """Quercetin's ESR1 was labelled AEP43755 (GenBank): PubChem lists P03372 for
+    gene 2099 in the same table, on rows whose outcome is not active."""
+    summary = parsers.summarize_assays(
+        _assays(
+            fx.assay("500", "Active", "AEP43755", "2099"),
+            fx.assay("501", "Active", "AEP43755", "2099"),
+            fx.assay("502", "Inactive", "P03372", "2099"),
+            fx.assay("503", "Active", "NP_001", "7157"),  # no UniProt anywhere
+        ),
+        cid=1,
+    )
+    assert [(t.target_gene_id, t.target_accession) for t in summary.top_targets] == [
+        ("2099", "P03372"),
+        ("7157", "NP_001"),
+    ]
+
+
+def test_a_result_listed_under_every_subunit_is_one_result():
+    """An assay on a receptor of several proteins has one row per protein, all with
+    the same value. Nicotine's five most potent results were one binding assay
+    (AID 30379, Kd 4.9e-09) five times, once per nAChR subunit."""
+    subunits = [("P04757", "25590"), ("P12389", "25302"), ("P09483", "25591")]
+    rows = [
+        fx.assay("30379", "Active", accession, gene, "4.9e-09", "Kd", "nAChR binding")
+        for accession, gene in subunits
+    ]
+    rows.append(fx.assay("30380", "Active", "P04757", "25590", "0.002", "Ki", "a3"))
+    summary = parsers.summarize_assays(_assays(*rows), cid=89594, top_n=5)
+    assert [(p.aid, p.value_um, p.target_accession) for p in summary.most_potent] == [
+        (30379, 4.9e-09, "P04757"),
+        (30380, 0.002, "P04757"),
+    ]
+    # The subunits are still three targets, each with its assays.
+    assert [(t.target_accession, t.active_assays) for t in summary.top_targets] == [
+        ("P04757", 2),
+        ("P12389", 1),
+        ("P09483", 1),
+    ]
+
+
+def test_target_accession_prefers_the_uniprot_accession_of_active_rows():
+    """Rows with another outcome are asked only when no active row has one."""
+    summary = parsers.summarize_assays(
+        _assays(
+            fx.assay("700", "Active", "P11111", "2099"),
+            fx.assay("701", "Inactive", "P03372", "2099"),
+            fx.assay("702", "Inactive", "P03372", "2099"),
+        ),
+        cid=1,
+    )
+    assert [t.target_accession for t in summary.top_targets] == ["P11111"]
+
+
 def test_summarize_assays_empty_and_malformed():
     empty = {"Table": {"Columns": {"Column": fx.ASSAY_COLUMNS}, "Row": []}}
     summary = parsers.summarize_assays(empty, cid=1)

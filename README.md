@@ -118,7 +118,7 @@ before binding it to anything but `127.0.0.1`.
 |---|---|
 | `pubchem_lookup(query, by, limit)` | Resolve a name, CID, SMILES or InChIKey to PubChem records: identifiers, formula, MW, XLogP, H-bond counts, TPSA, link. |
 | `compound_properties(smiles)` | RDKit descriptors and Lipinski check for any SMILES. Offline. |
-| `standardize(smiles)` | Remove salts and counter-ions, neutralize, canonicalize. Offline. |
+| `standardize(smiles)` | Remove salts and counter-ions, neutralize, canonicalize; says what it removed. Offline. |
 | `compare(smiles_a, smiles_b)` | Tanimoto similarity on ECFP4 and MACCS fingerprints. Offline. |
 | `medchem_profile(smiles)` | QED, synthetic accessibility, Lipinski/Veber, PAINS/Brenk/NIH alerts with atoms, Murcko scaffold. Offline. |
 | `draw_molecules(smiles, legends, highlight, smarts, reference_smiles)` | Structures as an inline image, highlighting a SMARTS match, what changed relative to a reference, or a similarity map. Offline. |
@@ -132,7 +132,7 @@ before binding it to anything but `127.0.0.1`.
 | `pubchem_xrefs(cid)` | Registry IDs (CAS, ChEMBL, DrugBank...), PubMed articles and patents. |
 | `pubchem_description(cid)` | Curated descriptions, with sources. |
 | `pubchem_annotations(cid, heading, max_chars)` | One section of the compound page: GHS classification, hazards, pharmacology, mechanism of action, drug information, experimental properties, toxicity, use, food additives. Every item names its source. |
-| `pubchem_bioactivity(cid)` | Bioassay summary: assay count, outcomes, top targets, most potent active results. |
+| `pubchem_bioactivity(cid)` | Bioassay summary: assay count, outcomes, top targets (one per gene), lowest potency values (IC50, Ki...) among active results. |
 
 ### Prompts and resources
 
@@ -153,7 +153,7 @@ and `pubchem://index/status`.
 ## Use it from the command line
 
 ```bash
-uvx --python 3.14 pubchem-finder lookup caffeine                # PubChem record by name, CID, SMILES or InChIKey
+uvx --python 3.14 pubchem-finder lookup caffeine                # PubChem record by name (--by cid, smiles or inchikey for those)
 uvx --python 3.14 pubchem-finder props "CC(=O)Oc1ccccc1C(=O)O"  # RDKit descriptors (offline)
 ```
 
@@ -194,8 +194,19 @@ radius 2, 1024 bits); `--radius` and `--fp-size` change it for a new index.
 
 `--sdf FILE` (repeatable) indexes your own files, alongside PubChem's chunks or on their
 own. Each file becomes a chunk named after it, so two files with the same name (two
-vendors' `library.sdf`) are refused rather than merged; rename one. Running the command
-again after a file changed rebuilds that file's chunk.
+vendors' `library.sdf`; upper and lower case count as the same) are refused rather than
+merged; rename one. Running the command again after a file changed rebuilds that file's
+chunk and merges it. If the build fails or is stopped between the two, searches still
+answer from the old file: they leave the structures of that file's hits out and say so,
+`index status` lists the chunk under `unmerged_chunks`, and running the build again
+finishes it. A file with no usable record does not replace its chunk, and a file you
+moved keeps its chunk. A record's ID is its `PUBCHEM_COMPOUND_CID` tag or, when that is
+missing or not a number, its title line, and must be a whole number from 1 to
+4,294,967,295; other records are skipped and counted. An ID has to mean one compound
+across the whole index, because a hit is reported by its ID: two files that both number
+their records from 1, or a library numbered from 1 next to PubChem's chunks (where an ID
+is a CID), are refused with the first ID that clashes. The same compound in two files is
+fine.
 
 Substructure search is optional because it needs a second fingerprint database. It is
 built from the SMILES already in the index, so `index build --with-substructure` adds it to
@@ -217,14 +228,14 @@ pubchem-finder pubchem synonyms 2244          # names and CAS numbers
 pubchem-finder pubchem xrefs 2244             # registry IDs, PubMed articles, patents
 pubchem-finder pubchem describe 2244          # curated descriptions with sources
 pubchem-finder pubchem annotations 2244 --heading "GHS Classification"
-pubchem-finder pubchem bioactivity 2244       # assay outcomes, top targets, most potent results
+pubchem-finder pubchem bioactivity 2244       # assay outcomes, top targets, lowest IC50/Ki values
 ```
 
 PubChem's similarity search uses its own fingerprint and does not report scores, so each
 hit is scored here with ECFP4, the same fingerprint as the local index, and sorted by it.
 Successful responses are cached for 7 days, so repeated questions cost nothing and stay
-within PubChem's rate limits (`pubchem-finder cache info | clear`; `PUBCHEM_FINDER_CACHE=0`
-turns the cache off).
+within PubChem's rate limits. `pubchem-finder cache info` shows the cache and
+`pubchem-finder cache clear` empties it; `PUBCHEM_FINDER_CACHE=0` turns it off.
 
 ### Pictures, triage and whole files
 
@@ -309,6 +320,35 @@ To give your own agent the tools instead, talk to the MCP server:
 does it with the plain MCP client in under 50 lines (`uv run examples/mcp_client.py`, no
 API key). Examples for agent frameworks are welcome, see
 [#34](https://github.com/MysterionRise/pubchem-finder/issues/34).
+
+## What leaves your machine
+
+pubchem-finder has no telemetry, no account and no API key. What it sends depends on the
+tool:
+
+- **Nothing:** `compound_properties`, `standardize`, `compare`, `medchem_profile`,
+  `draw_molecules`, `similarity_search`, `substructure_search` and `index_status`, and the
+  commands behind them, run on your machine with RDKit and the local index. A structure
+  you pass to them goes nowhere.
+- **Your query, to PubChem:** the `pubchem_*` tools, `pubchem://compound/{cid}`, `lookup`
+  and the `pubchem` commands send the name, CID, InChIKey or SMILES you asked about to
+  NCBI's PubChem service over HTTPS. Like any web request it comes from your IP address;
+  it carries a `pubchem-finder/<version>` User-Agent and no cookies. Answers are cached
+  in your data directory and reused for 7 days; `cache clear` deletes them.
+- **Downloads:** `index build --limit N` and `--all` fetch PubChem's SDF files from NCBI;
+  `index build --sdf` reads your own files and sends nothing. The first `uvx` run fetches
+  the packages from PyPI.
+
+So to keep a structure confidential, search it with the local tools and do not ask for
+PubChem's live searches on it (`pubchem_similarity_search`, `pubchem_substructure_search`,
+`pubchem_exact_match`, or `pubchem_lookup` by SMILES). The assistant picks the tools, and
+two of the built-in prompts point it at PubChem: `compound_dossier` starts with a lookup,
+and `find_analogues` looks up a name or CID first and offers PubChem's search when only
+the demo set was searched. For a
+confidential structure, say so in your request or switch the `pubchem_*` tools off in
+your client. Your AI assistant is separate from all this: whatever you type into it, and
+whatever the tools return, goes to its provider. A client that shows server icons
+fetches pubchem-finder's from GitHub.
 
 ## Troubleshooting
 

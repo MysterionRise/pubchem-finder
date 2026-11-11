@@ -38,6 +38,7 @@ from .fingerprints import MACCSFingerprint, MorganFingerprint
 from .index import demo
 from .index.builder import DEFAULT_FP_PARAMS
 from .index.engine import LocalIndex, Metric
+from .index.layout import Merged
 from .models import (
     AnnotationSection,
     BioactivitySummary,
@@ -146,14 +147,16 @@ def properties(smiles: str) -> Properties:
 def standardize(smiles: str) -> Standardized:
     """Standardize a structure (cleanup, parent fragment, neutralize)."""
     mol = parse_smiles(smiles)
-    std = _STANDARDIZER.standardize(mol)
+    std = _STANDARDIZER.standardize_detailed(mol)
     if std is None:
         raise MoleculeValidationError(f"Could not standardize {smiles!r}")
-    result = str(Chem.MolToSmiles(std))
+    result = str(Chem.MolToSmiles(std.mol))
     return Standardized(
         input_smiles=smiles,
         smiles=result,
         changed=result != Chem.MolToSmiles(mol),
+        removed=std.removed,
+        note=std.note,
     )
 
 
@@ -189,14 +192,16 @@ def get_index(home: Path | str | None = None) -> LocalIndex:
 
 DEMO_NOTE = (
     "Searched the built-in demo set of {n:,} FDA-approved drugs, not PubChem. "
-    "pubchem_similarity_search and pubchem_substructure_search (`pubchem-finder "
-    "pubchem` in a terminal) search all of PubChem live. No local index is built yet. "
-    "{build}"
+    "pubchem_similarity_search and pubchem_substructure_search (`{live}` in a "
+    "terminal) search all of PubChem live. No local index is built yet. {build}"
 )
 
 
-def _search_index(home: Path | str | None) -> tuple[LocalIndex, str, str | None]:
+def _search_index(
+    home: Path | str | None, live: str = "pubchem similarity SMILES"
+) -> tuple[LocalIndex, str, str | None]:
     """The index a local search uses, its scope and the note for the results.
+    ``live`` is the command that runs the same search over all of PubChem.
 
     The local index once one is built. Until then the built-in demo index (built
     on first use, in about a second), unless PUBCHEM_FINDER_DEMO=0; then the
@@ -207,9 +212,60 @@ def _search_index(home: Path | str | None) -> tuple[LocalIndex, str, str | None]
         return index, "index", None
     demo_index = get_index(demo.ensure_built(index.paths.home))
     note = DEMO_NOTE.format(
-        n=demo_index.manifest.n_compounds, build=hints.build_index(index.paths.home)
+        n=demo_index.manifest.n_compounds,
+        live=hints.command(live),
+        build=hints.build_index(index.paths.home),
     )
     return demo_index, "demo", note
+
+
+_UNMERGED_EFFECT = {
+    "similarity": "hits from there come without a structure",
+    "substructure": "its compounds cannot be checked and are left out",
+    "status": "similarity hits from there come without a structure, substructure "
+    "search leaves its compounds out",
+}
+
+
+def _unmerged_warning(
+    index: LocalIndex,
+    merged: Merged | None,
+    kind: Literal["similarity", "substructure", "status"],
+) -> str | None:
+    """What to tell the user when chunks changed after the index was merged.
+
+    ``merged`` is the merge the answer came from (None: the index on disk now).
+    """
+    stale = index.unmerged(merged)
+    if not stale:
+        return None
+
+    def some(names: list[str]) -> str:
+        more = f" and {len(names) - 3} more" if len(names) > 3 else ""
+        return ", ".join(names[:3]) + more
+
+    rebuilt = [name for name, stats in stale.items() if stats is not None]
+    missing = [name for name, stats in stale.items() if stats is None]
+    what = []
+    if rebuilt:
+        what.append(
+            f"{some(rebuilt)} was indexed again after the last merge (a build "
+            "failed, was stopped, or is still running)"
+        )
+    if missing:
+        what.append(
+            f"{some(missing)} is no longer complete in the chunks directory (a "
+            "build of it is running or was stopped, or its files were removed)"
+        )
+    files = [
+        stats.source.path if stats is not None and stats.source is not None else None
+        for stats in stale.values()
+    ]
+    return (
+        f"The index is behind its files: {'; '.join(what)}. Until a build "
+        f"completes, {_UNMERGED_EFFECT[kind]}, and compounds added since are not "
+        f"found. Finish with {hints.merge_rebuilt(files, index.paths.home)}."
+    )
 
 
 def similarity_search(
@@ -229,9 +285,13 @@ def similarity_search(
         raise PubChemFinderError(f"Unknown metric {metric!r}")
     mol = parse_smiles(smiles)
     index, scope, note = _search_index(home)
-    manifest = index.manifest
-    pairs = index.search(mol, threshold=threshold, top_k=top_k, metric=metric)
-    meta = index.metadata([cid for cid, _ in pairs])
+    # The hits are looked up, and judged, against the merge that gave them: a
+    # build can finish between the two steps.
+    pairs, merged = index.search_merged(
+        mol, threshold=threshold, top_k=top_k, metric=metric
+    )
+    manifest = merged.manifest
+    meta = index.metadata([cid for cid, _ in pairs], merged)
     hits = [
         SimilarityHit.model_validate(
             {**meta.get(cid, {}), "cid": cid, "similarity": sim}
@@ -248,6 +308,7 @@ def similarity_search(
         note=note,
         hits=hits,
         scaffolds=medchem.group_by_scaffold(hits) if group_by_scaffold else None,
+        warning=_unmerged_warning(index, merged, "similarity"),
     )
 
 
@@ -264,17 +325,18 @@ def substructure_search(
     if max_candidates < 1:
         raise PubChemFinderError("max_candidates must be at least 1")
     mol = parse_query(query, query_type)
-    index, scope, note = _search_index(home)
+    index, scope, note = _search_index(home, live="pubchem substructure SMILES")
     found = index.substructure(mol, max_hits=max_hits, max_candidates=max_candidates)
-    sub = index.manifest.substructure
-    warning = None
+    sub = found.merged.manifest.substructure
+    warnings = [_unmerged_warning(index, found.merged, "substructure")]
     if sub is not None and sub.rdkit_version != rdkit.__version__:
-        warning = (
+        warnings.append(
             f"The substructure index was built with RDKit {sub.rdkit_version}, but "
             f"RDKit {rdkit.__version__} is running. Pattern fingerprints can differ "
             "between releases, so matches may be missing. Rebuild it with "
             f"{hints.add_substructure(index.paths.home)}."
         )
+    warning = " ".join(w for w in warnings if w) or None
     return SubstructureResults(
         query=query,
         query_type=query_type,
@@ -294,7 +356,8 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
     index = get_index(home)
     paths = index.paths
     built = paths.completed_chunks()
-    manifest = paths.load_manifest()
+    merged = paths.read_manifest()
+    manifest = merged.manifest if merged is not None else None
     demo_compounds = int(demo.provenance()["n_compounds"]) if demo_enabled() else 0
     if manifest is None:
         until_then = (
@@ -312,6 +375,21 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
             hint=hints.build_index(paths.home) + until_then,
         )
     sub = manifest.substructure if paths.pattern_fingerprints.exists() else None
+    hint_parts = [
+        _unmerged_warning(index, merged, "status"),
+        None
+        if sub is not None
+        else (
+            f"Substructure search is off; add it with {hints.add_substructure(paths.home)}."
+        ),
+    ]
+    if manifest.chunk_builds is None and any(c.source is not None for c in built):
+        hint_parts.insert(
+            1,
+            "This index was merged by pubchem-finder 2.2.1 or earlier, which could "
+            "miss a file that had been indexed again; the next `index build` merges "
+            "it once more to be sure.",
+        )
     return IndexStatus(
         state="ready",
         home=str(paths.home),
@@ -323,6 +401,7 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
         memory_bytes=manifest.memory_bytes(),
         chunks_in_index=len(manifest.chunks),
         chunks_built=len(built),
+        unmerged_chunks=list(index.unmerged(merged)),
         loaded=index.loaded,
         mode=None
         if index.in_memory is None
@@ -334,11 +413,7 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
         substructure_memory_bytes=sub.memory_bytes() if sub is not None else 0,
         search_scope="index",
         demo_compounds=demo_compounds,
-        hint=None
-        if sub is not None
-        else (
-            f"Substructure search is off; add it with {hints.add_substructure(paths.home)}."
-        ),
+        hint=" ".join(part for part in hint_parts if part) or None,
     )
 
 
@@ -465,6 +540,15 @@ _XREF_PATENTS = ("PatentID",)
 _XREF_OTHERS = tuple(t for t in XREF_TYPES if t not in _XREF_PATENTS)
 
 
+def _require_compound(cid: int) -> None:
+    """Raise ``CompoundNotFound`` unless PubChem has ``cid``.
+
+    PubChem answers "no such compound" and "a compound without this data" with the
+    same 404, so an empty result is checked once; the answer is cached.
+    """
+    get_client().lookup(str(cid), by="cid", limit=1)
+
+
 def _xrefs(cid: int, types: tuple[str, ...]) -> dict[str, list[str]]:
     try:
         payload = get_client().compound_json(cid, "xrefs/" + ",".join(types))
@@ -478,18 +562,25 @@ def _xrefs(cid: int, types: tuple[str, ...]) -> dict[str, list[str]]:
 def pubchem_xrefs(cid: int, sample: int = 10) -> CrossRefs:
     """Registry IDs, PubMed articles and patents linked to a CID.
 
-    When only the patent request times out or PubChem is busy, the other types are
-    still returned and patents are listed in ``unavailable``.
+    When only the patent request fails (PubChem runs out of time, is busy, or its
+    answer cannot be read), the other types are still returned, patents are listed
+    in ``unavailable`` and ``note`` says why.
     """
     if not 1 <= sample <= 100:
         raise BadQuery("sample must be between 1 and 100")
     refs = _xrefs(cid, _XREF_OTHERS)
     unavailable: list[str] = []
+    note: str | None = None
     try:
         refs |= _xrefs(cid, _XREF_PATENTS)
-    except (PubChemTimeout, PubChemUnavailable) as exc:
+    except BadQuery:
+        raise
+    except PubChemError as exc:
         logger.warning("patents for CID %d left out: %s", cid, exc)
         unavailable = list(_XREF_PATENTS)
+        note = _patents_note(exc)
+    if not any(refs.values()):
+        _require_compound(cid)
     return CrossRefs(
         cid=cid,
         counts={t: len(v) for t, v in refs.items()},
@@ -498,14 +589,21 @@ def pubchem_xrefs(cid: int, sample: int = 10) -> CrossRefs:
             f"https://pubmed.ncbi.nlm.nih.gov/{p}/" for p in refs["PubMedID"][:sample]
         ],
         unavailable=unavailable,
-        note=(
-            "PubChem did not return the patent list in time (it is very long for "
-            "well-studied compounds); the other identifiers are complete. Ask again "
-            "later for patents."
-            if unavailable
-            else None
-        ),
+        note=note,
     )
+
+
+def _patents_note(exc: PubChemError) -> str:
+    rest = "The other identifiers are complete."
+    if isinstance(exc, PubChemTimeout):
+        return (
+            "PubChem ran out of time listing the patents. It stops after 30 seconds, "
+            "and for the most-patented compounds (water, ethanol) the list takes "
+            f"longer every time, so asking again may not help. {rest}"
+        )
+    if isinstance(exc, PubChemUnavailable):
+        return f"PubChem was too busy to list the patents; ask again later. {rest}"
+    return f"The patent list could not be read ({exc}); ask again later. {rest}"
 
 
 def pubchem_description(cid: int) -> Description:
@@ -523,6 +621,7 @@ def pubchem_bioactivity(cid: int) -> BioactivitySummary:
     try:
         payload = get_client().compound_json(cid, "assaysummary")
     except CompoundNotFound:
+        _require_compound(cid)  # untested, or not a compound at all?
         return BioactivitySummary(
             cid=cid,
             tested=False,

@@ -340,6 +340,10 @@ async def test_find_analogues_prompt():
     )
     assert "similarity_search with threshold=0.7 and group_by_scaffold=true" in text
     assert 'search_scope is "demo"' in text
+    # PubChem's search sends the structure there: offered, not run unasked.
+    assert "offer to run pubchem_similarity_search" in text
+    assert "ask first" in text
+    assert "also run" not in text
     default = await text_of("find_analogues", {"compound": "ibuprofen"})
     assert "threshold=0.6" in default
 
@@ -361,6 +365,9 @@ async def test_triage_structures_prompt():
     assert "medchem_profile" in listed
     empty = await text_of("triage_structures", {})
     assert "ask me for them as SMILES" in empty
+    # The assistant has to pass on what standardizing changed.
+    assert "say what it removed" in listed
+    assert "pass its note on" in listed
 
 
 # --- Resources ----------------------------------------------------------------
@@ -386,7 +393,18 @@ async def test_compound_resource(pubchem_api):
     assert result.contents[0].mime_type == "application/json"
 
 
-@pytest.mark.parametrize("cid", ["999999999", "abc", "0"])
+async def test_compound_resource_reads_a_zero_padded_cid(pubchem_api):
+    """The length limit used to count the padding: 11 or more digits were refused."""
+    import json
+
+    async with Client(mcp) as client:
+        result = await client.read_resource("pubchem://compound/00000002244")
+    assert json.loads(result.contents[0].text)["cid"] == 2244
+
+
+@pytest.mark.parametrize(
+    "cid", ["999999999", "abc", "0", "%C2%B2", "%D9%A3", "9" * 400]
+)  # the two escapes are superscript two and an Arabic-Indic three
 async def test_missing_compound_resource_is_not_found(pubchem_api, cid):
     from mcp.shared.exceptions import MCPError
 

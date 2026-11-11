@@ -17,13 +17,13 @@
       ]
     }
   ],
-  "version": "2.2.1",
+  "version": "2.2.2",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "pubchem-finder",
-      "version": "2.2.1",
+      "version": "2.2.2",
       "runtimeHint": "uvx",
       "runtimeArguments": [
         {

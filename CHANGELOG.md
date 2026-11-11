@@ -6,6 +6,200 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.2.2] - 2026-11-11
+
+### Fixed
+
+- `pubchem_bioactivity` listed measurements that are not potencies among a compound's
+  "most potent" results (#103). PubChem puts every value reported in micromolar into
+  one column, so enzyme rates (Vmax, Km), plasma concentrations and solubilities were
+  ranked with IC50 and Ki values: for quercetin, two Vmax values came 4th and 5th. Only
+  IC50, EC50, AC50, Potency, Ki, Kd, ID50, ED50, MIC and GI50 are ranked now, each
+  result carries its gene ID, and the descriptions say "lowest potency-type values"
+  and to check the assay. Which measures belong on that list is open in #101.
+- `top_targets` counts each gene once (#103). PubChem lists a gene under a UniProt
+  accession, NCBI protein IDs or none, and each spelling was a separate target, so
+  counts were too low and real top targets dropped out: for quercetin, ESR1 now has
+  14 active assays (was 11) and CYP1A2 is back in the top five. A row that gives the
+  accession without a gene is counted under the gene the same table gives for that
+  accession (ChEMBL's rows often lack it): imatinib listed ABL1 twice, with 141 and
+  49 assays, and now once with 190. A protein that PubChem lists under two gene IDs
+  (isoniazid's InhA, calmodulin) is one target as well, and `most_potent` lists a
+  result once however many rows repeat it: per gene, or per protein of a receptor
+  (nicotine's top five were one binding assay, once per nAChR subunit). The accession
+  shown for a gene is UniProt's whenever the table has one, also when only non-active
+  rows carry it.
+- A CID that PubChem does not have is "not found" (#104). `pubchem_lookup` by CID and
+  `pubchem://compound/{cid}` returned an empty record, `pubchem_bioactivity` said "not
+  tested" and `pubchem_xrefs` reported zero references, because PubChem answers a
+  missing compound and a compound without data alike. The same holds for a lookup by
+  SMILES or InChIKey of a structure PubChem does not have, which returned a record
+  with CID 0 and a link to `/compound/0`: it now raises `CompoundNotFound`, so code
+  that tested for `cid == 0` or an empty title has to catch that instead. A lookup of
+  several CIDs at once returns the ones that exist and leaves the others out.
+- `lookup` says how to look up something that is not a name. `lookup 2244` and
+  `lookup <SMILES>` answered "No CID found ... the given name"; the error now adds
+  `--by cid`, `--by smiles` or `--by inchikey`, and the README shows it.
+- `draw_molecules` with `highlight="diff"` (and `draw --highlight diff`) no longer
+  marks almost the whole molecule as changed. The common-substructure search has a
+  2-second limit, and when it ran out the few atoms found so far were taken for the
+  answer: dolutegravir drawn against cabotegravir had 28 of its 30 atoms highlighted,
+  where 5 differ. About one analogue pair in eleven hit the limit. A search that was
+  cut short is no longer used; a second method (RDKit's RASCAL, which answers for
+  close analogues in milliseconds) is asked instead. It is not asked about
+  macrocycles, not believed when its answer is implausibly small, and not asked when
+  the first search was stopped by a busy machine without having worked (that search
+  is repeated once); then, and with RDKit 2024.09, the panel has no highlights and
+  its caption says "difference not computed". Stereoisomers and other molecules with
+  the same atoms and bonds need no search at all. In Python,
+  `drawing.diff_highlights` now returns a third list, the positions of the panels
+  that were not computed.
+- `highlight="diff"` no longer shows a changed ring as unchanged, or a molecule that
+  shares nothing with the reference as identical to it. An aromatic ring matched a
+  saturated one (a phenyl that became cyclohexyl was drawn without any highlight),
+  and a molecule with no common substructure was drawn blank, like an exact copy.
+  Atoms whose ring went from aromatic to saturated, or back, are now highlighted, and
+  a molecule that shares nothing is highlighted whole.
+- `standardize` keeps sulfoxides as `S=O`. RDKit's cleanup redraws them `[S+]-[O-]`,
+  so the "standardized" omeprazole no longer matched omeprazole: 0.63 against itself
+  in a similarity search, no substructure hit, a different QED and a Brenk alert for
+  a charged sulfur that the drug does not have. 15 of the 1,932 demo drugs were
+  affected, and the `triage_structures` prompt standardizes before it profiles.
+- `standardize` no longer returns the counter-ion or a ligand as the parent. For
+  pyrantel pamoate it returned pamoic acid, for diatrizoate meglumine the meglumine
+  and for fosfomycin tromethamine the tromethamine (RDKit's "largest fragment" counts
+  hydrogens); cisplatin came back as ammonia, carboplatin and oxaliplatin as their
+  ligands, sodium chloride as HCl. The parent is now the organic component with the
+  most heavy atoms, passing over about 70 common salt formers and solvents (pamoate,
+  meglumine, tromethamine, tartrate, citrate, benzathine, carbonate, ethanol) while
+  the input has another. A compound of a metal other than an alkali or alkaline-earth metal,
+  drawn with bonds or as ions, and an input with nothing organic in it are returned
+  as given with a `note`. The new `removed` field lists every fragment left out, and
+  the note says when one of them is an organic component that is not a common
+  counter-ion (the other half of a two-drug mixture) or a metal such as lithium. The
+  CLI prints both on stderr, and batch output gains `removed` and `note` columns.
+  Salts of zinc, iron, silver or bismuth are no longer stripped to the acid: they
+  come back as given, with the note. In Python,
+  `MoleculeStandardizer.standardize_detailed` returns the same three parts, and the
+  `triage_structures` prompt tells the assistant to pass `removed` and `note` on.
+- `index build --sdf` could leave an index that searched an old version of a file while
+  reporting it ready (#102). 2.2.1 rebuilt the chunk of a changed file but decided whether to
+  merge from what the same run had done, so a rebuild that failed part-way (a full disk,
+  Ctrl+C, a damaged file) was followed by a run that merged nothing. Each chunk build
+  now has an id, the index records the ids it holds, and `index build` merges whenever
+  they differ. An index that 2.2.1 merged from `--sdf` files is merged once more the
+  next time it is built on, which repairs one already in that state; the build says
+  that this is why it merges.
+- `index build --sdf` refuses files in which one ID stands for different compounds.
+  A hit's structure is looked up by its ID, so two vendor files that each number their
+  records from 1, a file that uses an ID twice, or a library numbered from 1 next to
+  PubChem's chunks were merged without a word and then searched wrongly: aspirin came
+  back with paracetamol's structure at similarity 1.000, and a benzene substructure
+  search found 2 of the 4 compounds containing it. The build now stops before merging,
+  names the ID, both structures and both files, and says which file to renumber. The
+  same compound in two files is still merged, also when they draw it differently
+  (Kekulé or aromatic, acid or anion, with or without stereo); a salt and its parent,
+  or two tautomers, are different compounds here. An index built earlier from such
+  files stays as it is until its next build.
+- A rebuilt `--sdf` chunk is no longer read together with the fingerprints of the file
+  it replaced. Its records went live when its files were swapped in, while the index
+  kept the old fingerprints until the merge: after a build that failed or was stopped
+  in between (and for a running server, during every rebuild), a hit carried whatever
+  structure the new file had under the same ID, and `index status` said ready. With
+  IDs that were renumbered between exports, a search for aspirin returned caffeine's
+  structure at similarity 1.000. Searches now leave such a chunk's structures out and
+  carry a `warning` saying which file to build again (batch mode prints it once on
+  stderr); `index status` lists it in `unmerged_chunks`; a build that fails after
+  replacing chunks merges them before it reports the failure; and a failed merge no
+  longer says "The current index is unchanged" when a chunk was replaced. Hits are
+  judged against the merge that produced them, so a build that finishes between a
+  search and the lookup of its hits cannot pair them either, and a substructure search
+  that had to leave candidates out no longer calls itself exhaustive.
+- An `--sdf` file whose name contains `[`, `*` or `?` is read back by that name. The
+  chunk files of `lib[1].sdf` were looked up as a pattern, which matches `lib1` and
+  not `lib[1]`: its hits came back without a structure, or with the structure
+  `lib1.sdf` has under the same ID.
+- A chunk being rebuilt is replaced only when its new files are complete, and every
+  check runs first (#102). 2.2.1 deleted the old chunk up front, so a build that was then
+  refused (for example because RDKit had changed since the other chunks were built) or
+  that failed had already lost it. A failed build also leaves no `.tmp` files behind.
+- A file with no usable record does not replace a chunk that has some. An export that
+  failed (0 bytes, a saved error page) or whose IDs were no longer numbers was
+  fingerprinted into an empty chunk that took the place of the last good one: with one
+  library the index stayed "ready" on fingerprints without records and every later
+  build failed with "No built chunks"; with several, the library left the index
+  without a word. The build now stops, keeps the chunk and says how to take the
+  library out of the index if that is what was meant.
+- `index build --sdf` keeps the chunk of a file that only moved (same size and
+  modification time) instead of refusing it, compares chunk names without case
+  (`Library.sdf` and `library.sdf` are the same files on macOS and Windows), and says
+  so when one file is given twice. Chunks that already exist keep their spelling, so
+  an index holding both `Library` and `library` (possible on Linux until now) still
+  builds. A chunk built by 2.2.0 or earlier does not record its file and is rebuilt
+  once from the file passed for it, as in 2.2.1. When the file a chunk was built from
+  is gone and another one has its name, the refusal says where to put the new file to
+  replace the chunk, instead of "Rename one of them".
+- `index build` warns when a merge leaves out a chunk that is in the index but no
+  longer complete on disk (a rebuild killed in the middle of its swap), and says so
+  when it finishes a substructure build that an earlier run started.
+- `index build --sdf` skips records whose ID the index cannot hold (#105). FPSim2 keeps
+  IDs as 32-bit numbers, so an in-house registry number above 4,294,967,295 was indexed
+  under that number modulo 2^32: a search returned another compound's ID, with its
+  PubChem link, at similarity 1.0. Such records are now counted as skipped, also when
+  the title line holds another number. IDs must be plain digits: `²` and other
+  non-ASCII digits are no longer read as numbers, here or in `pubchem://compound/{cid}`;
+  leading zeros are fine. Upgrading does not repair an index built from such a file:
+  `index build --sdf` on the unchanged file keeps its chunk. Save the file again (or
+  `touch` it) so the chunk is rebuilt, or build in a new `--home`.
+- `index build --sdf` says why records were skipped when their IDs are the reason,
+  naming the first one. ChEMBL, ZINC and vendor files, whose IDs are not numbers, used
+  to end in "0 compounds" and "No built chunks" with nothing else.
+- A name that is not UTF-8 on a record's title line (a Windows-1252 `±` or `µ`) no
+  longer stops `index build --sdf` when the ID is in the `PUBCHEM_COMPOUND_CID` tag;
+  a field that cannot be read is left empty.
+- A cut-off or damaged `.sdf.gz` is reported as that, with the file's name, instead of
+  as `<Boost.Python.function object at 0x...> returned a result with an exception set`.
+- Substructure search is no longer dropped when its merge is interrupted (#120). The
+  index goes without it while the pattern database is merged; a build stopped there
+  used to come back without substructure search, call itself up to date, and delete
+  the per-chunk pattern data on the next build that added compounds. Running the build
+  again now finishes it, and only `--without-substructure` removes pattern data
+  (including what an unfinished `--with-substructure` left behind). A failed pattern
+  merge no longer says the index is unchanged.
+- `pubchem_xrefs` keeps the registry IDs and PubMed articles when the patent request
+  fails for any reason, not only a timeout: a dropped connection, a 500 or 502, or a
+  cut-off answer used to fail the whole call. The note says why patents are missing,
+  and that for the most-patented compounds (water, ethanol) PubChem's 30-second limit
+  is reached every time.
+- Two messages told people to run a bare `pubchem-finder ...` command, which most
+  users, who start the server through `uvx`, do not have: the note on searches of the
+  demo set, and the advice after an RDKit or FPSim2 upgrade. Both now give the full
+  `uvx` command for the running version, the note names the command for the search
+  that ran (similarity or substructure), and the upgrade advice also fits indexes
+  built from your own files.
+- The Caddy example in docs/clients.md could not work: with the server on its default
+  loopback bind, Caddy passed the public `Host` header through and every MCP request
+  was refused with a 421, while the suggested `/health` check still passed. The example
+  now rewrites `Host`, and the check is an MCP request sent through the proxy with
+  `curl`. The page also says how clients send the proxy's credentials and that clients
+  running in a web page are not supported through it.
+
+### Changed
+
+- README: a "What leaves your machine" section says which tools send what to PubChem
+  and which send nothing, and which of the built-in prompts point the assistant at
+  PubChem. docs/clients.md marks sharing one server over HTTP as experimental and
+  points to #125. ROADMAP.md follows the new milestones.
+- Requests to PubChem no longer return NCBI's session cookie. A long-running server
+  shares one HTTP client, so every later request of that server, for every user of a
+  shared one, went out under the same session ID.
+- The `find_analogues` prompt offers PubChem's live search when only the demo set was
+  searched and asks first, instead of running it: that search sends the structure to
+  PubChem.
+- docs/clients.md and `examples/mcp_client.py` build the first index with
+  `--with-substructure`, as the README does; without it, substructure search stopped
+  working once the index replaced the demo set.
+
 ## [2.2.1] - 2026-11-04
 
 ### Fixed
@@ -31,9 +225,9 @@ All notable changes to this project are documented here. The format follows
 - `index build --sdf` no longer loses compounds when files share a name. Each file becomes
   a chunk named after it, so `--sdf vendor_a/library.sdf --sdf vendor_b/library.sdf`
   kept only one of them, while reporting both as built, and a file with the same name
-  in a later run replaced the first. Both are now refused with a message that says to
-  rename one. Chunks record the file they were built from, and running the command
-  again after a file changed rebuilds its chunk instead of skipping it as already built.
+  in a later run was skipped as already built. Both are now refused with a message that
+  says to rename one. Chunks record the file they were built from, and running the
+  command again after a file changed rebuilds its chunk instead of skipping it.
 - `pubchem_xrefs` no longer fails for well-studied compounds when PubChem runs out of
   time listing their patents (#90): patents, most of the response (3.1 of 3.6 MB for
   aspirin), are fetched on their own, and if that request times out the registry IDs and
@@ -250,7 +444,8 @@ with a local index you can build on a laptop.
 An Indigo + Elasticsearch indexer for PubChem SDF dumps. It was never released as a
 package.
 
-[Unreleased]: https://github.com/MysterionRise/pubchem-finder/compare/v2.2.1...HEAD
+[Unreleased]: https://github.com/MysterionRise/pubchem-finder/compare/v2.2.2...HEAD
+[2.2.2]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.2.2
 [2.2.1]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.2.1
 [2.2.0]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.2.0
 [2.1.1]: https://github.com/MysterionRise/pubchem-finder/releases/tag/v2.1.1

@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from . import __version__, batch, service
 from .config import HOME_ENV, resolve_home
 from .core.exceptions import InvalidInput, PubChemFinderError
-from .data.pug_rest import ANNOTATION_HEADINGS, AnnotationHeading
+from .data.pug_rest import ANNOTATION_HEADINGS, AnnotationHeading, CompoundNotFound
 from .models import RemoteSearchResults, SubstructureResults
 
 app = typer.Typer(
@@ -137,16 +137,28 @@ def _main(
     pass
 
 
-def _emit(model: BaseModel, as_json: bool) -> None:
+def _emit(model: BaseModel, as_json: bool, lists: tuple[str, ...] = ()) -> None:
+    """Print a model as JSON, or one "field value" line per field. A list is
+    printed only when it is named in ``lists`` and has something in it."""
     if as_json:
         typer.echo(model.model_dump_json(indent=2))
         return
     for key, value in model.model_dump().items():
+        if isinstance(value, list) and value and key in lists:
+            value = ", ".join(str(item) for item in value)
         if value is None or isinstance(value, list):
             continue
         if isinstance(value, float):
             value = f"{value:.3f}"
         typer.echo(f"{key:<20} {value}")
+
+
+def _warn_once(warning: str | None, seen: list[str]) -> None:
+    """Batch mode: a warning goes to stderr the first time a row meets it; the
+    output file has no place for it."""
+    if warning and warning not in seen:
+        seen.append(warning)
+        typer.echo(f"warning: {warning}", err=True)
 
 
 def _fail(exc: Exception) -> None:
@@ -164,6 +176,15 @@ def lookup(
     """Look a compound up in PubChem."""
     try:
         result = service.lookup(query, by=by.value, limit=limit)
+    except CompoundNotFound as exc:
+        hint = (
+            " QUERY was read as a name; for a CID, SMILES or InChIKey add "
+            "--by cid, --by smiles or --by inchikey."
+            if by is By.name
+            else ""
+        )
+        _fail(PubChemFinderError(f"{exc}.{hint}" if hint else str(exc)))
+        return
     except PubChemFinderError as exc:
         _fail(exc)
         return
@@ -216,9 +237,17 @@ def standardize(
 
         def one(row: batch.InputRow) -> list[dict[str, Any]]:
             result = service.standardize(row.smiles)
-            return [{"standardized_smiles": result.smiles, "changed": result.changed}]
+            return [
+                {
+                    "standardized_smiles": result.smiles,
+                    "changed": result.changed,
+                    "removed": ".".join(result.removed),
+                    "note": result.note or "",
+                }
+            ]
 
-        _run_batch(input_file, output, ["standardized_smiles", "changed"], one)
+        columns = ["standardized_smiles", "changed", "removed", "note"]
+        _run_batch(input_file, output, columns, one)
         return
     try:
         result = service.standardize(smiles or "")
@@ -227,8 +256,12 @@ def standardize(
         return
     if as_json:
         typer.echo(result.model_dump_json(indent=2))
-    else:
-        typer.echo(result.smiles)
+        return
+    typer.echo(result.smiles)
+    if result.removed:
+        typer.echo(f"removed: {'.'.join(result.removed)}", err=True)
+    if result.note:
+        typer.echo(f"note: {result.note}", err=True)
 
 
 @app.command()
@@ -267,6 +300,7 @@ def search(
     With no index built, searches the built-in demo set of FDA-approved drugs.
     """
     if _batch_requested(smiles, input_file):
+        warned: list[str] = []
 
         def one(row: batch.InputRow) -> list[dict[str, Any]]:
             found = service.similarity_search(
@@ -276,6 +310,7 @@ def search(
                 metric=metric.value,
                 home=home,
             )
+            _warn_once(found.warning, warned)
             return [
                 {"rank": rank, **hit.model_dump()}
                 for rank, hit in enumerate(found.hits, start=1)
@@ -300,6 +335,8 @@ def search(
         return
     if result.note:
         typer.echo(f"note: {result.note}", err=True)
+    if result.warning:
+        typer.echo(f"warning: {result.warning}", err=True)
     typer.echo(
         f"{len(result.hits)} hit(s) >= {result.threshold} {result.metric} "
         f"among {result.n_indexed:,} compounds ({result.fingerprint})"
@@ -358,11 +395,14 @@ def substructure(
         )
 
     if _batch_requested(query, input_file):
+        warned: list[str] = []
 
         def one(row: batch.InputRow) -> list[dict[str, Any]]:
+            found = run(row.smiles)
+            _warn_once(found.warning, warned)
             return [
                 {"rank": rank, **hit.model_dump()}
-                for rank, hit in enumerate(run(row.smiles).hits, start=1)
+                for rank, hit in enumerate(found.hits, start=1)
             ]
 
         _run_batch(input_file, output, SUBSTRUCTURE_COLUMNS, one)
@@ -375,11 +415,13 @@ def substructure(
     if as_json:
         typer.echo(result.model_dump_json(indent=2))
         return
-    more = (
-        ""
-        if result.exhaustive
-        else " (more may exist; raise --max or --max-candidates)"
-    )
+    if result.exhaustive:
+        more = ""
+    elif result.n_checked == result.n_candidates:
+        # Every candidate was looked at, and some had no structure to check.
+        more = " (more may exist; see the warning)"
+    else:
+        more = " (more may exist; raise --max or --max-candidates)"
     typer.echo(
         f"{len(result.hits)} hit(s){more}; {result.n_candidates:,} of "
         f"{result.n_indexed:,} compounds passed the screen, {result.n_checked:,} checked"
@@ -712,13 +754,12 @@ def index_build(
                     for n in names
                 ]
                 report = build_chunks(paths, sources, workers, params, say)
-        manifest = finalize(
-            paths,
-            say,
-            force=bool(report.rebuilt),
-            substructure=with_substructure,
-            workers=workers,
-        )
+    except (PubChemFinderError, OSError) as exc:
+        _merge_rebuilt_chunks(paths, say, workers)
+        _fail(exc)
+        return
+    try:
+        manifest = finalize(paths, say, substructure=with_substructure, workers=workers)
     except (PubChemFinderError, OSError) as exc:
         _fail(exc)
         return
@@ -728,6 +769,28 @@ def index_build(
         f"{len(manifest.chunks)} chunk(s){extra}, {len(report.built)} built this run, "
         f"in {paths.home}"
     )
+
+
+def _merge_rebuilt_chunks(paths: Any, say: Callable[[str], None], workers: int) -> None:
+    """After a build that failed part-way: merge the chunks it had replaced by then.
+
+    Their new records are on disk while the index still holds the fingerprints of
+    the files they replaced. Nothing is merged when the failed build replaced
+    nothing: chunks that are only new wait for a build that succeeds.
+    """
+    from .index.builder import finalize, rebuilt_since_merge
+
+    try:
+        rebuilt = rebuilt_since_merge(paths)
+        if not rebuilt:
+            return
+        say(
+            f"{', '.join(rebuilt)}: indexed again before the build failed; merging "
+            "so that the index matches the files"
+        )
+        finalize(paths, say, workers=workers)
+    except (PubChemFinderError, OSError, ValueError) as exc:
+        say(f"error: {exc}")
 
 
 def _build_demo(home: Path, say: Callable[[str], None]) -> None:
@@ -753,7 +816,7 @@ def index_status_cmd(home: HomeOpt = None, as_json: JsonFlag = False) -> None:
     except (PubChemFinderError, OSError, ValueError) as exc:  # e.g. a damaged manifest
         _fail(exc)
         return
-    _emit(status, as_json)
+    _emit(status, as_json, lists=("unmerged_chunks",))
 
 
 def _emit_hits(result: RemoteSearchResults, as_json: bool) -> None:
@@ -863,9 +926,9 @@ def pubchem_xrefs(
         sample = ", ".join(result.samples[kind][:5])
         typer.echo(f"{kind:<11} {count:>7,}  {sample}")
     for kind in result.unavailable:
-        typer.echo(
-            f"{kind:<11} {'?':>7}  (PubChem did not answer in time; try again later)"
-        )
+        typer.echo(f"{kind:<11} {'?':>7}  (not available)")
+    if result.note:
+        typer.echo(result.note, err=True)
 
 
 @pubchem_app.command("describe")
