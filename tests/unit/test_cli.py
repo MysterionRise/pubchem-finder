@@ -155,12 +155,25 @@ def test_index_build_refuses_two_files_with_one_name(tmp_path, same_named):
 
 
 def test_index_build_refuses_a_file_that_would_replace_another(tmp_path, same_named):
+    import shutil
+
     home = tmp_path / "home"
     assert _sdf_build(home, same_named[0]).exit_code == 0
     result = _sdf_build(home, same_named[1])
     assert result.exit_code == 1
     assert "already holds" in result.output
     assert 2244 in _cids(home)  # vendor A's compounds are still there
+
+    # The way to replace it, as the message gives it: the advice used to stop at
+    # "copy the new file over it", after which the same command was refused again.
+    first = same_named[0].resolve()
+    assert f"copy the new file over it and build from {first}" in result.output
+    shutil.copyfile(same_named[1], same_named[0])
+    assert _sdf_build(home, same_named[1]).exit_code == 1
+    assert _sdf_build(home, same_named[0]).exit_code == 0
+    cids = _cids(home)
+    assert 1983 in cids
+    assert 2244 not in cids
 
 
 def test_index_build_rebuilds_a_changed_file(tmp_path, same_named, sample_sdfs):
@@ -274,6 +287,55 @@ def test_file_without_usable_records_does_not_replace_its_chunk(
     )
     hit = json.loads(found.output)["hits"][0]
     assert (hit["cid"], hit["smiles"]) == (2244, "CC(=O)Oc1ccccc1C(=O)O")
+
+
+@pytest.mark.parametrize("with_another_chunk", [False, True])
+def test_the_way_out_of_an_empty_file_is_one_that_works(
+    tmp_path, sample_sdfs, with_another_chunk
+):
+    """The refusal said "delete library.json and build again" whatever the index
+    held. With one library that build fails too ("nothing to finalize"), and the
+    index went on answering from the old fingerprints, without a way forward."""
+    import shutil
+
+    from tests.conftest import CHUNK_A, write_sdf
+
+    home = tmp_path / "home"
+    library = write_sdf(tmp_path / "library.sdf", CHUNK_A, gz=False)
+    files = [library]
+    if with_another_chunk:
+        files.append(shutil.copyfile(sample_sdfs[1], tmp_path / "other.sdf.gz"))
+    assert _sdf_build(home, *files).exit_code == 0
+    library.write_bytes(b"")
+    refused = _sdf_build(home, *files)
+    assert refused.exit_code == 1
+    stats = home / "chunks" / "library.json"
+
+    if with_another_chunk:
+        assert f"delete {stats} and build again" in refused.output
+        stats.unlink()
+        result = _sdf_build(home, *files)
+        assert result.exit_code == 0, result.output
+        cids = _cids(home)
+        assert 1983 in cids
+        assert 2244 not in cids
+        return
+    advice = f"delete {home / 'index'} and {home / 'chunks'}"
+    assert f"It is all this index holds: to remove the index instead, {advice}" in (
+        refused.output
+    )
+    assert "build again" not in refused.output
+    # Deleting the stats file all the same: the build says what state that leaves.
+    stats.unlink()
+    result = _sdf_build(home, *files)
+    assert result.exit_code == 1
+    assert "nothing to finalize" in result.output
+    assert "The index still answers from the earlier build of library" in result.output
+    assert f"or {advice} to remove the index" in result.output
+    shutil.rmtree(home / "index")
+    shutil.rmtree(home / "chunks")
+    status = runner.invoke(app, ["index", "status", "--home", str(home), "--json"])
+    assert json.loads(status.output)["state"] == "not_built"
 
 
 def test_rebuild_from_a_damaged_file_leaves_the_chunk_as_it_was(
@@ -540,6 +602,31 @@ def test_index_build_rebuilds_a_changed_file_with_two_workers(
     assert 2244 not in cids
 
 
+def test_a_rebuild_on_an_index_merged_by_2_2_1_gives_its_own_reason(
+    tmp_path, same_named, sample_sdfs
+):
+    """ "merging once more: ... 2.2.1 or earlier" was printed under "rebuilding
+    library: ... changed since it was indexed", as a second reason for one merge."""
+    import shutil
+
+    home = tmp_path / "home"
+    library = same_named[0]
+    assert _sdf_build(home, library).exit_code == 0
+    for path, field in (
+        (home / "index" / "manifest.json", "chunk_builds"),
+        (home / "chunks" / "library.json", "build_id"),
+    ):  # as 2.2.1 wrote them
+        data = json.loads(path.read_text())
+        del data[field]
+        path.write_text(json.dumps(data))
+    shutil.copyfile(sample_sdfs[1], library)
+    result = _sdf_build(home, library)
+    assert result.exit_code == 0, result.output
+    assert "rebuilding library: " in result.output
+    assert "merging once more" not in result.output
+    assert 1983 in _cids(home)
+
+
 def test_an_index_merged_by_2_2_1_with_sdf_chunks_is_merged_once_more(
     tmp_path, same_named, sample_sdfs
 ):
@@ -569,6 +656,7 @@ def test_an_index_merged_by_2_2_1_with_sdf_chunks_is_merged_once_more(
     assert "merging once more: this index was merged by pubchem-finder 2.2.1" in (
         result.output
     )
+    assert "rebuilding" not in result.output
     cids = _cids(home)
     assert 1983 in cids
     assert 2244 not in cids

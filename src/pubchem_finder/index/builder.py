@@ -224,11 +224,20 @@ def _refuse_to_empty(
         return
     skipped_id = getattr(reader, "skipped_id", None)
     why = f": {_ids_rule(skipped_id)}" if skipped_id is not None else ""
+    if any(c.n_records for c in paths.completed_chunks() if c.name != name):
+        way_out = (
+            "To take the library out of the index instead, delete "
+            f"{stats_path} and build again."
+        )
+    else:  # without it nothing is left to merge, and the build would only fail
+        way_out = (
+            "It is all this index holds: to remove the index instead, delete "
+            f"{paths.index_dir} and {paths.chunks}."
+        )
     raise IndexBuildError(
         f"{source.path if source is not None else name} has no record the index "
         f"can hold ({reader.n_failed:,} skipped{why}). Chunk {name!r} keeps the "
-        f"{kept.n_records:,} compounds it has. To take the library out of the "
-        f"index instead, delete {stats_path} and build again."
+        f"{kept.n_records:,} compounds it has. {way_out}"
     )
 
 
@@ -575,7 +584,7 @@ def _plan(
             f"Chunk {src.name!r} already holds {recorded.path}, and {current.path} "
             "is a different file that would replace it: each file becomes a chunk "
             "named after it. To index both, rename one of them; to replace the "
-            "first, copy the new file over it."
+            f"first, copy the new file over it and build from {recorded.path}."
         )
     raise IndexBuildError(
         f"Chunk {src.name!r} was built from {recorded.path}, which is no longer "
@@ -754,9 +763,18 @@ def _nothing_to_merge(paths: IndexPaths, built: Sequence[ChunkStats]) -> str:
         return f"No built chunks in {paths.chunks}; nothing to finalize"
     skipped_id = next((c.skipped_id for c in built if c.skipped_id is not None), None)
     why = f": {_ids_rule(skipped_id)}" if skipped_id is not None else ""
-    return (
+    text = (
         f"None of the {len(built)} chunk(s) in {paths.chunks} holds a compound, so "
         f"there is nothing to finalize{why}"
+    )
+    manifest = paths.load_manifest()
+    if manifest is None:
+        return text
+    # An index is still there, merged from files that have since been replaced.
+    return (
+        f"{text}. The index still answers from the earlier build of "
+        f"{_some(manifest.chunks)}. Build from a file the index can hold, or "
+        f"delete {paths.index_dir} and {paths.chunks} to remove the index."
     )
 
 
@@ -765,20 +783,27 @@ def _merge_notes(manifest: Manifest, chunks: Sequence[ChunkStats]) -> list[str]:
     names = [c.name for c in chunks]
     gone = [n for n in manifest.chunks if n not in names]
     if gone:
-        shown = ", ".join(gone[:3]) + (
-            f" and {len(gone) - 3} more" if len(gone) > 3 else ""
-        )
         return [
-            f"warning: {shown}: in the index, but no longer complete in the chunks "
-            "directory, so this merge leaves it out. Build from its file again to "
-            "put it back."
+            f"warning: {_some(gone)}: in the index, but no longer complete in the "
+            "chunks directory, so this merge leaves it out. Build from its file "
+            "again to put it back."
         ]
-    if manifest.chunks == names and manifest.chunk_builds is None:
+    if (
+        manifest.chunks == names
+        and manifest.chunk_builds is None
+        # A chunk this version built says so itself, in the lines above the merge.
+        and all(c.build_id is None for c in chunks)
+    ):
         return [
             "merging once more: this index was merged by pubchem-finder 2.2.1 or "
             "earlier, which could miss a rebuilt --sdf file"
         ]
     return []
+
+
+def _some(names: Sequence[str]) -> str:
+    more = f" and {len(names) - 3} more" if len(names) > 3 else ""
+    return ", ".join(names[:3]) + more
 
 
 def _remove_pattern_data(paths: IndexPaths) -> bool:
