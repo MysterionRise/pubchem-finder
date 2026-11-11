@@ -121,13 +121,37 @@ _UNIPROT = re.compile(
 )
 
 
+_Key = tuple[str, str]  # ("gene", id) or ("accession", id)
+
+
+class _Groups:
+    """Keys joined into groups; each group is known by one of its keys."""
+
+    def __init__(self) -> None:
+        self._parent: dict[_Key, _Key] = {}
+
+    def of(self, key: _Key) -> _Key:
+        """The key that stands for ``key``'s group (itself if it was never joined)."""
+        root = key
+        while self._parent.get(root, root) != root:
+            root = self._parent[root]
+        while self._parent.get(key, key) != root:  # shorten the path for next time
+            self._parent[key], key = root, self._parent[key]
+        return root
+
+    def join(self, a: _Key, b: _Key) -> None:
+        root_a, root_b = self.of(a), self.of(b)
+        if root_a != root_b:
+            self._parent[root_b] = root_a
+
+
 def _representative(active: Counter[str], listed: Counter[str]) -> str | None:
     """One accession for a target PubChem lists under several: UniProt's if there
     is one, otherwise the most frequent.
 
     ``active`` counts the accessions on the target's active rows, ``listed`` those
-    on every row of its gene: PubChem may give the UniProt accession only on rows
-    with another outcome.
+    on every row of the target that names a gene: PubChem may give the UniProt
+    accession only on rows with another outcome.
     """
     for accessions in (active, listed):
         uniprot = [a for a, _ in accessions.most_common() if _UNIPROT.fullmatch(a)]
@@ -175,24 +199,40 @@ def summarize_assays(
         value = str(cells[i]).strip()
         return value or None
 
-    # A gene appears with several protein accessions, or none; it is one target.
-    # The same accession also appears with its gene on some rows and without it on
-    # others (depositors differ), so the table itself says which gene such a row
-    # means, as long as it names exactly one.
-    accession_genes: dict[str, set[str]] = defaultdict(set)
-    gene_accessions: dict[str, Counter[str]] = defaultdict(Counter)
+    # A target is whatever the table ties together. A gene appears with several
+    # protein accessions, or none; an accession appears with its gene on some rows
+    # and without it on others (depositors differ); and one protein can be listed
+    # under two gene IDs (two loci, or two strains, with the same product), in
+    # which case PubChem repeats each of its rows once per gene.
+    targets = _Groups()
+    listed_accessions: dict[_Key, Counter[str]] = defaultdict(Counter)
+    listed_genes: dict[_Key, Counter[str]] = defaultdict(Counter)
     for row in rows:
         cells = row.get("Cell", [])
         accession, gene_id = cell(cells, "accession"), cell(cells, "gene_id")
         if accession and gene_id:
-            accession_genes[accession].add(gene_id)
-            gene_accessions[gene_id][accession] += 1
+            targets.join(("accession", accession), ("gene", gene_id))
+    for row in rows:
+        cells = row.get("Cell", [])
+        accession, gene_id = cell(cells, "accession"), cell(cells, "gene_id")
+        if accession and gene_id:
+            target = targets.of(("gene", gene_id))
+            listed_accessions[target][accession] += 1
+            listed_genes[target][gene_id] += 1
+
+    def gene_of(target: _Key) -> str | None:
+        """The gene a target is shown under: the one most rows name."""
+        named = listed_genes.get(target)
+        if named:
+            return named.most_common(1)[0][0]
+        return target[1] if target[0] == "gene" else None
 
     aids: set[int] = set()
     outcomes: Counter[str] = Counter()
-    target_aids: dict[tuple[str, str], set[int]] = defaultdict(set)
-    target_accessions: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
+    target_aids: dict[_Key, set[int]] = defaultdict(set)
+    target_accessions: dict[_Key, Counter[str]] = defaultdict(Counter)
     potent: list[PotentResult] = []
+    seen_potent: set[tuple[int, str, float, str | None]] = set()
     for row in rows:
         cells = row.get("Cell", [])
         aid_text = cell(cells, "aid")
@@ -205,22 +245,26 @@ def summarize_assays(
         if outcome != "Active":
             continue
         accession, gene_id = cell(cells, "accession"), cell(cells, "gene_id")
-        if accession and not gene_id and len(accession_genes[accession]) == 1:
-            (gene_id,) = accession_genes[accession]
         if gene_id or accession:
-            target = ("gene", gene_id) if gene_id else ("accession", accession or "")
+            target = targets.of(
+                ("gene", gene_id) if gene_id else ("accession", accession or "")
+            )
             target_aids[target].add(aid)
             if accession:
                 target_accessions[target][accession] += 1
+            gene_id = gene_of(target)
         activity_name = cell(cells, "activity_name")
-        if (activity_name or "").lower() not in POTENCY_MEASURES:
+        if not activity_name or activity_name.lower() not in POTENCY_MEASURES:
             continue
         value_text = cell(cells, "value")
         try:
             value = float(value_text) if value_text else None
         except ValueError:
             value = None
-        if value is not None:
+        # One result, however many rows repeat it (per gene ID, per substance).
+        result = (aid, activity_name.lower(), value or 0.0, accession)
+        if value is not None and result not in seen_potent:
+            seen_potent.add(result)
             potent.append(
                 PotentResult(
                     aid=aid,
@@ -242,10 +286,9 @@ def summarize_assays(
         top_targets=[
             TargetActivity(
                 target_accession=_representative(
-                    target_accessions[target],
-                    gene_accessions[target[1]] if target[0] == "gene" else Counter(),
+                    target_accessions[target], listed_accessions[target]
                 ),
-                target_gene_id=target[1] if target[0] == "gene" else None,
+                target_gene_id=gene_of(target),
                 active_assays=len(target_aids[target]),
             )
             for target in ranked[:top_n]

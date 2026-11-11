@@ -135,7 +135,7 @@ def test_rows_without_a_gene_join_the_gene_their_accession_has_elsewhere():
             fx.assay("402", "Active", "P00519", ""),
             fx.assay("403", "Unspecified", "P16234", "5156"),  # the gene, not active
             fx.assay("404", "Active", "P16234", ""),
-            # One accession under two genes: its gene-less row cannot be placed.
+            # One accession under two genes is still one protein.
             fx.assay("405", "Active", "P00760", "615026"),
             fx.assay("406", "Inactive", "P00760", "780933"),
             fx.assay("407", "Active", "P00760", ""),
@@ -149,11 +149,41 @@ def test_rows_without_a_gene_join_the_gene_their_accession_has_elsewhere():
         for t in summary.top_targets
     ] == [
         ("25", "P00519", 3),
-        (None, "P00760", 2),
+        ("615026", "P00760", 3),
         ("5156", "P16234", 1),
-        ("615026", "P00760", 1),
     ]
     assert [(p.aid, p.target_gene_id) for p in summary.most_potent] == [(401, "25")]
+
+
+def test_a_protein_listed_under_two_gene_ids_is_one_target():
+    """PubChem repeats each row of such a protein once per gene. Isoniazid showed
+    InhA (P9WGR1) twice in its top targets, 5 assays each, and each of its two
+    most potent results twice."""
+    rows = []
+    for aid, value in (("600", "0.05"), ("601", "0.08"), ("602", "")):
+        for gene in ("886523", "45425463"):
+            rows.append(
+                fx.assay(
+                    aid, "Active", "P9WGR1", gene, value, "IC50", "InhA inhibition"
+                )
+            )
+    rows.append(fx.assay("603", "Active", "P9WGR1", ""))
+    # Another protein of the first gene's: the table ties all three together.
+    rows.append(fx.assay("604", "Active", "A0A0H3", "886523"))
+    # Two substances, two values in one assay: both are results.
+    rows.append(fx.assay("605", "Active", "P04637", "7157", "1.5", "IC50", "p53"))
+    rows.append(fx.assay("605", "Active", "P04637", "7157", "2.5", "IC50", "p53"))
+    summary = parsers.summarize_assays(_assays(*rows), cid=3767, top_n=10)
+    assert [
+        (t.target_gene_id, t.target_accession, t.active_assays)
+        for t in summary.top_targets
+    ] == [("886523", "P9WGR1", 5), ("7157", "P04637", 1)]
+    assert [(p.aid, p.value_um, p.target_gene_id) for p in summary.most_potent] == [
+        (600, 0.05, "886523"),
+        (601, 0.08, "886523"),
+        (605, 1.5, "7157"),
+        (605, 2.5, "7157"),
+    ]
 
 
 def test_target_accession_is_uniprots_even_when_only_other_rows_carry_it():
@@ -172,6 +202,19 @@ def test_target_accession_is_uniprots_even_when_only_other_rows_carry_it():
         ("2099", "P03372"),
         ("7157", "NP_001"),
     ]
+
+
+def test_target_accession_prefers_the_uniprot_accession_of_active_rows():
+    """Rows with another outcome are asked only when no active row has one."""
+    summary = parsers.summarize_assays(
+        _assays(
+            fx.assay("700", "Active", "P11111", "2099"),
+            fx.assay("701", "Inactive", "P03372", "2099"),
+            fx.assay("702", "Inactive", "P03372", "2099"),
+        ),
+        cid=1,
+    )
+    assert [t.target_accession for t in summary.top_targets] == ["P11111"]
 
 
 def test_summarize_assays_empty_and_malformed():
