@@ -40,6 +40,9 @@ MAX_MOLECULES = 24
 MCS_TIMEOUT_S = 2
 NOT_COMPUTED = "difference not computed"
 MACROCYCLE_ATOMS = 12
+# Ways of laying the common core onto a molecule that are looked at (see
+# _shared_atoms); a symmetric molecule has very many.
+MAX_CORE_WAYS = 2000
 # The fallback search, when FindMCS runs out of time (see _shared_atoms).
 _RASCAL_OPTIONS: dict[str, object] = {
     "similarityThreshold": 0.0,  # the caller chose the pair; compare any two
@@ -194,6 +197,21 @@ def _shared_atoms(reference: Chem.Mol, mol: Chem.Mol) -> list[tuple[int, int]] |
     mol_match = mol.GetSubstructMatch(core)
     if not ref_match or not mol_match:
         return []
+
+    def flips(match: Sequence[int]) -> int:
+        return sum(
+            reference.GetAtomWithIdx(r).GetIsAromatic()
+            != mol.GetAtomWithIdx(m).GetIsAromatic()
+            for r, m in zip(ref_match, match, strict=True)
+        )
+
+    if flips(mol_match):
+        # The core can lie on the molecule in more than one way, and since its ring
+        # bonds stand for aromatic and saturated alike, the first way found may put
+        # a phenyl on the reference's cyclohexyl and the cyclohexyl on its phenyl:
+        # both would then count as changed. Take the way that changes least.
+        ways = mol.GetSubstructMatches(core, uniquify=False, maxMatches=MAX_CORE_WAYS)
+        mol_match = min(ways, key=flips, default=mol_match)
     return list(zip(ref_match, mol_match, strict=True))
 
 

@@ -102,6 +102,32 @@ def test_a_ring_fused_on_does_not_mark_the_rings_next_to_it():
     assert not_computed == []
 
 
+def test_a_ring_is_not_swapped_with_one_that_only_differs_in_aromaticity():
+    """The core of trihexyphenidyl and procyclidine holds a phenyl and a
+    cyclohexyl, and its ring bonds match either. Laid onto each molecule
+    separately, it could put one's phenyl on the other's cyclohexyl: 16 of 21
+    atoms highlighted for one way of writing procyclidine and 4 for another,
+    where the pyrrolidine is all that differs."""
+    trihexyphenidyl = Chem.MolFromSmiles("C1CCC(CC1)C(CCN2CCCCC2)(C3=CC=CC=C3)O")
+    for written in (
+        "OC(c1ccccc1)(CCN1CCCC1)C1CCCCC1",
+        "C1CCC(CC1)C(CCN2CCCC2)(C3=CC=CC=C3)O",
+        "OC(CCN1CCCC1)(C1CCCCC1)c1ccccc1",
+    ):
+        procyclidine = Chem.MolFromSmiles(written)
+        atoms, _, not_computed = drawing.diff_highlights(
+            [procyclidine], trihexyphenidyl
+        )
+        ring = set(procyclidine.GetSubstructMatch(Chem.MolFromSmarts("N1CCCC1")))
+        assert len(atoms[0]) == 4, written
+        assert set(atoms[0]) < ring, written
+        assert not_computed == []
+    tetralin = Chem.MolFromSmiles("c1ccc2CCCCc2c1")
+    tetralol = Chem.MolFromSmiles("OC1CCCc2ccccc12")
+    atoms, _, _ = drawing.diff_highlights([tetralol], tetralin)
+    assert [tetralol.GetAtomWithIdx(a).GetSymbol() for a in atoms[0]] == ["O"]
+
+
 def test_the_same_atoms_and_bonds_need_no_search(monkeypatch):
     """Stereoisomers, the molecule itself, a charged form: nothing to search for,
     so nothing that can time out. (RASCAL, asked about citalopram against
