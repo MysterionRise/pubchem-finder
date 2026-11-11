@@ -87,8 +87,10 @@ All notable changes to this project are documented here. The format follows
   back with paracetamol's structure at similarity 1.000, and a benzene substructure
   search found 2 of the 4 compounds containing it. The build now stops before merging,
   names the ID, both structures and both files, and says which file to renumber. The
-  same compound in two files (drawn differently or not) is still merged. An index
-  built earlier from such files stays as it is until its next build.
+  same compound in two files is still merged, also when they draw it differently
+  (Kekulé or aromatic, acid or anion, with or without stereo); a salt and its parent,
+  or two tautomers, are different compounds here. An index built earlier from such
+  files stays as it is until its next build.
 - A rebuilt `--sdf` chunk is no longer read together with the fingerprints of the file
   it replaced. Its records went live when its files were swapped in, while the index
   kept the old fingerprints until the merge: after a build that failed or was stopped

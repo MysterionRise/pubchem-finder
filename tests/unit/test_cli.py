@@ -1125,6 +1125,132 @@ def test_a_library_numbered_from_one_does_not_go_next_to_pubchems_chunks(
     assert "an ID is read as a PubChem CID" in result.output
 
 
+def test_every_file_is_checked_not_only_the_first(tmp_path):
+    from tests.conftest import write_sdf
+
+    a = write_sdf(tmp_path / "a.sdf", [(1, ASPIRIN, "aspirin", "new")], gz=False)
+    b = write_sdf(tmp_path / "b.sdf", [(2, CAFFEINE, "caffeine", "new")], gz=False)
+    c = write_sdf(tmp_path / "c.sdf", [(2, PARACETAMOL, "x", "new")], gz=False)
+    result = _sdf_build(tmp_path / "home", a, b, c)
+    assert result.exit_code == 1
+    assert "ID 2 stands for different compounds" in result.output
+    assert f"{CAFFEINE} in b and {PARACETAMOL} in c" in result.output
+
+
+def test_an_id_used_twice_in_a_later_file_is_not_merged(tmp_path):
+    from tests.conftest import write_sdf
+
+    a = write_sdf(tmp_path / "a.sdf", [(1, ASPIRIN, "aspirin", "title")], gz=False)
+    b = write_sdf(
+        tmp_path / "b.sdf",
+        [(7, "CCO", "ethanol", "title"), (7, "CCN", "ethylamine", "title")],
+        gz=False,
+    )
+    result = _sdf_build(tmp_path / "home", a, b)
+    assert result.exit_code == 1
+    assert "CCO and CCN, both in b" in result.output
+
+
+def test_the_advice_names_the_file_that_is_new_or_changed(tmp_path):
+    """Whatever the files are called: the advice was to renumber, or delete the
+    chunk of, the file that had been in the index all along."""
+    from tests.conftest import write_sdf
+
+    home = tmp_path / "home"
+    merged = write_sdf(tmp_path / "zeta.sdf", VENDOR_A, gz=False)
+    new = write_sdf(tmp_path / "alpha.sdf", VENDOR_B, gz=False)
+    assert _sdf_build(home, merged).exit_code == 0
+    result = _sdf_build(home, merged, new)
+    assert result.exit_code == 1
+    assert "Give the records of alpha other IDs" in result.output
+    assert str(home / "chunks" / "alpha.json") in result.output
+
+    # Both in the index, and then one of them changes into a clash.
+    write_sdf(new, [(101, PARACETAMOL, "paracetamol", "title")], gz=False)
+    assert _sdf_build(home, merged, new).exit_code == 0
+    write_sdf(merged, [(101, CAFFEINE, "caffeine", "title")], gz=False)
+    result = _sdf_build(home, merged, new)
+    assert result.exit_code == 1
+    assert "ID 101 stands for different compounds" in result.output
+    assert "Give the records of zeta other IDs" in result.output
+    assert str(home / "chunks" / "zeta.json") in result.output
+
+
+def test_every_shared_id_is_checked_however_many(tmp_path, monkeypatch):
+    """Only the first 20,000 shared IDs were compared: two exports that agree up
+    to there and differ after it were merged, with nothing said about a limit."""
+    from rdkit import Chem
+
+    from pubchem_finder.index import builder
+
+    monkeypatch.setattr(builder, "ID_CHECK_BATCH", 2)
+    acids = ["CC(=O)O", "CCC(=O)O", "CCCC(=O)O", "CCCCC(=O)O", "OC(=O)c1ccccc1"]
+
+    def export(path, smiles):  # no InChIKey tag: only RDKit can compare these
+        with Chem.SDWriter(str(path)) as writer:
+            for number, text in enumerate(smiles, start=1):
+                mol = Chem.MolFromSmiles(text)
+                mol.SetProp("_Name", str(number))
+                writer.write(mol)
+        return path
+
+    first = export(tmp_path / "first.sdf", acids)
+    # The same acids as their anions, except the last record.
+    anions = [text.replace("(=O)O", "(=O)[O-]") for text in acids[:4]]
+    second = export(tmp_path / "second.sdf", [*anions, "CCN"])
+    result = _sdf_build(tmp_path / "home", first, second)
+    assert result.exit_code == 1
+    assert "ID 5 stands for different compounds" in result.output
+    assert "O=C(O)c1ccccc1 in first and CCN in second" in result.output
+    export(second, [*anions, "[O-]C(=O)c1ccccc1"])
+    assert _sdf_build(tmp_path / "home", first, second).exit_code == 0
+
+
+def test_a_clash_among_chunks_that_record_no_file_is_not_a_crash(tmp_path):
+    """Two chunks built by 2.2.0 clashing with each other, next to a new file with
+    the same ID: IndexError instead of a refusal. And such a chunk is not one of
+    PubChem's, whatever the message said about CIDs."""
+    from pubchem_finder.index.builder import SdfSource, build_chunks
+    from pubchem_finder.index.layout import IndexPaths
+    from tests.conftest import write_sdf
+
+    home = tmp_path / "home"
+    paths = IndexPaths(home)
+    for name, smiles in (("old_a", ASPIRIN), ("old_b", CAFFEINE)):
+        path = write_sdf(
+            tmp_path / f"{name}.sdf", [(1, smiles, "x", "title")], gz=False
+        )
+        build_chunks(paths, [SdfSource(name=name, local_path=path)])
+        stats = paths.chunk_stats(name)
+        data = json.loads(stats.read_text())
+        del data["source"]  # as 2.2.0 wrote it
+        stats.write_text(json.dumps(data))
+    new = write_sdf(tmp_path / "new.sdf", [(1, PARACETAMOL, "x", "title")], gz=False)
+    result = _sdf_build(home, new)
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "ID 1 stands for different compounds" in result.output
+    assert f"{PARACETAMOL} in new and {ASPIRIN} in old_a" in result.output
+    assert "Give the records of new other IDs" in result.output
+    assert "PubChem CID" not in result.output
+
+
+def test_the_same_compound_with_and_without_stereo_is_still_merged(tmp_path):
+    """Both records carry an InChIKey tag, as PubChem's do: only its first block
+    (the skeleton) is compared."""
+    from tests.conftest import write_sdf
+
+    flat = "COc1ccc2cc(ccc2c1)C(C)C(=O)O"
+    a = write_sdf(
+        tmp_path / "a.sdf",
+        [(156391, flat.replace("C(C)", "[C@H](C)"), "naproxen", "new")],
+        gz=False,
+    )
+    b = write_sdf(tmp_path / "b.sdf", [(156391, flat, "flat", "new")], gz=False)
+    result = _sdf_build(tmp_path / "home", a, b)
+    assert result.exit_code == 0, result.output
+
+
 def test_the_same_compound_in_two_files_is_still_merged(tmp_path, sample_sdfs):
     """An --sdf file that repeats compounds of another chunk, drawn another way:
     Kekule SMILES against PubChem's aromatic one, a charged form, no stereo."""
