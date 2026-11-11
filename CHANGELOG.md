@@ -8,13 +8,21 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
-- On a Mac, a new install crashed in everything that needs a Bemis-Murcko scaffold:
-  `triage`, the `medchem_profile` tool, and grouping search hits by scaffold all ended in
-  `RuntimeError: bad any cast`. RDKit 2026.9.2, published on 2026-11-11, raises it from
-  `MurckoDecompose` for every molecule in its macOS wheels (its Linux wheels are fine),
-  and an install picks the newest RDKit. That release is now excluded, so installs get
-  2026.9.1 until RDKit publishes a fixed one. Upgrading pubchem-finder repairs an
-  install that already has RDKit 2026.9.2.
+- On an Apple-silicon Mac, everything that needs a Bemis-Murcko scaffold crashed with
+  `RuntimeError: bad any cast`: `triage`, the `medchem_profile` tool, and grouping
+  search hits by scaffold. RDKit 2026.9.2, published on 2026-11-11, raises it from
+  `MurckoDecompose` for every molecule in its macOS wheels (its Linux wheels are fine).
+  A new install picks the newest RDKit, and `uvx` can pick it up on a later start, so
+  setups that had worked were hit as well. That RDKit release is now excluded until a
+  fixed one is published. To repair an install that has it, run
+  `pip install -U pubchem-finder`, or start it once with `uvx --refresh`. A command
+  that pins an older pubchem-finder (`pubchem-finder==2.2.2`) keeps the fault until
+  the pin moves.
+
+  One side effect, on Linux without the X11 libraries (a slim container): RDKit
+  2026.9.2 was the first release that starts there. The earlier releases, which
+  installs get again, need `libxrender1`, `libxext6` and `libexpat1` as before; the
+  README's Troubleshooting section now says so.
 
 ## [2.2.2] - 2026-11-11
 
