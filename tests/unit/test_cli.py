@@ -959,6 +959,15 @@ def test_a_file_name_duckdb_reads_as_a_pattern_is_read_as_a_name(tmp_path):
     assert [(h["cid"], h["smiles"]) for h in hits] == [(11, ASPIRIN)]
     hits = json.loads(_search(home, CAFFEINE, "--json").output)["hits"]
     assert [(h["cid"], h["smiles"]) for h in hits] == [(12, CAFFEINE)]
+    # The check of IDs reads the right files too: with ID 11 in both, the build
+    # compared lib1 with itself and merged aspirin and caffeine under one ID.
+    write_sdf(second, [(11, CAFFEINE, "c", "new")], gz=False)
+    result = _sdf_build(home, first, second)
+    assert result.exit_code == 1
+    assert "ID 11 stands for different compounds" in result.output
+    # Under the names the files have, not as they are spelled for DuckDB.
+    assert f"{CAFFEINE} in lib1 and {ASPIRIN} in lib[1]" in result.output
+    assert "Give the records of lib1 other IDs" in result.output
 
 
 @pytest.mark.skipif(os.sep != "/", reason="a backslash separates folders here")
@@ -1203,7 +1212,61 @@ def test_every_shared_id_is_checked_however_many(tmp_path, monkeypatch):
     assert "ID 5 stands for different compounds" in result.output
     assert "O=C(O)c1ccccc1 in first and CCN in second" in result.output
     export(second, [*anions, "[O-]C(=O)c1ccccc1"])
+    monkeypatch.setattr(builder, "ID_CHECK_ANNOUNCE", 2)
+    merged = _sdf_build(tmp_path / "home", first, second)
+    assert merged.exit_code == 0
+    # A long comparison says that it is running, and how far it is.
+    assert "comparing 5 records of first that share an ID" in merged.output
+    assert "compared 4 of 5" in merged.output
+
+    # What one merge has compared, the next does not compare again: adding a
+    # file of two compounds to an index of 300,000 shared IDs took 88 s each time.
+    asked = []
+    real = builder._same_compound
+    monkeypatch.setattr(
+        builder, "_same_compound", lambda a, b: asked.append((a, b)) or real(a, b)
+    )
+    third = export(tmp_path / "third.sdf", ["CCCCCCCC"] * 5)
+    result = _sdf_build(tmp_path / "home", first, second, third)
+    assert result.exit_code == 1  # ID 1 is octane there: compared, and refused
+    assert asked
+    assert all("third" in (a[2], b[2]) for a, b in asked)
+    # A file that changed is compared with the others again.
+    asked.clear()
+    (tmp_path / "home" / "chunks" / "third.json").unlink()  # as the refusal says
+    export(second, [*anions[:3], "CCCCC(=O)O", "[O-]C(=O)c1ccccc1"])
     assert _sdf_build(tmp_path / "home", first, second).exit_code == 0
+    assert asked
+    assert all({a[2], b[2]} == {"first", "second"} for a, b in asked)
+
+
+def test_a_record_that_cannot_be_judged_does_not_hide_the_next_one(tmp_path):
+    """Each ID was judged by its first record in a file. When that one had no
+    structure, or both files carried "N/A" where the InChIKey goes, every record
+    of the ID passed for the same compound, and aspirin came back as caffeine."""
+    from rdkit import Chem
+
+    def export(path, records):
+        with Chem.SDWriter(str(path)) as writer:
+            for number, smiles, key in records:
+                mol = Chem.MolFromSmiles(smiles)
+                mol.SetProp("_Name", str(number))
+                if key:
+                    mol.SetProp("PUBCHEM_IUPAC_INCHIKEY", key)
+                writer.write(mol)
+        return path
+
+    empty_first = export(tmp_path / "a.sdf", [(1, "", None), (1, ASPIRIN, None)])
+    other = export(tmp_path / "b.sdf", [(1, CAFFEINE, None)])
+    result = _sdf_build(tmp_path / "home1", empty_first, other)
+    assert result.exit_code == 1, result.output
+    assert "ID 1 stands for different compounds" in result.output
+
+    no_key = export(tmp_path / "c.sdf", [(7, "CCO", "N/A")])
+    no_key_either = export(tmp_path / "d.sdf", [(7, "CCN", "N/A")])
+    result = _sdf_build(tmp_path / "home2", no_key, no_key_either)
+    assert result.exit_code == 1, result.output
+    assert "ID 7 stands for different compounds: CCO in c and CCN in d" in result.output
 
 
 def test_a_clash_among_chunks_that_record_no_file_is_not_a_crash(tmp_path):

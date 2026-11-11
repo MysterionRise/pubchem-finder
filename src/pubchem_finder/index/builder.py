@@ -56,6 +56,8 @@ from .layout import (
     SubstructureInfo,
     chunk_key,
     chunk_name,
+    chunk_of,
+    duckdb_path,
     unmerged,
     write_json_atomic,
 )
@@ -704,7 +706,10 @@ def finalize(
     if force or not merged:
         rebuilt = rebuilt_since_merge(paths)
         settled = [n for n in (current.chunks if current else []) if n not in rebuilt]
-        _check_ids(paths, chunks, settled, emit)
+        # A merge by this version (it records build ids) has compared its chunks
+        # with each other; only what changed since needs comparing again.
+        compared = current is not None and current.chunk_builds is not None
+        _check_ids(paths, chunks, settled, emit, checked=settled if compared else ())
     if current is not None and not merged and not force:
         for line in _merge_notes(current, chunks):
             emit(line)
@@ -820,6 +825,7 @@ def _check_ids(
     chunks: Sequence[ChunkStats],
     settled: Sequence[str],
     emit: EventFn | None = None,
+    checked: Sequence[str] = (),
 ) -> None:
     """Refuse to merge files in which one ID stands for different compounds.
 
@@ -834,20 +840,31 @@ def _check_ids(
     and the other files; PubChem's own chunks do not repeat a CID. Every shared ID
     is checked, however many there are. ``settled`` are the chunks the index
     already holds in the build that is on disk: the advice names a file that is
-    new or was indexed again.
+    new or was indexed again. ``checked`` are those among them that an earlier
+    merge compared with each other, which is not done again.
     """
     own = [c for c in chunks if c.source is not None]
     if not own:
         return
-    files = {c.name: str(paths.chunk_parquet(c.name)) for c in chunks}
+    files = {c.name: duckdb_path(paths.chunk_parquet(c.name)) for c in chunks}
     downloaded = [c.name for c in chunks if c.source is None]
     con = duckdb.connect(":memory:")
     try:
         for position, chunk in enumerate(own):
             # Each pair of the user's files once.
             others = downloaded + [c.name for c in own[position + 1 :]]
+            known = chunk.name in checked
+            if known:
+                others = [name for name in others if name not in checked]
+                if not others:
+                    continue
             clash = _first_clash(
-                con, files[chunk.name], [files[n] for n in others], emit
+                con,
+                chunk.name,
+                files[chunk.name],
+                [files[n] for n in others],
+                emit,
+                within=not known,
             )
             if clash is not None:
                 raise IndexBuildError(_clash_message(paths, own, settled, *clash))
@@ -856,17 +873,21 @@ def _check_ids(
 
 
 _Row = tuple[str | None, str | None, str]  # SMILES, InChIKey, chunk name
+_INCHIKEY = "[A-Z]{14}-[A-Z]{10}-[A-Z]"  # also written out in _SUSPECTS
 
 # Every record that shares its ID with the first record of that ID in "mine" and
-# may be another compound. DuckDB settles what text can settle (the same SMILES, or
-# two InChIKeys with the same first block), so that RDKit is asked only about
-# records drawn differently where an InChIKey is missing: none for two exports of
-# one library, however many IDs they share.
+# may be another compound. The first with a structure, that is: a record without
+# one can be compared with nothing, and would hide every later record of its ID.
+# DuckDB settles what text can settle (the same SMILES, or two InChIKeys with the
+# same first block), so that RDKit is asked only about records drawn differently
+# where an InChIKey is missing: none for two exports of one library, however many
+# IDs they share.
 _SUSPECTS = """
     WITH firsts AS (
         SELECT m.cid, m.smiles, m.inchikey, m.file_row_number AS first_row
         FROM mine m JOIN (
-            SELECT cid, min(file_row_number) AS first_row FROM mine GROUP BY cid
+            SELECT cid, min(file_row_number) AS first_row FROM mine
+            WHERE smiles <> '' GROUP BY cid
         ) lowest ON m.cid = lowest.cid AND m.file_row_number = lowest.first_row
     )
     SELECT f.cid, f.smiles, f.inchikey, r.smiles, r.inchikey, r.filename
@@ -874,19 +895,24 @@ _SUSPECTS = """
     WHERE NOT (r.own AND r.file_row_number = f.first_row)
       AND f.smiles <> r.smiles
       AND NOT coalesce(
-          f.inchikey <> '' AND r.inchikey <> ''
+          regexp_full_match(f.inchikey, '[A-Z]{14}-[A-Z]{10}-[A-Z]')
+          AND regexp_full_match(r.inchikey, '[A-Z]{14}-[A-Z]{10}-[A-Z]')
           AND left(f.inchikey, 14) = left(r.inchikey, 14), false)
 """
 
 
 def _first_clash(
     con: duckdb.DuckDBPyConnection,
+    name: str,
     mine: str,
     others: list[str],
     emit: EventFn | None = None,
+    within: bool = True,
 ) -> tuple[int, _Row, _Row] | None:
-    """The lowest ID under which ``mine`` holds another compound than it holds
-    again, or than one of ``others`` holds, with the two records."""
+    """The lowest ID under which chunk ``name`` (file ``mine``) holds another
+    compound than it holds again (unless ``within`` is off), or than one of
+    ``others`` holds, with the two records. The paths are as
+    :func:`~.layout.duckdb_path` gives them, so the name is not read off them."""
 
     def view(name: str, files: list[str], own: bool) -> None:
         # A relation, not SQL text, so file paths need no quoting.
@@ -899,30 +925,34 @@ def _first_clash(
     view("mine", [mine], own=True)
     if others:
         view("theirs", others, own=False)
-        con.execute(
-            "CREATE OR REPLACE VIEW records AS "
-            "SELECT * FROM mine UNION ALL SELECT * FROM theirs"
-        )
+    if within and others:
+        records = "SELECT * FROM mine UNION ALL SELECT * FROM theirs"
     else:
-        con.execute("CREATE OR REPLACE VIEW records AS SELECT * FROM mine")
+        records = "SELECT * FROM mine" if within else "SELECT * FROM theirs"
+    con.execute("CREATE OR REPLACE VIEW records AS " + records)
     # fetchall: DuckDB refuses further work while a result is left half-read.
     suspects = con.execute(f"SELECT count(*) FROM ({_SUSPECTS})").fetchall()[0][0]  # noqa: S608
     if not suspects:
         return None
-    if emit is not None and suspects > ID_CHECK_ANNOUNCE:
+    announce = emit is not None and suspects > ID_CHECK_ANNOUNCE
+    if emit is not None and announce:
         emit(
-            f"comparing {suspects:,} records of {Path(mine).stem} that share an ID "
-            "with a record drawn differently"
+            f"comparing {suspects:,} records of {name} that share an ID with a "
+            "record drawn differently (about a minute per 200,000)"
         )
     cursor = con.execute(
         _SUSPECTS + " ORDER BY f.cid, r.own DESC, r.filename, r.file_row_number"
     )
+    compared = 0
     while rows := cursor.fetchmany(ID_CHECK_BATCH):
         for cid, smiles, inchikey, other_smiles, other_inchikey, filename in rows:
-            first: _Row = (smiles, inchikey, Path(mine).stem)
-            other: _Row = (other_smiles, other_inchikey, Path(filename).stem)
+            first: _Row = (smiles, inchikey, name)
+            other: _Row = (other_smiles, other_inchikey, chunk_of(filename))
             if not _same_compound(first, other):
                 return int(cid), first, other
+        compared += len(rows)
+        if emit is not None and announce and compared % ID_CHECK_ANNOUNCE < len(rows):
+            emit(f"compared {min(compared, suspects):,} of {suspects:,}")
     return None
 
 
@@ -931,11 +961,17 @@ def _same_compound(a: _Row, b: _Row) -> bool:
 
     Judged by the first block of the InChIKey (the atoms and how they are
     connected): PubChem's SMILES and RDKit's differ in spelling, and the same
-    record may carry stereo or charges in one file and not in the other.
+    record may carry stereo or charges in one file and not in the other. A key
+    that is not an InChIKey ("N/A") is no key.
     """
     if a[0] == b[0] or not a[0] or not b[0]:
         return True
-    if a[1] and b[1]:
+    if (
+        a[1]
+        and b[1]
+        and re.fullmatch(_INCHIKEY, a[1])
+        and re.fullmatch(_INCHIKEY, b[1])
+    ):
         return a[1][:14] == b[1][:14]
     skeleton_a, skeleton_b = _skeleton(a[0]), _skeleton(b[0])
     return skeleton_a is None or skeleton_b is None or skeleton_a == skeleton_b
