@@ -232,7 +232,7 @@ def summarize_assays(
     target_aids: dict[_Key, set[int]] = defaultdict(set)
     target_accessions: dict[_Key, Counter[str]] = defaultdict(Counter)
     potent: list[PotentResult] = []
-    seen_potent: set[tuple[int, str, float, str | None]] = set()
+    seen_potent: set[tuple[int, str, float]] = set()
     for row in rows:
         cells = row.get("Cell", [])
         aid_text = cell(cells, "aid")
@@ -261,8 +261,10 @@ def summarize_assays(
             value = float(value_text) if value_text else None
         except ValueError:
             value = None
-        # One result, however many rows repeat it (per gene ID, per substance).
-        result = (aid, activity_name.lower(), value or 0.0, accession)
+        # One result, however many rows repeat it: per gene ID, per substance, and
+        # per protein when the assay's target has several (the subunits of a
+        # receptor each get a row with the same value).
+        result = (aid, activity_name.lower(), value or 0.0)
         if value is not None and result not in seen_potent:
             seen_potent.add(result)
             potent.append(

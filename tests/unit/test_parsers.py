@@ -204,6 +204,29 @@ def test_target_accession_is_uniprots_even_when_only_other_rows_carry_it():
     ]
 
 
+def test_a_result_listed_under_every_subunit_is_one_result():
+    """An assay on a receptor of several proteins has one row per protein, all with
+    the same value. Nicotine's five most potent results were one binding assay
+    (AID 30379, Kd 4.9e-09) five times, once per nAChR subunit."""
+    subunits = [("P04757", "25590"), ("P12389", "25302"), ("P09483", "25591")]
+    rows = [
+        fx.assay("30379", "Active", accession, gene, "4.9e-09", "Kd", "nAChR binding")
+        for accession, gene in subunits
+    ]
+    rows.append(fx.assay("30380", "Active", "P04757", "25590", "0.002", "Ki", "a3"))
+    summary = parsers.summarize_assays(_assays(*rows), cid=89594, top_n=5)
+    assert [(p.aid, p.value_um, p.target_accession) for p in summary.most_potent] == [
+        (30379, 4.9e-09, "P04757"),
+        (30380, 0.002, "P04757"),
+    ]
+    # The subunits are still three targets, each with its assays.
+    assert [(t.target_accession, t.active_assays) for t in summary.top_targets] == [
+        ("P04757", 2),
+        ("P12389", 1),
+        ("P09483", 1),
+    ]
+
+
 def test_target_accession_prefers_the_uniprot_accession_of_active_rows():
     """Rows with another outcome are asked only when no active row has one."""
     summary = parsers.summarize_assays(

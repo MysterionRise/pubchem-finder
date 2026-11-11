@@ -316,8 +316,10 @@ class BioactivitySummary(BaseModel):
     most_potent: list[PotentResult] = Field(
         description="Active results with the lowest potency-type values in µM (IC50, "
         "EC50, AC50, Potency, Ki, Kd, ID50, ED50, MIC, GI50). Other measurements "
-        "(Vmax, Km, plasma levels, solubility) and unnamed values are left out. The "
-        "lowest value is not always the most meaningful: check the assay"
+        "(Vmax, Km, plasma levels, solubility) and unnamed values are left out. One "
+        "entry per assay and value: when PubChem lists a result under several "
+        "proteins (the subunits of one receptor), the first is named. The lowest "
+        "value is not always the most meaningful: check the assay"
     )
 
     @computed_field  # type: ignore[prop-decorator]

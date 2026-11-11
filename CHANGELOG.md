@@ -22,9 +22,11 @@ All notable changes to this project are documented here. The format follows
   accession without a gene is counted under the gene the same table gives for that
   accession (ChEMBL's rows often lack it): imatinib listed ABL1 twice, with 141 and
   49 assays, and now once with 190. A protein that PubChem lists under two gene IDs
-  (isoniazid's InhA, calmodulin) is one target as well, and its results appear once
-  in `most_potent`, not once per gene. The accession shown for a gene is UniProt's
-  whenever the table has one, also when only non-active rows carry it.
+  (isoniazid's InhA, calmodulin) is one target as well, and `most_potent` lists a
+  result once however many rows repeat it: per gene, or per protein of a receptor
+  (nicotine's top five were one binding assay, once per nAChR subunit). The accession
+  shown for a gene is UniProt's whenever the table has one, also when only non-active
+  rows carry it.
 - A CID that PubChem does not have is "not found" (#104). `pubchem_lookup` by CID and
   `pubchem://compound/{cid}` returned an empty record, `pubchem_bioactivity` said "not
   tested" and `pubchem_xrefs` reported zero references, because PubChem answers a
