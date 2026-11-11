@@ -403,7 +403,9 @@ async def draw_molecules(
     legends: one caption per molecule (names or CIDs). highlight:
     - "smarts": atoms matching the smarts pattern (e.g. a pharmacophore or an alert),
     - "diff": what each molecule adds relative to reference_smiles (atoms outside
-      their maximum common substructure), with drawings aligned to the shared core,
+      their maximum common substructure), with drawings aligned to the shared core.
+      No highlight means no difference, unless the caption says "difference not
+      computed" (the comparison ran out of time: say so, do not call it identical),
     - "similarity_map": atom contributions to ECFP4 similarity with reference_smiles
       (green raises similarity, pink lowers it).
     Use it to show search hits, analogues or alerts instead of describing structures.
