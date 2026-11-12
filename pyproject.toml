@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pubchem-finder"
-version = "2.2.2"
+version = "2.2.3"
 description = "Search PubChem by chemical structure: a local similarity and substructure index, live PubChem tools, a CLI and an MCP server"
 readme = "README.md"
 license = "MIT"
@@ -23,7 +23,9 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Chemistry",
 ]
 dependencies = [
-    "rdkit>=2024.9",
+    # 2026.9.2's macOS wheels raise "bad any cast" from MurckoDecompose, which breaks
+    # every scaffold. Drop the exclusion once RDKit ships a fixed release.
+    "rdkit>=2024.9,!=2026.9.2",
     "numpy>=2",
     "httpx>=0.28",
     "pydantic>=2.7",
