@@ -127,7 +127,7 @@ before binding it to anything but `127.0.0.1`.
 | `index_status()` | Whether the local index is built, what it holds, what local searches cover now, and how to build what is missing. |
 | `pubchem_similarity_search(smiles, threshold, max_records)` | Similar compounds across all of PubChem, live, re-scored with ECFP4. |
 | `pubchem_substructure_search(smiles, max_records)` | Compounds across all of PubChem that contain a fragment, live. |
-| `pubchem_exact_match(smiles, identity_type)` | The PubChem record(s) for exactly this structure, optionally ignoring stereo or isotopes. |
+| `pubchem_exact_match(smiles, identity_type, max_records)` | The PubChem record(s) for exactly this structure, optionally ignoring stereo or isotopes. |
 | `pubchem_synonyms(cid, limit)` | Common, brand and systematic names, plus CAS Registry Numbers. |
 | `pubchem_xrefs(cid)` | Registry IDs (CAS, ChEMBL, DrugBank...), PubMed articles and patents. |
 | `pubchem_description(cid)` | Curated descriptions, with sources. |
@@ -223,7 +223,7 @@ The `pubchem` commands query PubChem's live services, with no index needed:
 ```bash
 pubchem-finder pubchem similarity "CC(=O)Oc1ccccc1C(=O)O" --threshold 90   # across all of PubChem
 pubchem-finder pubchem substructure "c1ccc2[nH]ccc2c1" --max 50
-pubchem-finder pubchem exact "CC(=O)Oc1ccccc1C(=O)O" --identity same_connectivity
+pubchem-finder pubchem exact "CC(=O)Oc1ccccc1C(=O)O" --identity same_connectivity --max 25
 pubchem-finder pubchem synonyms 2244          # names and CAS numbers
 pubchem-finder pubchem xrefs 2244             # registry IDs, PubMed articles, patents
 pubchem-finder pubchem describe 2244          # curated descriptions with sources

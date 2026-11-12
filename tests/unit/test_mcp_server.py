@@ -182,6 +182,20 @@ async def test_substructure_search_tool_without_pattern_index(built_home, monkey
     assert "index build --with-substructure" in result.content[0].text
 
 
+async def test_pubchem_exact_tool_accepts_a_result_limit(pubchem_knowledge_api):
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "pubchem_exact_match", {"smiles": "CC(=O)Oc1ccccc1C(=O)O", "max_records": 1}
+        )
+    assert not result.is_error
+    assert result.structured_content["max_records"] == 1
+    assert result.structured_content["truncated"] is True
+    assert (
+        pubchem_knowledge_api["identity"].calls.last.request.url.params["MaxRecords"]
+        == "1"
+    )
+
+
 async def test_pubchem_knowledge_tools(pubchem_knowledge_api):
     async with Client(mcp) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
