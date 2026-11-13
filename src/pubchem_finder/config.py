@@ -11,6 +11,8 @@ from pathlib import Path
 
 from platformdirs import user_data_dir
 
+from .core.exceptions import PubChemFinderError
+
 HOME_ENV = "PUBCHEM_FINDER_HOME"
 INDEX_MODE_ENV = "PUBCHEM_FINDER_INDEX_MODE"
 CACHE_ENV = "PUBCHEM_FINDER_CACHE"
@@ -51,3 +53,13 @@ def _flag(name: str) -> bool:
 def cache_path(home: Path | str | None = None) -> Path:
     """Location of the PubChem response cache inside the data directory."""
     return resolve_home(home) / "cache" / "pubchem-http.sqlite"
+
+
+def data_dir_error(exc: OSError, home: Path | str | None = None) -> PubChemFinderError:
+    """A clear error for a data directory that cannot be created, naming the path
+    and, when it came from ``PUBCHEM_FINDER_HOME``, the setting."""
+    via = f" (from ${HOME_ENV})" if os.environ.get(HOME_ENV) else ""
+    return PubChemFinderError(
+        f"cannot create the data directory {resolve_home(home)}{via}: "
+        f"{exc.strerror or exc}"
+    )
