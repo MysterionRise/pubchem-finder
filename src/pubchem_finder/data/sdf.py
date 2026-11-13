@@ -80,7 +80,8 @@ class SdfReader:
             )
             try:
                 for mol in supplier:
-                    if mol is None:
+                    # A record with no atoms has no structure to show or compare.
+                    if mol is None or mol.GetNumAtoms() == 0:
                         self.n_failed += 1
                         continue
                     cid, unusable = _cid(mol)
@@ -158,7 +159,16 @@ def _shorten(value: str) -> str:
 
 
 def _to_record(mol: Chem.Mol, cid: int) -> SdfRecord:
-    smiles = next((s for s in (_prop(mol, t) for t in SMILES_TAGS) if s), None)
+    # A tag that does not parse is not SMILES: the index would store and show it,
+    # and the ID check could not compare it, so RDKit's own SMILES stands in.
+    smiles = next(
+        (
+            s
+            for s in (_prop(mol, t) for t in SMILES_TAGS)
+            if s and Chem.MolFromSmiles(s) is not None
+        ),
+        None,
+    )
     if smiles is None:
         smiles = str(Chem.MolToSmiles(mol))
     mw_text = _prop(mol, MW_TAG)
