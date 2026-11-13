@@ -53,6 +53,60 @@ def test_shared_between_instances(tmp_path):
     assert ResponseCache(tmp_path / "cache.sqlite").get("k") == b"v"
 
 
+def test_expired_entries_are_removed_when_opened(tmp_path):
+    clock = Clock()
+    path = tmp_path / "cache.sqlite"
+    ResponseCache(path, ttl_seconds=60, clock=clock).put("k", b"v")
+    clock.now += 61
+    reopened = ResponseCache(path, ttl_seconds=60, clock=clock)
+    assert reopened.stats().entries == 0  # pruned on open, not just ignored
+
+
+def test_size_limit_drops_the_oldest_first(tmp_path):
+    import os
+
+    clock = Clock()
+    path = tmp_path / "cache.sqlite"
+    bodies = {f"k{i}": os.urandom(4_000) for i in range(6)}  # incompressible
+    cache = ResponseCache(path, max_bytes=10_000, clock=clock)
+    for key, body in bodies.items():
+        clock.now += 1
+        cache.put(key, body)
+    # Reopening trims to the cap, keeping the newest entries.
+    trimmed = ResponseCache(path, max_bytes=10_000, clock=clock)
+    stats = trimmed.stats()
+    assert stats.max_bytes == 10_000
+    assert trimmed.get("k0") is None  # oldest evicted
+    assert trimmed.get("k5") == bodies["k5"]  # newest kept
+    assert stats.entries <= 3  # only a few 4 KB bodies fit under 10 KB
+
+
+def test_maintenance_runs_while_the_cache_is_used(tmp_path):
+    from pubchem_finder.data import cache as cache_mod
+
+    clock = Clock()
+    cache = ResponseCache(tmp_path / "cache.sqlite", ttl_seconds=60, clock=clock)
+    cache.put("old", b"v")
+    clock.now += 61  # "old" is now expired
+    for i in range(cache_mod._MAINTAIN_EVERY):
+        cache.put(f"k{i}", b"v")
+    # The periodic sweep deleted the expired entry, not only hid it.
+    assert cache.get("old") is None
+    assert cache.stats().entries == cache_mod._MAINTAIN_EVERY
+
+
+def test_cache_max_bytes_from_the_environment(monkeypatch):
+    from pubchem_finder.config import cache_max_bytes
+    from pubchem_finder.data.cache import DEFAULT_MAX_BYTES
+
+    monkeypatch.delenv("PUBCHEM_FINDER_CACHE_MAX_MB", raising=False)
+    assert cache_max_bytes() == DEFAULT_MAX_BYTES
+    monkeypatch.setenv("PUBCHEM_FINDER_CACHE_MAX_MB", "10")
+    assert cache_max_bytes() == 10_000_000
+    monkeypatch.setenv("PUBCHEM_FINDER_CACHE_MAX_MB", "nonsense")
+    assert cache_max_bytes() == DEFAULT_MAX_BYTES
+
+
 @pytest.fixture
 def cached_client(tmp_path, monkeypatch):
     monkeypatch.setattr("pubchem_finder.data.pug_rest.time.sleep", lambda s: None)
