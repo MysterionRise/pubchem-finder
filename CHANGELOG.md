@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Batch inputs accept UTF-8 with a BOM, including standard input, without losing
+  the first SMILES column or identifier (#113). Files that are not valid UTF-8
+  report an actionable error instead of a traceback.
+
 ## [2.2.3] - 2026-11-11
 
 ### Fixed

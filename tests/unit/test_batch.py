@@ -92,6 +92,46 @@ def test_read_stdin(monkeypatch):
     assert [r.id for r in batch.read_inputs(batch.Path("-"))] == ["one"]
 
 
+@pytest.mark.parametrize(
+    ("text", "line"),
+    [("\ufeffCCO ethanol\n", 1), ("\ufeff# comment\n\nCCO ethanol\n", 3)],
+)
+def test_read_stdin_with_bom(monkeypatch, text, line):
+    stdin = io.StringIO(text)
+    monkeypatch.setattr("sys.stdin", stdin)
+    assert list(batch.read_inputs(Path("-"))) == [
+        batch.InputRow(line=line, id="ethanol", smiles="CCO")
+    ]
+    assert not stdin.closed
+
+
+@pytest.mark.parametrize("delimiter", [",", "\t"])
+@pytest.mark.parametrize("smiles_first", [True, False])
+def test_read_table_text_stream_with_bom(delimiter, smiles_first):
+    headers, values = (
+        (("SMILES", "id"), ("CCO", "ethanol"))
+        if smiles_first
+        else (("id", "SMILES"), ("ethanol", "CCO"))
+    )
+    stream = io.StringIO(
+        "\ufeff" + delimiter.join(headers) + "\n" + delimiter.join(values) + "\n"
+    )
+    assert list(batch._read_table(stream, delimiter)) == [
+        batch.InputRow(line=2, id="ethanol", smiles="CCO")
+    ]
+
+
+def test_bom_inside_data_is_preserved(monkeypatch):
+    monkeypatch.setattr("sys.stdin", io.StringIO("\ufeffCCO eth\ufeffanol\n"))
+    assert list(batch.read_inputs(Path("-"))) == [
+        batch.InputRow(line=1, id="eth\ufeffanol", smiles="CCO")
+    ]
+    stream = io.StringIO('\ufeffsmiles,id\nCCO,"eth\ufeffanol"\n')
+    assert list(batch._read_table(stream, ",")) == [
+        batch.InputRow(line=2, id="eth\ufeffanol", smiles="CCO")
+    ]
+
+
 def test_run_writes_rows_and_errors():
     rows = [
         batch.InputRow(1, "a", "CCO"),

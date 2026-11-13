@@ -69,8 +69,13 @@ def _pick(headers: Sequence[str], names: Sequence[str]) -> str | None:
     return next((lowered[n] for n in names if n in lowered), None)
 
 
+def _strip_initial_bom(lines: Iterable[str]) -> Iterator[str]:
+    for n, line in enumerate(lines):
+        yield line.removeprefix("\ufeff") if n == 0 else line
+
+
 def _read_table(fh: IO[str], delimiter: str) -> Iterator[InputRow]:
-    reader = csv.DictReader(fh, delimiter=delimiter)
+    reader = csv.DictReader(_strip_initial_bom(fh), delimiter=delimiter)
     headers = reader.fieldnames or []
     smiles_col = _pick(headers, SMILES_COLUMNS)
     if smiles_col is None:
@@ -86,7 +91,7 @@ def _read_table(fh: IO[str], delimiter: str) -> Iterator[InputRow]:
 
 
 def _read_smi(fh: IO[str]) -> Iterator[InputRow]:
-    for n, raw in enumerate(fh, start=1):
+    for n, raw in enumerate(_strip_initial_bom(fh), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue

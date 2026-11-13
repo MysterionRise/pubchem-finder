@@ -1763,6 +1763,16 @@ def test_batch_utf8_bom_preserves_ids(tmp_path, name, command):
     ]
 
 
+@pytest.mark.parametrize("command", ["props", "standardize", "triage"])
+def test_batch_stdin_utf8_bom_preserves_structure_and_id(command):
+    result = runner.invoke(app, [command, "-i", "-"], input="\ufeffCCO ethanol\n")
+    assert result.exit_code == 0, result.output
+    rows = list(csv.DictReader(result.stdout.splitlines()))
+    assert [(row["id"], row["smiles"], row["error"]) for row in rows] == [
+        ("ethanol", "CCO", "")
+    ]
+
+
 @pytest.mark.parametrize(
     "command", ["props", "standardize", "triage", "search", "substructure"]
 )
