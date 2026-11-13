@@ -4,7 +4,7 @@
       "command": "uvx",
       "args": [
         "--python=3.14",
-        "pubchem-finder==2.2.1",
+        "pubchem-finder==2.2.3",
         "mcp"
       ]
     }
