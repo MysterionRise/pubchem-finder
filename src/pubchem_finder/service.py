@@ -7,14 +7,15 @@ those into their own output and error formats.
 
 import logging
 import sqlite3
+import sys
 import threading
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import rdkit
 from rdkit import Chem, DataStructs, rdBase
 
-from . import drawing, hints, medchem
+from . import hints, medchem
 from .chemistry import MoleculeStandardizer, calculate_properties, is_druglike
 from .config import cache_enabled, cache_path, demo_enabled, resolve_home
 from .core.exceptions import MoleculeValidationError, PubChemFinderError
@@ -59,6 +60,9 @@ from .models import (
     SubstructureResults,
     Synonyms,
 )
+
+if TYPE_CHECKING:
+    from . import drawing
 
 logger = logging.getLogger(__name__)
 
@@ -697,13 +701,23 @@ def medchem_profile(smiles: str) -> MedchemProfile:
 def draw(
     smiles: list[str],
     legends: list[str] | None = None,
-    highlight: drawing.Highlight = "none",
+    highlight: "drawing.Highlight" = "none",
     smarts: str | None = None,
     reference: str | None = None,
     size: int = 300,
     per_row: int = 4,
 ) -> bytes:
     """PNG grid of molecules; see :func:`pubchem_finder.drawing.draw_grid`."""
+    try:
+        from . import drawing
+    except ImportError as exc:
+        hint = (
+            " On Debian/Ubuntu, run: apt-get install libxrender1 libxext6 libexpat1"
+            if sys.platform == "linux"
+            else ""
+        )
+        raise PubChemFinderError(f"RDKit drawing is unavailable: {exc}.{hint}") from exc
+
     return drawing.draw_grid(
         smiles,
         legends=legends,
