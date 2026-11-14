@@ -7,3 +7,4 @@ rules:
       - release.yml
       - monthly-e2e.yml
       - live.yml
+      - released-wheel.yml
