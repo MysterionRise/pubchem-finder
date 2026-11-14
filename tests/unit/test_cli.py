@@ -8,7 +8,7 @@ import os
 import pytest
 from typer.testing import CliRunner
 
-from pubchem_finder import __version__
+from pubchem_finder import __version__, service
 from pubchem_finder.cli import app
 
 runner = CliRunner()
@@ -1947,3 +1947,36 @@ def test_mcp_command_rejects_bad_options(monkeypatch, args):
     )
     result = runner.invoke(app, ["mcp", *args])
     assert result.exit_code == 2
+
+
+# --- `--home` on the live PubChem commands moves their response cache (#161) --
+
+
+def test_lookup_home_puts_its_cache_there(tmp_path, pubchem_api, monkeypatch):
+    """A lookup run with --home caches its response under that data directory."""
+    monkeypatch.setattr(service, "_clients", {})
+    monkeypatch.setenv("PUBCHEM_FINDER_CACHE", "1")
+    monkeypatch.setattr("pubchem_finder.data.pug_rest.time.sleep", lambda s: None)
+    home = tmp_path / "home"
+    result = runner.invoke(app, ["lookup", "caffeine", "--home", str(home)])
+    assert result.exit_code == 0, result.output
+    assert "CID 2519  Caffeine" in result.output
+    assert (home / "cache" / "pubchem-http.sqlite").exists()
+
+
+def test_pubchem_commands_share_the_home_cache_they_report(
+    tmp_path, pubchem_knowledge_api, monkeypatch
+):
+    """`cache info --home DIR` sees what `pubchem ... --home DIR` cached."""
+    monkeypatch.setattr(service, "_clients", {})
+    monkeypatch.setenv("PUBCHEM_FINDER_CACHE", "1")
+    monkeypatch.setattr("pubchem_finder.data.pug_rest.time.sleep", lambda s: None)
+    home = tmp_path / "home"
+    synonyms = runner.invoke(app, ["pubchem", "synonyms", "2244", "--home", str(home)])
+    assert synonyms.exit_code == 0, synonyms.output
+    described = runner.invoke(app, ["pubchem", "describe", "2244", "--home", str(home)])
+    assert described.exit_code == 0, described.output
+    info = runner.invoke(app, ["cache", "info", "--home", str(home)])
+    assert info.exit_code == 0, info.output
+    assert str(home.resolve() / "cache" / "pubchem-http.sqlite") in info.output
+    assert "0 responses" not in info.output
