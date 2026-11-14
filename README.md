@@ -223,7 +223,7 @@ The `pubchem` commands query PubChem's live services, with no index needed:
 ```bash
 pubchem-finder pubchem similarity "CC(=O)Oc1ccccc1C(=O)O" --threshold 90   # across all of PubChem
 pubchem-finder pubchem substructure "c1ccc2[nH]ccc2c1" --max 50
-pubchem-finder pubchem exact "CC(=O)Oc1ccccc1C(=O)O" --identity same_connectivity --max 25
+pubchem-finder pubchem exact "CC(=O)Oc1ccccc1C(=O)O" --identity same_connectivity --max 50
 pubchem-finder pubchem synonyms 2244          # names and CAS numbers
 pubchem-finder pubchem xrefs 2244             # registry IDs, PubMed articles, patents
 pubchem-finder pubchem describe 2244          # curated descriptions with sources
