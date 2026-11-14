@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- CLI commands and MCP tools can start on Linux without RDKit’s drawing libraries. Drawing reports which libraries are needed when they are missing (#175).
+
 ## [2.2.3] - 2026-11-11
 
 ### Fixed
