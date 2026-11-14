@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Recognize mixed-case SDF and gzip suffixes, reject filenames without a chunk name, and reuse existing chunks named by older releases (#152).
+
 ## [2.2.3] - 2026-11-11
 
 ### Fixed

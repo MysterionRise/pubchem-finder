@@ -370,13 +370,24 @@ def chunk_key(name: str) -> str:
     return unicodedata.normalize("NFC", name).casefold()
 
 
+def _without_sdf_suffixes(name: str, *, ignore_case: bool) -> str:
+    for suffix in (".gz", ".sdf", ".sd", ".mol"):
+        if (name.lower() if ignore_case else name).endswith(suffix):
+            name = name[: -len(suffix)]
+    return name
+
+
+def legacy_chunk_name(path: Path, name: str) -> str:
+    """The earlier spelling for a filename-derived name, or the explicit name."""
+    if _without_sdf_suffixes(path.name, ignore_case=True) == name:
+        return _without_sdf_suffixes(path.name, ignore_case=False)
+    return name
+
+
 def chunk_name(path: Path | str) -> str:
     """``Compound_000000001_000500000.sdf.gz`` -> ``Compound_000000001_000500000``."""
     filename = Path(path).name
-    name = filename
-    for suffix in (".gz", ".sdf", ".sd", ".mol"):
-        if name.lower().endswith(suffix):
-            name = name[: -len(suffix)]
+    name = _without_sdf_suffixes(filename, ignore_case=True)
     if not name:
         raise IndexBuildError(f"SDF filename {filename!r} has no chunk name")
     return name
