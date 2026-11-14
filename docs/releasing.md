@@ -33,8 +33,9 @@ order of steps and what to do when one fails.
    gh workflow run release.yml -f version=x.y.z -f dry_run=false
    ```
 
-   The run waits for CI on master's commit, tags it, drafts the GitHub Release, then
-   stops at the `pypi` environment: approve it under the run's **Review deployments**.
+   The run waits for CI on master's commit and smoke-tests the built wheel on Linux,
+   macOS and Windows. Once those checks pass, it tags the commit, drafts the GitHub
+   Release and waits for approval under **Review deployments** in the `pypi` environment.
    It then publishes to PyPI, publishes the GitHub Release and lists the version in the
    MCP registry.
 
@@ -44,6 +45,9 @@ order of steps and what to do when one fails.
    uvx --python 3.14 pubchem-finder@x.y.z --version
    curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=pubchem-finder" | jq '.servers[].server.version'
    ```
+
+   The daily Released wheel smoke test also checks the latest PyPI package with fresh
+   dependencies on all three systems and reports failures as GitHub issues.
 
 6. **Plugin.** The run's `plugin-branch` job pushes `release/plugin-x.y.z` with the
    plugin pointed at the release and a fresh `uv.lock`; its summary has the link to open

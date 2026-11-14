@@ -1,0 +1,46 @@
+name: Released wheel smoke test
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 7 * * *"
+
+permissions: {}
+
+jobs:
+  smoke:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+      - name: Smoke-test the latest PyPI release
+        shell: bash
+        run: |
+          uv venv .smoke --python 3.12
+          uv pip install --python .smoke pubchem-finder
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            .smoke/Scripts/python.exe scripts/smoke.py --command .smoke/Scripts/pubchem-finder.exe
+          else
+            .smoke/bin/python scripts/smoke.py --command .smoke/bin/pubchem-finder
+          fi
+
+  report:
+    needs: smoke
+    if: always() && github.event_name == 'schedule'
+    permissions:
+      issues: write
+    uses: ./.github/workflows/scheduled-failure.yml
+    with:
+      title: "The daily released wheel smoke test is failing"
+      result: ${{ needs.smoke.result }}
