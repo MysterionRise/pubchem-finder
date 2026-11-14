@@ -39,6 +39,12 @@ def test_uncompressed_file_and_bad_weight(tmp_path):
     assert record.molecular_weight is None
 
 
+def test_reads_uppercase_gzip_suffix(tmp_path):
+    path = write_sdf(tmp_path / "Library.SDF.GZ", [(702, "CCO", "ethanol", "new")])
+    (record,) = SdfReader(path)
+    assert record.cid == 702
+
+
 def test_empty_file(tmp_path):
     path = tmp_path / "empty.sdf"
     path.write_text("")

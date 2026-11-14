@@ -58,6 +58,7 @@ from .layout import (
     chunk_name,
     chunk_of,
     duckdb_path,
+    legacy_chunk_name,
     unmerged,
     write_json_atomic,
 )
@@ -526,6 +527,10 @@ def _check_unique_names(
     seen: dict[str, SdfSource] = {}
     out: list[SdfSource] = []
     for src in sources:
+        if src.local_path is not None and src.name not in exact:
+            legacy = legacy_chunk_name(src.local_path, src.name)
+            if legacy != src.name and legacy in exact:
+                src = replace(src, name=legacy)
         if src.name not in exact:
             alike = folded.get(chunk_key(src.name), [])
             have = next((c for c in alike if _is_file_of(src, c)), None)
