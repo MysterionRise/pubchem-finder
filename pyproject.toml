@@ -123,6 +123,11 @@ markers = [
     "live: tests that call the real PubChem API (set PUBCHEM_LIVE=1)",
 ]
 
+# Used only by examples/openai_agents.py; not a dependency of the project.
+[[tool.mypy.overrides]]
+module = "agents.*"
+ignore_missing_imports = true
+
 [tool.coverage.run]
 source = ["src"]
 branch = true
