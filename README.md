@@ -448,3 +448,32 @@ that code is in the git history before commit `06619d9`.
 ## License
 
 MIT. See [LICENSE](https://github.com/MysterionRise/pubchem-finder/blob/master/LICENSE).
+
+## Unreleased -> Added
+
+[examples/openai_agents.py](https://github.com/MysterionRise/pubchem-finder/blob/master/examples/openai_agents.py)
+(`uv run examples/openai_agents.py`, set OPENAI_API_KEY = sk-........)
+
+
+Sample Output: 
+
+Aspirin (CID 2244) has few genuinely close analogues in the available search. PubChem’s live search returned these nearest recognizable relatives:
+
+| Compound | Main structural change vs aspirin | ECFP4 similarity |
+|---|---|---:|
+| Salicylic acid (CID 338) | Removes the acetyl group, converting the phenoxy acetate into a phenol | 0.464 |
+| Methyl salicylate (CID 4133) | Replaces aspirin’s carboxylic acid with a methyl ester; retains the ortho phenol | 0.364 |
+| Benzoic acid (CID 243) | Removes the ortho acetoxy substituent entirely | 0.357 |
+| Dibutyl phthalate (CID 3026) | Esterifies both carboxyl groups with butyl chains; much larger and more lipophilic | 0.324 |
+| Ferulic acid (CID 445858) | Replaces the aspirin ring substituents with a methoxyphenol–propenoic-acid motif | 0.256 |
+| 4-Hydroxybenzoic acid (CID 135) | Moves the hydroxyl from ortho to para and removes acetylation | 0.250 |
+
+The most chemically informative transformations are therefore:
+
+- **Deacetylation:** aspirin → salicylic acid.
+- **Acid esterification:** aspirin/salicylic-acid carboxyl group → methyl salicylate.
+- **Removal of substituents:** aspirin → benzoic acid.
+- **Increased lipophilicity and size:** phthalate analogues add butyl ester groups.
+
+The local search used the built-in demo set of 1,932 FDA-approved drugs, so it found only aspirin itself. The analogue list above came from a live PubChem similarity search; PubChem’s threshold is based on its own fingerprint, while the displayed ECFP4 values were calculated separately.
+
