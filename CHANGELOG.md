@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A failed SDF chunk download no longer ends a build that may already have run for hours.
+  Timeouts, dropped connections and the 408, 425, 429, 500, 502, 503 and 504 answers from
+  the mirror are retried, up to four attempts with the pause doubling from five seconds,
+  and every attempt resumes at the bytes already in the `.part` file. The directory listing
+  is retried the same way. A permanent answer (a 404, a checksum file that cannot be read)
+  still fails on the first try (#121).
+
 ## [2.2.3] - 2026-11-11
 
 ### Fixed
