@@ -875,11 +875,16 @@ def pubchem_exact(
     identity: Annotated[
         Identity, typer.Option(help="What counts as identical.")
     ] = Identity.same_stereo_isotope,
+    max_records: Annotated[
+        int, typer.Option("--max", min=1, max=200, help="Max hits.")
+    ] = 25,
     as_json: JsonFlag = False,
 ) -> None:
     """The PubChem record(s) for exactly this structure."""
     try:
-        result = service.pubchem_exact_match(smiles, identity_type=identity.value)
+        result = service.pubchem_exact_match(
+            smiles, identity_type=identity.value, max_records=max_records
+        )
     except PubChemFinderError as exc:
         _fail(exc)
         return

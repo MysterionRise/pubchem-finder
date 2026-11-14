@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Add `pubchem exact --max` and `max_records` for `pubchem_exact_match` (1 to 200, default 25). The result limit can now be raised when the search reaches it (#162).
+
 ## [2.2.3] - 2026-11-11
 
 ### Fixed

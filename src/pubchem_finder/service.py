@@ -499,11 +499,12 @@ def pubchem_substructure_search(
 
 
 def pubchem_exact_match(
-    smiles: str, identity_type: IdentityType = "same_stereo_isotope"
+    smiles: str,
+    identity_type: IdentityType = "same_stereo_isotope",
+    max_records: int = 25,
 ) -> RemoteSearchResults:
     """PubChem compounds identical to ``smiles``."""
     mol = parse_smiles(smiles)
-    max_records = 25
     records = get_client().exact_match(
         smiles, identity_type=identity_type, max_records=max_records
     )
