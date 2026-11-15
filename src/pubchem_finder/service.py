@@ -13,6 +13,7 @@ from typing import Literal
 
 import rdkit
 from rdkit import Chem, DataStructs, rdBase
+from rdkit.Chem import rdMolDescriptors
 
 from . import drawing, hints, medchem
 from .chemistry import MoleculeStandardizer, calculate_properties, is_druglike
@@ -138,6 +139,7 @@ def properties(smiles: str) -> Properties:
         {
             "input_smiles": smiles,
             "canonical_smiles": Chem.MolToSmiles(mol),
+            "molecular_formula": rdMolDescriptors.CalcMolFormula(mol),
             "lipinski_ok": is_druglike(mol),
             **props,
         }
