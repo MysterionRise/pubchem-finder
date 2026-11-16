@@ -372,6 +372,16 @@ async def test_find_analogues_prompt():
     assert "threshold=0.6" in default
 
 
+@pytest.mark.parametrize("name", ["compound_dossier", "find_analogues"])
+@pytest.mark.parametrize("compound", ["", "   "])
+async def test_prompts_refuse_a_blank_compound(name, compound):
+    from mcp.shared.exceptions import MCPError
+
+    async with Client(mcp) as client:
+        with pytest.raises(MCPError, match="compound must be a name"):
+            await client.get_prompt(name, {"compound": compound})
+
+
 @pytest.mark.parametrize("threshold", ["abc", "0", "1.5"])
 async def test_find_analogues_rejects_a_bad_threshold(threshold):
     from mcp.shared.exceptions import MCPError

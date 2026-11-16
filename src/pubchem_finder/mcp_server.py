@@ -497,10 +497,21 @@ async def index_status_resource() -> str:
 # --------------------------------------------------------------------------- #
 
 
+def _compound_argument(compound: str) -> str:
+    """The compound argument without surrounding space; refuses an empty one."""
+    stripped = compound.strip()
+    if not stripped:
+        raise MCPError(
+            INVALID_PARAMS, "compound must be a name, CID or SMILES, not empty"
+        )
+    return stripped
+
+
 @mcp.prompt(title="Compound dossier")
 def compound_dossier(compound: str) -> str:
     """A cited profile of one compound: identity, structure, drug-likeness, safety,
     pharmacology and bioassay targets. compound: a name, CID or SMILES."""
+    compound = _compound_argument(compound)
     return (
         f"Write a concise dossier on {compound} from PubChem, with a source for every "
         "fact.\n"
@@ -523,6 +534,7 @@ def find_analogues(compound: str, threshold: str = "0.6") -> str:
     """Close structural analogues of a compound, grouped into series and drawn with
     what changed. compound: a name, CID or SMILES; threshold: the minimum ECFP4
     Tanimoto similarity, 0-1 (default 0.6)."""
+    compound = _compound_argument(compound)
     try:
         value = float(threshold)
     except ValueError:
