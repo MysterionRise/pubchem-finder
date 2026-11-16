@@ -11,6 +11,11 @@ All notable changes to this project are documented here. The format follows
 - Batch inputs accept UTF-8 with a BOM, including standard input, without losing
   the first SMILES column or identifier (#113). Files that are not valid UTF-8
   report an actionable error instead of a traceback.
+- `draw -o missing-dir/out.png`, and `search` / `substructure` when the data
+  directory cannot be created (for example a wrong `PUBCHEM_FINDER_HOME`), ended in a
+  Python traceback instead of a single `error:` line like `index build` already prints
+  (#114). The write and the directory creation are now reported cleanly, naming the
+  path and, when it is the one `PUBCHEM_FINDER_HOME` sets, the setting.
 
 ## [2.2.3] - 2026-11-11
 

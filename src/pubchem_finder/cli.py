@@ -162,7 +162,14 @@ def _warn_once(warning: str | None, seen: list[str]) -> None:
 
 
 def _fail(exc: Exception) -> None:
-    typer.echo(f"error: {exc}", err=True)
+    # For a file error, show "<reason>: <path>" rather than str(exc): it drops the
+    # "[Errno N]" noise and, unlike repr, keeps the path readable on Windows (an
+    # OSError str doubles the backslashes there).
+    if isinstance(exc, OSError) and exc.filename and exc.strerror:
+        message = f"{exc.strerror}: {exc.filename}"
+    else:
+        message = str(exc)
+    typer.echo(f"error: {message}", err=True)
     raise typer.Exit(code=1)
 
 
@@ -327,7 +334,7 @@ def search(
             home=home,
             group_by_scaffold=group_by_scaffold,
         )
-    except PubChemFinderError as exc:
+    except (PubChemFinderError, OSError) as exc:
         _fail(exc)
         return
     if as_json:
@@ -409,7 +416,7 @@ def substructure(
         return
     try:
         result = run(query or "")
-    except PubChemFinderError as exc:
+    except (PubChemFinderError, OSError) as exc:
         _fail(exc)
         return
     if as_json:
@@ -513,7 +520,11 @@ def draw(
     except PubChemFinderError as exc:
         _fail(exc)
         return
-    output.write_bytes(png)
+    try:
+        output.write_bytes(png)
+    except OSError as exc:
+        _fail(exc)
+        return
     typer.echo(f"Wrote {output} ({len(smiles)} molecule(s), {len(png) / 1024:.0f} KB)")
 
 

@@ -25,6 +25,7 @@ from typing import Any
 
 from rdkit import Chem, rdBase
 
+from ..config import data_dir_error
 from ..core.exceptions import IndexBuildError, PubChemFinderError
 from ..data.sdf import SdfRecord
 from .builder import (
@@ -114,7 +115,10 @@ def ensure_built(home: Path, on_event: EventFn | None = None) -> Path:
     with _lock:
         if IndexPaths(target).load_manifest() is not None:
             return target
-        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise data_dir_error(exc, home) from exc
         building = target.parent / f".building-{uuid.uuid4().hex}"
         try:
             _build(building, on_event)
