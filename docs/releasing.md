@@ -66,6 +66,7 @@ order of steps and what to do when one fails.
 | Guard: no successful CI | Start it with `gh workflow run ci.yml --ref master` and run the release again once it passes. |
 | Versions, changelog and citation | `make release-prep` again, or fix what the error names. |
 | Lint, tests, package metadata, dry-run end-to-end | Fix, push a new commit, start again. |
+| Wheel smoke test | Check the runner log. If only one system fails against an unchanged release, check for a new dependency release and exclude a confirmed bad version in `pyproject.toml`, as 2.2.3 did for RDKit 2026.9.2. |
 | Tag already points elsewhere | Only if PyPI doesn't have the version: delete the tag (`gh api -X DELETE repos/MysterionRise/pubchem-finder/git/refs/tags/vx.y.z`; admins only) and start again. |
 | `publish`, `github-release`, `mcp-registry` or `plugin-branch` | **Re-run failed jobs** on the same run: every job resumes safely (`skip-existing` on PyPI, the tag and draft are reused). |
 | PyPI approval rejected | Re-run the job to approve later, or delete the draft release and the tag. |
