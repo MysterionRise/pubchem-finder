@@ -45,6 +45,49 @@ def test_uppercase_suffix_reuses_chunk_from_previous_release(tmp_path, sample_sd
     assert after.n_compounds == before.n_compounds > 0
 
 
+def test_legacy_chunk_is_reused_when_file_is_typed_in_another_case(
+    tmp_path, sample_sdfs
+):
+    sdf = tmp_path / "Library.SDF.GZ"
+    sdf.write_bytes(sample_sdfs[0].read_bytes())
+    alias = tmp_path / "library.SDF.GZ"
+    if not alias.exists():
+        os.link(sdf, alias)
+    paths = IndexPaths(tmp_path / "home")
+    build_chunks(paths, [SdfSource(name=sdf.name, local_path=sdf)], workers=1)
+    before = finalize(paths)
+
+    build_chunks(paths, sources([alias]), workers=1)
+    after = finalize(paths)
+
+    assert after.chunks == before.chunks == [sdf.name]
+    assert after.n_compounds == before.n_compounds
+
+
+def test_legacy_chunk_is_reused_when_new_name_belongs_to_another_file(
+    tmp_path, sample_sdfs
+):
+    modern = tmp_path / "a" / "LIB.sdf.gz"
+    legacy = tmp_path / "b" / "LIB.SDF.GZ"
+    for path, source in zip((modern, legacy), sample_sdfs, strict=False):
+        path.parent.mkdir()
+        path.write_bytes(source.read_bytes())
+    paths = IndexPaths(tmp_path / "home")
+    build_chunks(
+        paths,
+        [*sources([modern]), SdfSource(name=legacy.name, local_path=legacy)],
+        workers=1,
+    )
+    before = finalize(paths)
+
+    report = build_chunks(paths, sources([legacy]), workers=1)
+    after = finalize(paths)
+
+    assert report.skipped == [legacy.name]
+    assert after.chunks == before.chunks
+    assert after.n_compounds == before.n_compounds
+
+
 def test_finalized_layout_and_manifest(built_home):
     paths = IndexPaths(built_home)
     manifest = paths.load_manifest()

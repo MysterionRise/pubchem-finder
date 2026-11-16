@@ -389,7 +389,10 @@ def chunk_name(path: Path | str) -> str:
     filename = Path(path).name
     name = _without_sdf_suffixes(filename, ignore_case=True)
     if not name:
-        raise IndexBuildError(f"SDF filename {filename!r} has no chunk name")
+        raise IndexBuildError(
+            f"SDF filename {filename!r} has no chunk name. "
+            "Rename the file: its chunk is named after it, without .sdf and .gz."
+        )
     return name
 
 
