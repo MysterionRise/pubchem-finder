@@ -90,6 +90,8 @@ async def test_compound_properties_structured(aspirin_smiles):
         )
     assert result.is_error is False
     assert result.structured_content["canonical_smiles"] == "CC(=O)Oc1ccccc1C(=O)O"
+    assert result.structured_content["molecular_weight"] == 180.159
+    assert result.structured_content["tpsa"] == 63.6
     assert result.structured_content["lipinski_ok"] is True
 
 

@@ -1,6 +1,6 @@
 """Pydantic models shared by the CLI and the MCP server."""
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, field_serializer
 
 PUBCHEM_COMPOUND_URL = "https://pubchem.ncbi.nlm.nih.gov/compound/{cid}"
 
@@ -51,6 +51,11 @@ class Properties(BaseModel):
     num_aromatic_rings: int
     num_heavy_atoms: int
     lipinski_ok: bool = Field(description="Passes Lipinski's Rule of Five")
+
+    @field_serializer("molecular_weight", "logp", "tpsa")
+    def serialize_descriptor(self, value: float) -> float:
+        """Match the three-decimal precision of the human-readable CLI."""
+        return round(value, 3)
 
 
 class Standardized(BaseModel):
