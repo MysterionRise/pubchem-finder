@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `examples/openai_agents.py`: an OpenAI Agents SDK agent with pubchem-finder's tools over MCP (#106).
+
 ## [2.2.3] - 2026-11-11
 
 ### Fixed

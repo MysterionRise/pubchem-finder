@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = ["openai-agents>=0.24.0,<0.25.0"]
 # ///
 """Give an OpenAI Agents SDK agent pubchem-finder's tools over MCP.
@@ -13,6 +13,7 @@ import asyncio
 
 from agents import Agent, Runner
 from agents.mcp import MCPServerStdio
+import os
 
 QUESTION = "Find close analogues of aspirin and summarise what changed."
 
@@ -23,7 +24,7 @@ async def main() -> None:
         params={
             "command": "uvx",
             "args": ["--python", "3.14", "pubchem-finder", "mcp"],
-            "env": dict("os.environ"),
+            "env": dict(os.environ),
         },
         # The first uvx run downloads packages; the default 5 s timeout is too short.
         client_session_timeout_seconds=120,
