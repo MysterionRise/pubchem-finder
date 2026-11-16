@@ -27,7 +27,7 @@ All notable changes to this project are documented here. The format follows
   cut and widens the ask only while the cut is tied, instead of stopping at
   whichever tied compound FPSim2 happened to place in the slot.
 
-- Fixed Data directory: an empty or relative `--home`/`PUBCHEM_FINDER_HOME` silently uses the current directory, and printed commands break on shell characters (#231).
+- An empty `--home` is refused instead of using the current directory, and commands printed in messages quote the data directory with `shlex.quote` (part of #231).
 
 - CLI commands and MCP tools can start on Linux without RDKit’s drawing libraries. Drawing reports which libraries are needed when they are missing (#175).
 
