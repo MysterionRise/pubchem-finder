@@ -4,6 +4,7 @@ import contextlib
 import csv
 import json
 import os
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -1746,6 +1747,48 @@ def test_batch_to_stdout_and_argument_checks(tmp_path):
     no_column = tmp_path / "bad.csv"
     no_column.write_text("name\nx\n")
     assert runner.invoke(app, ["props", "-i", str(no_column)]).exit_code == 1
+
+
+@pytest.mark.parametrize("name", ["utf8_bom_smiles_first.csv", "utf8_bom_id_first.csv"])
+@pytest.mark.parametrize("command", ["props", "standardize", "triage"])
+def test_batch_utf8_bom_preserves_ids(tmp_path, name, command):
+    src = Path(__file__).parents[1] / "fixtures" / "batch" / name
+    out = tmp_path / "out.csv"
+    result = runner.invoke(app, [command, "-i", str(src), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    with out.open(encoding="utf-8", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    assert [(row["id"], row["smiles"], row["error"]) for row in rows] == [
+        ("ethanol", "CCO", "")
+    ]
+
+
+@pytest.mark.parametrize("command", ["props", "standardize", "triage"])
+def test_batch_stdin_utf8_bom_preserves_structure_and_id(command):
+    result = runner.invoke(app, [command, "-i", "-"], input="\ufeffCCO ethanol\n")
+    assert result.exit_code == 0, result.output
+    rows = list(csv.DictReader(result.stdout.splitlines()))
+    assert [(row["id"], row["smiles"], row["error"]) for row in rows] == [
+        ("ethanol", "CCO", "")
+    ]
+
+
+@pytest.mark.parametrize(
+    "command", ["props", "standardize", "triage", "search", "substructure"]
+)
+def test_batch_non_utf8_reports_error_without_emptying_output(tmp_path, command):
+    src = Path(__file__).parents[1] / "fixtures" / "batch" / "windows_1252.csv"
+    out = tmp_path / "out.csv"
+    out.write_text("precious,data\n")
+    result = runner.invoke(app, [command, "-i", str(src), "-o", str(out)])
+    assert result.exit_code == 1
+    assert "error:" in result.stderr
+    assert "UTF-8" in result.stderr
+    assert "save" in result.stderr.lower()
+    assert str(src) in result.stderr
+    assert "Traceback" not in result.output
+    assert isinstance(result.exception, SystemExit)
+    assert out.read_text() == "precious,data\n"
 
 
 # Hardening audit D2: the output was opened (and emptied) before the input was read,
