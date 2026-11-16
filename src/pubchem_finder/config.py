@@ -57,9 +57,13 @@ def cache_path(home: Path | str | None = None) -> Path:
 
 def data_dir_error(exc: OSError, home: Path | str | None = None) -> PubChemFinderError:
     """A clear error for a data directory that cannot be created, naming the path
-    and, when it came from ``PUBCHEM_FINDER_HOME``, the setting."""
-    via = f" (from ${HOME_ENV})" if os.environ.get(HOME_ENV) else ""
+    and, when that path is the one ``PUBCHEM_FINDER_HOME`` sets, the setting."""
+    resolved = resolve_home(home)
+    env = os.environ.get(HOME_ENV)
+    # Name the variable only when the failed directory is the one it points to,
+    # not merely because it happens to be set (an explicit --home can override it).
+    from_env = bool(env and resolved == Path(env).expanduser().resolve())
+    via = f" (from ${HOME_ENV})" if from_env else ""
     return PubChemFinderError(
-        f"cannot create the data directory {resolve_home(home)}{via}: "
-        f"{exc.strerror or exc}"
+        f"cannot create the data directory {resolved}{via}: {exc.strerror or exc}"
     )

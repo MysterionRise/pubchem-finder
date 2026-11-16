@@ -113,6 +113,17 @@ def test_an_uncreatable_data_directory_is_reported(tmp_path):
         demo.ensure_built(blocker / "home")
 
 
+def test_explicit_home_does_not_blame_the_env_var(tmp_path, monkeypatch):
+    # The directory came from an explicit path, so the error must not name
+    # PUBCHEM_FINDER_HOME just because it happens to be set elsewhere.
+    monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(tmp_path / "elsewhere"))
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where the data directory should be")
+    with pytest.raises(PubChemFinderError) as excinfo:
+        demo.ensure_built(blocker / "home")
+    assert "PUBCHEM_FINDER_HOME" not in str(excinfo.value)
+
+
 def test_half_moved_index_is_replaced(tmp_path):
     target = demo.demo_home(tmp_path)
     (target / "chunks").mkdir(parents=True)  # no manifest: not a finished index
