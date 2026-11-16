@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `compound_properties` and `props` include the molecular formula (#162).
+
 ## [2.2.3] - 2026-11-11
 
 ### Fixed

@@ -196,7 +196,7 @@ async def pubchem_lookup(
 async def compound_properties(smiles: str) -> Properties:
     """Calculate RDKit descriptors for a SMILES string.
 
-    Returns molecular weight, Crippen LogP, H-bond donors/acceptors, TPSA,
+    Returns molecular formula, molecular weight, Crippen LogP, H-bond donors/acceptors, TPSA,
     rotatable bonds, aromatic rings, heavy atoms, canonical SMILES and whether
     Lipinski's Rule of Five passes. Works for any valid SMILES, not only PubChem
     compounds.

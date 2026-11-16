@@ -519,6 +519,7 @@ def draw(
 
 PROPS_COLUMNS = [
     "canonical_smiles",
+    "molecular_formula",
     "molecular_weight",
     "logp",
     "num_h_donors",
