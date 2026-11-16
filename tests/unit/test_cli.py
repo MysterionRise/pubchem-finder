@@ -1545,17 +1545,24 @@ def test_index_build_reports_errors(tmp_path, monkeypatch):
     assert "mirror unreachable" in result.output
 
 
-def test_pubchem_exact_accepts_a_result_limit(pubchem_knowledge_api):
+@pytest.mark.parametrize(("limit", "truncated"), [(2, True), (3, False)])
+def test_pubchem_exact_accepts_a_result_limit(pubchem_knowledge_api, limit, truncated):
+    from tests.pubchem_fixtures import ASPIRIN, table
+
+    pubchem_knowledge_api["identity"].respond(
+        200, json=table(ASPIRIN, ASPIRIN | {"CID": 2245}, ASPIRIN | {"CID": 2246})
+    )
     result = runner.invoke(
-        app, ["pubchem", "exact", "CC(=O)Oc1ccccc1C(=O)O", "--max", "1", "--json"]
+        app,
+        ["pubchem", "exact", "CC(=O)Oc1ccccc1C(=O)O", "--max", str(limit), "--json"],
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert payload["max_records"] == 1
-    assert payload["truncated"] is True
+    assert payload["max_records"] == len(payload["hits"]) == limit
+    assert payload["truncated"] is truncated
     assert (
-        pubchem_knowledge_api["identity"].calls.last.request.url.params["MaxRecords"]
-        == "1"
+        "MaxRecords"
+        not in pubchem_knowledge_api["identity"].calls.last.request.url.params
     )
 
 

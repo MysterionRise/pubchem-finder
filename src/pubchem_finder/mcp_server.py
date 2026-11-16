@@ -337,8 +337,8 @@ async def pubchem_exact_match(
 
     identity_type controls what counts as identical: same_stereo_isotope
     (default, strictest), same_stereo, same_isotope, same_connectivity (ignores
-    stereo and isotopes, finds all stereoisomers), same_tautomer,
-    nonconflicting_stereo. max_records: 1-200.
+    stereo and isotopes), same_tautomer, nonconflicting_stereo.
+    max_records: 1-200; additional matches are omitted.
     """
     return await _run(
         service.pubchem_exact_match,

@@ -234,7 +234,7 @@ class PubChemClient:
         self,
         kind: Literal["fastsimilarity_2d", "fastsubstructure", "fastidentity"],
         smiles: str,
-        max_records: int = 25,
+        max_records: int | None = 25,
         **params: Any,
     ) -> list[CompoundRecord]:
         """
@@ -248,11 +248,13 @@ class PubChemClient:
         smiles = smiles.strip()
         if not smiles:
             raise BadQuery("SMILES must not be empty")
-        if not 1 <= max_records <= MAX_SEARCH_RECORDS:
+        if max_records is not None and not 1 <= max_records <= MAX_SEARCH_RECORDS:
             raise BadQuery(f"max_records must be between 1 and {MAX_SEARCH_RECORDS}")
         props = ",".join(PROPERTIES)
         url = f"{self.base_url}/compound/{kind}/smiles/property/{props}/JSON"
-        query = {**params, "MaxRecords": max_records}
+        query = dict(params)
+        if kind != "fastidentity" and max_records is not None:
+            query["MaxRecords"] = max_records
         try:
             payload = self.request("POST", url, params=query, data={"smiles": smiles})
         except CompoundNotFound:
@@ -279,9 +281,12 @@ class PubChemClient:
         self,
         smiles: str,
         identity_type: IdentityType = "same_stereo_isotope",
-        max_records: int = 25,
+        max_records: int | None = 25,
     ) -> list[CompoundRecord]:
-        """Compounds identical to ``smiles`` under ``identity_type``."""
+        """Compounds identical to ``smiles`` under ``identity_type``.
+
+        PubChem returns all identity matches. Pass ``None`` to keep them all.
+        """
         if identity_type not in IDENTITY_TYPES:
             raise BadQuery(f"identity_type must be one of {IDENTITY_TYPES}")
         return self.structure_search(

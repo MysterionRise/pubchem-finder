@@ -22,6 +22,7 @@ from .core.limits import check_atoms, check_length
 from .data import parsers
 from .data.cache import CacheStats, ResponseCache
 from .data.pug_rest import (
+    MAX_SEARCH_RECORDS,
     XREF_TYPES,
     AnnotationHeading,
     AnnotationNotFound,
@@ -504,16 +505,18 @@ def pubchem_exact_match(
     max_records: int = 25,
 ) -> RemoteSearchResults:
     """PubChem compounds identical to ``smiles``."""
+    if not 1 <= max_records <= MAX_SEARCH_RECORDS:
+        raise BadQuery(f"max_records must be between 1 and {MAX_SEARCH_RECORDS}")
     mol = parse_smiles(smiles)
     records = get_client().exact_match(
-        smiles, identity_type=identity_type, max_records=max_records
+        smiles, identity_type=identity_type, max_records=None
     )
     return RemoteSearchResults(
         query_smiles=smiles,
         search="identity",
         max_records=max_records,
-        truncated=len(records) >= max_records,
-        hits=_rank(mol, records),
+        truncated=len(records) > max_records,
+        hits=_rank(mol, records[:max_records]),
         note=IDENTITY_NOTE.format(identity_type=identity_type),
     )
 
