@@ -377,9 +377,9 @@ fetches pubchem-finder's from GitHub.
   command or client config you write yourself.
 - **Linux on ARM (aarch64):** FPSim2 publishes no wheel there, so installing needs a C++
   compiler to build it.
-- **`ImportError: libXrender.so.1` on Linux** (a server or a slim container without a
-  desktop): RDKit's drawing code needs three system libraries there. On Debian or
-  Ubuntu: `apt-get install libxrender1 libxext6 libexpat1`.
+- **`RDKit drawing is unavailable` on Linux.** Drawing needs three system libraries.
+  Other commands and tools work without them. On Debian or Ubuntu, install them with
+  `apt-get install libxrender1 libxext6 libexpat1`.
 - **Starting over:** `pubchem-finder cache clear` empties the response cache; deleting the
   data directory removes the index too.
 
