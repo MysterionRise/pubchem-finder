@@ -1018,8 +1018,14 @@ def cache_info(home: HomeOpt = None) -> None:
     if stats is None:
         typer.echo("No PubChem response cache yet.")
         return
+    limit = (
+        "no limit"
+        if stats.max_bytes == float("inf")
+        else f"{stats.max_bytes / 1e6:.0f} MB"
+    )
     typer.echo(
-        f"{stats.path}: {stats.entries:,} responses, {stats.size_bytes / 1e6:.1f} MB"
+        f"{stats.path}: {stats.entries:,} responses, {stats.size_bytes / 1e6:.1f} MB "
+        f"(limit {limit})"
     )
 
 
