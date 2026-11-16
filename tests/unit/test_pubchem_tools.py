@@ -361,7 +361,7 @@ def test_unexpected_payloads_become_pubchem_errors(fn, payload, monkeypatch):
 def test_shared_client_uses_cache_when_enabled(tmp_path, monkeypatch):
     monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(tmp_path))
     monkeypatch.setenv("PUBCHEM_FINDER_CACHE", "1")
-    monkeypatch.setattr(service, "_client", None)
+    monkeypatch.setattr(service, "_clients", {})
     client = service.get_client()
     assert client.cache is not None
     assert client.cache.path == tmp_path / "cache" / "pubchem-http.sqlite"
@@ -370,15 +370,15 @@ def test_shared_client_uses_cache_when_enabled(tmp_path, monkeypatch):
     assert stats is not None
     assert stats.entries == 1
     assert service.cache_clear(tmp_path) == 1
-    monkeypatch.setattr(service, "_client", None)
+    monkeypatch.setattr(service, "_clients", {})
 
 
 def test_shared_client_without_cache(monkeypatch, tmp_path):
-    monkeypatch.setattr(service, "_client", None)
+    monkeypatch.setattr(service, "_clients", {})
     assert service.get_client().cache is None  # PUBCHEM_FINDER_CACHE=0 in tests
     assert service.cache_stats(tmp_path / "none") is None
     assert service.cache_clear(tmp_path / "none") == 0
-    monkeypatch.setattr(service, "_client", None)
+    monkeypatch.setattr(service, "_clients", {})
 
 
 def test_unwritable_cache_falls_back(monkeypatch, tmp_path):
@@ -386,9 +386,9 @@ def test_unwritable_cache_falls_back(monkeypatch, tmp_path):
     blocker.write_text("not a directory")
     monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(blocker))
     monkeypatch.setenv("PUBCHEM_FINDER_CACHE", "1")
-    monkeypatch.setattr(service, "_client", None)
+    monkeypatch.setattr(service, "_clients", {})
     assert service.get_client().cache is None
-    monkeypatch.setattr(service, "_client", None)
+    monkeypatch.setattr(service, "_clients", {})
 
 
 # --------------------------------------------------------------------------- #
@@ -415,7 +415,9 @@ def test_live_structure_searches():
 @pytest.mark.live
 @live
 def test_live_compound_information(monkeypatch):
-    monkeypatch.setattr(service, "_client", PubChemClient())
+    monkeypatch.setattr(
+        service, "_clients", {service.resolve_home(None): PubChemClient()}
+    )
     assert "50-78-2" in service.pubchem_synonyms(2244).cas_numbers
     assert service.pubchem_xrefs(2244).counts["PubMedID"] > 0
     assert service.pubchem_description(2244).title == "Aspirin"
@@ -425,4 +427,4 @@ def test_live_compound_information(monkeypatch):
     ghs = service.pubchem_annotations(2244, "GHS Classification")
     assert ghs.annotations
     assert ghs.sources
-    monkeypatch.setattr(service, "_client", None)
+    monkeypatch.setattr(service, "_clients", {})

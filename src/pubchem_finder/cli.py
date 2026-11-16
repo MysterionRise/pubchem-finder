@@ -162,7 +162,14 @@ def _warn_once(warning: str | None, seen: list[str]) -> None:
 
 
 def _fail(exc: Exception) -> None:
-    typer.echo(f"error: {exc}", err=True)
+    # For a file error, show "<reason>: <path>" rather than str(exc): it drops the
+    # "[Errno N]" noise and, unlike repr, keeps the path readable on Windows (an
+    # OSError str doubles the backslashes there).
+    if isinstance(exc, OSError) and exc.filename and exc.strerror:
+        message = f"{exc.strerror}: {exc.filename}"
+    else:
+        message = str(exc)
+    typer.echo(f"error: {message}", err=True)
     raise typer.Exit(code=1)
 
 
@@ -171,11 +178,12 @@ def lookup(
     query: Annotated[str, typer.Argument(help="Name, CID, SMILES or InChIKey.")],
     by: Annotated[By, typer.Option(help="Identifier type of QUERY.")] = By.name,
     limit: Annotated[int, typer.Option(min=1, help="Max records.")] = 5,
+    home: HomeOpt = None,
     as_json: JsonFlag = False,
 ) -> None:
     """Look a compound up in PubChem."""
     try:
-        result = service.lookup(query, by=by.value, limit=limit)
+        result = service.lookup(query, by=by.value, limit=limit, home=home)
     except CompoundNotFound as exc:
         hint = (
             " QUERY was read as a name; for a CID, SMILES or InChIKey add "
@@ -327,7 +335,7 @@ def search(
             home=home,
             group_by_scaffold=group_by_scaffold,
         )
-    except PubChemFinderError as exc:
+    except (PubChemFinderError, OSError) as exc:
         _fail(exc)
         return
     if as_json:
@@ -409,7 +417,7 @@ def substructure(
         return
     try:
         result = run(query or "")
-    except PubChemFinderError as exc:
+    except (PubChemFinderError, OSError) as exc:
         _fail(exc)
         return
     if as_json:
@@ -513,7 +521,11 @@ def draw(
     except PubChemFinderError as exc:
         _fail(exc)
         return
-    output.write_bytes(png)
+    try:
+        output.write_bytes(png)
+    except OSError as exc:
+        _fail(exc)
+        return
     typer.echo(f"Wrote {output} ({len(smiles)} molecule(s), {len(png) / 1024:.0f} KB)")
 
 
@@ -839,12 +851,13 @@ def pubchem_similarity(
     max_records: Annotated[
         int, typer.Option("--max", min=1, max=200, help="Max hits.")
     ] = 25,
+    home: HomeOpt = None,
     as_json: JsonFlag = False,
 ) -> None:
     """Similar compounds across all of PubChem (ranked by ECFP4 Tanimoto)."""
     try:
         result = service.pubchem_similarity_search(
-            smiles, threshold=threshold, max_records=max_records
+            smiles, threshold=threshold, max_records=max_records, home=home
         )
     except PubChemFinderError as exc:
         _fail(exc)
@@ -858,11 +871,14 @@ def pubchem_substructure(
     max_records: Annotated[
         int, typer.Option("--max", min=1, max=200, help="Max hits.")
     ] = 25,
+    home: HomeOpt = None,
     as_json: JsonFlag = False,
 ) -> None:
     """Compounds across all of PubChem that contain the given structure."""
     try:
-        result = service.pubchem_substructure_search(smiles, max_records=max_records)
+        result = service.pubchem_substructure_search(
+            smiles, max_records=max_records, home=home
+        )
     except PubChemFinderError as exc:
         _fail(exc)
         return
@@ -878,12 +894,13 @@ def pubchem_exact(
     max_records: Annotated[
         int, typer.Option("--max", min=1, max=200, help="Max hits.")
     ] = 25,
+    home: HomeOpt = None,
     as_json: JsonFlag = False,
 ) -> None:
     """The PubChem record(s) for exactly this structure."""
     try:
         result = service.pubchem_exact_match(
-            smiles, identity_type=identity.value, max_records=max_records
+            smiles, identity_type=identity.value, max_records=max_records, home=home
         )
     except PubChemFinderError as exc:
         _fail(exc)
@@ -895,11 +912,12 @@ def pubchem_exact(
 def pubchem_synonyms(
     cid: Annotated[int, typer.Argument(min=1, help="PubChem CID.")],
     limit: Annotated[int, typer.Option(min=1, max=500, help="Max names.")] = 25,
+    home: HomeOpt = None,
     as_json: JsonFlag = False,
 ) -> None:
     """Names and CAS numbers of a compound."""
     try:
-        result = service.pubchem_synonyms(cid, limit=limit)
+        result = service.pubchem_synonyms(cid, limit=limit, home=home)
     except PubChemFinderError as exc:
         _fail(exc)
         return
@@ -916,11 +934,12 @@ def pubchem_synonyms(
 @pubchem_app.command("xrefs")
 def pubchem_xrefs(
     cid: Annotated[int, typer.Argument(min=1, help="PubChem CID.")],
+    home: HomeOpt = None,
     as_json: JsonFlag = False,
 ) -> None:
     """Registry IDs, PubMed articles and patents linked to a compound."""
     try:
-        result = service.pubchem_xrefs(cid)
+        result = service.pubchem_xrefs(cid, home=home)
     except PubChemFinderError as exc:
         _fail(exc)
         return
@@ -939,11 +958,12 @@ def pubchem_xrefs(
 @pubchem_app.command("describe")
 def pubchem_describe(
     cid: Annotated[int, typer.Argument(min=1, help="PubChem CID.")],
+    home: HomeOpt = None,
     as_json: JsonFlag = False,
 ) -> None:
     """Curated descriptions of a compound, with sources."""
     try:
-        result = service.pubchem_description(cid)
+        result = service.pubchem_description(cid, home=home)
     except PubChemFinderError as exc:
         _fail(exc)
         return
@@ -962,12 +982,13 @@ def pubchem_annotations(
     max_chars: Annotated[
         int, typer.Option(min=500, max=30000, help="Text budget.")
     ] = 6000,
+    home: HomeOpt = None,
     as_json: JsonFlag = False,
 ) -> None:
     """One curated section of a compound's PubChem page (e.g. GHS safety)."""
     try:
         result = service.pubchem_annotations(
-            cid, cast(AnnotationHeading, heading.value), max_chars=max_chars
+            cid, cast(AnnotationHeading, heading.value), max_chars=max_chars, home=home
         )
     except PubChemFinderError as exc:
         _fail(exc)
@@ -988,11 +1009,12 @@ def pubchem_annotations(
 @pubchem_app.command("bioactivity")
 def pubchem_bioactivity(
     cid: Annotated[int, typer.Argument(min=1, help="PubChem CID.")],
+    home: HomeOpt = None,
     as_json: JsonFlag = False,
 ) -> None:
     """Summary of PubChem BioAssay results for a compound."""
     try:
-        result = service.pubchem_bioactivity(cid)
+        result = service.pubchem_bioactivity(cid, home=home)
     except PubChemFinderError as exc:
         _fail(exc)
         return
