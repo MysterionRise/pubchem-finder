@@ -183,6 +183,29 @@ async def test_substructure_search_tool_without_pattern_index(built_home, monkey
     assert "index build --with-substructure" in result.content[0].text
 
 
+@pytest.mark.parametrize(("limit", "truncated"), [(2, True), (3, False)])
+async def test_pubchem_exact_tool_accepts_a_result_limit(
+    pubchem_knowledge_api, limit, truncated
+):
+    from tests.pubchem_fixtures import ASPIRIN, table
+
+    pubchem_knowledge_api["identity"].respond(
+        200, json=table(ASPIRIN, ASPIRIN | {"CID": 2245}, ASPIRIN | {"CID": 2246})
+    )
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "pubchem_exact_match",
+            {"smiles": "CC(=O)Oc1ccccc1C(=O)O", "max_records": limit},
+        )
+    assert not result.is_error
+    assert (
+        result.structured_content["max_records"]
+        == len(result.structured_content["hits"])
+        == limit
+    )
+    assert result.structured_content["truncated"] is truncated
+
+
 async def test_pubchem_knowledge_tools(pubchem_knowledge_api):
     async with Client(mcp) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}

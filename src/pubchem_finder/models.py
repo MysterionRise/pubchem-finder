@@ -238,7 +238,7 @@ class RemoteSearchResults(BaseModel):
     )
     max_records: int
     truncated: bool = Field(
-        description="PubChem stopped at max_records; more may exist"
+        description="Identity matches were omitted, or another search reached its limit"
     )
     hits: list[RemoteHit]
     note: str
