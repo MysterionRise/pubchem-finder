@@ -130,12 +130,6 @@ jobs:
           uvx check-jsonschema --schemafile \
             https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json server.json
 
-      - name: Smoke-test the wheel in a clean environment
-        run: |
-          uv venv .smoke --python 3.12
-          uv pip install --python .smoke dist/*.whl
-          .smoke/bin/python scripts/smoke.py --command .smoke/bin/pubchem-finder
-
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
@@ -145,6 +139,38 @@ jobs:
         with:
           name: release-notes
           path: release-notes.md
+
+  smoke:
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - name: Smoke-test the wheel in a clean environment
+        shell: bash
+        run: |
+          uv venv .smoke --python 3.12
+          uv pip install --python .smoke dist/*.whl
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            .smoke/Scripts/python.exe scripts/smoke.py --command .smoke/Scripts/pubchem-finder.exe
+          else
+            .smoke/bin/python scripts/smoke.py --command .smoke/bin/pubchem-finder
+          fi
 
   # Dry runs also build a real index from PubChem's first SDF chunk and run every
   # command against it (about 7 minutes).
@@ -159,7 +185,7 @@ jobs:
 
   # Cheap, undoable steps before the one that can't be undone (PyPI).
   prepare-release:
-    needs: build
+    needs: smoke
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
