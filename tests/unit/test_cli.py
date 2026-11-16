@@ -4,6 +4,7 @@ import contextlib
 import csv
 import json
 import os
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -1700,6 +1701,31 @@ def test_draw_command(tmp_path):
     assert "reference" in bad.output
 
 
+def test_draw_reports_an_unwritable_output_path(tmp_path):
+    missing = tmp_path / "missing" / "grid.png"
+    result = runner.invoke(app, ["draw", "CCO", "-o", str(missing)])
+    assert result.exit_code == 1
+    assert result.output.startswith("error:")
+    assert str(missing) in result.output
+
+
+@pytest.mark.parametrize(
+    ("command", "query"),
+    [("search", "CCO"), ("substructure", "c1ccccc1")],
+)
+def test_search_reports_an_uncreatable_data_directory(
+    tmp_path, monkeypatch, command, query
+):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where the data directory should be")
+    monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(blocker / "home"))
+    monkeypatch.setenv("PUBCHEM_FINDER_DEMO", "1")
+    result = runner.invoke(app, [command, query])
+    assert result.exit_code == 1
+    assert "cannot create the data directory" in result.output
+    assert "PUBCHEM_FINDER_HOME" in result.output
+
+
 def test_batch_props_standardize_triage(tmp_path):
     src = tmp_path / "in.smi"
     src.write_text("CC(=O)[O-].[Na+] salt\nnope( broken\nCCO\n")
@@ -1746,6 +1772,48 @@ def test_batch_to_stdout_and_argument_checks(tmp_path):
     no_column = tmp_path / "bad.csv"
     no_column.write_text("name\nx\n")
     assert runner.invoke(app, ["props", "-i", str(no_column)]).exit_code == 1
+
+
+@pytest.mark.parametrize("name", ["utf8_bom_smiles_first.csv", "utf8_bom_id_first.csv"])
+@pytest.mark.parametrize("command", ["props", "standardize", "triage"])
+def test_batch_utf8_bom_preserves_ids(tmp_path, name, command):
+    src = Path(__file__).parents[1] / "fixtures" / "batch" / name
+    out = tmp_path / "out.csv"
+    result = runner.invoke(app, [command, "-i", str(src), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    with out.open(encoding="utf-8", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    assert [(row["id"], row["smiles"], row["error"]) for row in rows] == [
+        ("ethanol", "CCO", "")
+    ]
+
+
+@pytest.mark.parametrize("command", ["props", "standardize", "triage"])
+def test_batch_stdin_utf8_bom_preserves_structure_and_id(command):
+    result = runner.invoke(app, [command, "-i", "-"], input="\ufeffCCO ethanol\n")
+    assert result.exit_code == 0, result.output
+    rows = list(csv.DictReader(result.stdout.splitlines()))
+    assert [(row["id"], row["smiles"], row["error"]) for row in rows] == [
+        ("ethanol", "CCO", "")
+    ]
+
+
+@pytest.mark.parametrize(
+    "command", ["props", "standardize", "triage", "search", "substructure"]
+)
+def test_batch_non_utf8_reports_error_without_emptying_output(tmp_path, command):
+    src = Path(__file__).parents[1] / "fixtures" / "batch" / "windows_1252.csv"
+    out = tmp_path / "out.csv"
+    out.write_text("precious,data\n")
+    result = runner.invoke(app, [command, "-i", str(src), "-o", str(out)])
+    assert result.exit_code == 1
+    assert "error:" in result.stderr
+    assert "UTF-8" in result.stderr
+    assert "save" in result.stderr.lower()
+    assert str(src) in result.stderr
+    assert "Traceback" not in result.output
+    assert isinstance(result.exception, SystemExit)
+    assert out.read_text() == "precious,data\n"
 
 
 # Hardening audit D2: the output was opened (and emptied) before the input was read,
