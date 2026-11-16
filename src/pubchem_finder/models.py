@@ -42,6 +42,7 @@ class Properties(BaseModel):
 
     input_smiles: str
     canonical_smiles: str
+    molecular_formula: str
     molecular_weight: float
     logp: float
     num_h_donors: int
@@ -237,7 +238,7 @@ class RemoteSearchResults(BaseModel):
     )
     max_records: int
     truncated: bool = Field(
-        description="PubChem stopped at max_records; more may exist"
+        description="Identity matches were omitted, or another search reached its limit"
     )
     hits: list[RemoteHit]
     note: str

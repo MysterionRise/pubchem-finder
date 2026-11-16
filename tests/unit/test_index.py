@@ -17,7 +17,7 @@ from pubchem_finder.index import engine as engine_mod
 from pubchem_finder.index.builder import SdfSource, build_chunks, finalize
 from pubchem_finder.index.engine import LocalIndex, choose_in_memory
 from pubchem_finder.index.layout import IndexPaths, chunk_name
-from tests.conftest import CHUNK_NAMES, N_GOOD
+from tests.conftest import CHUNK_NAMES, N_GOOD, write_sdf
 
 ASPIRIN = "CC(=O)Oc1ccccc1C(=O)O"
 
@@ -262,6 +262,30 @@ def test_fpsim2_version_warning_stays_off_stdout(built_home, monkeypatch, capsys
     assert "RDKit version" in captured.err
 
 
+def test_identical_fingerprints_break_tie_by_cid(tmp_path):
+    """Two compounds with identical fingerprints tie on score: top_k must cut
+    after IDs break the tie, so the lower CID wins whoever FPSim2 returned."""
+    from rdkit import Chem
+
+    aspirin = "CC(=O)Oc1ccccc1C(=O)O"
+    # The 11C twin of aspirin has the same Morgan fingerprint; store it first so
+    # FPSim2's own order favours it when the search cuts at top_k.
+    sdf = write_sdf(
+        tmp_path / "Compound_000000001_000500000.sdf.gz",
+        [
+            (450661, aspirin, "11C-labelled aspirin", "new"),
+            (2244, aspirin, "2-acetyloxybenzoic acid", "new"),
+        ],
+    )
+    paths = IndexPaths(tmp_path)
+    build_chunks(paths, sources([sdf]), workers=1)
+    finalize(paths)
+    index = LocalIndex(tmp_path, mode="memory")
+    query = Chem.MolFromSmiles(aspirin)
+    assert index.search(query, 0.5, 1) == [(2244, 1.0)]
+    assert index.search(query, 0.5, 2) == [(2244, 1.0), (450661, 1.0)]
+
+
 def test_search_breaks_ties_by_cid(built_home, monkeypatch):
     """FPSim2 returns equal scores in thread order; ties must come lowest CID first."""
     import numpy as np
@@ -446,6 +470,30 @@ def test_overlapping_chunks_give_each_substructure_hit_once(overlap_home):
     assert [h.cid for h in found.hits] == [243, 338, 2244, 4133]
 
 
+def test_finalize_refuses_duplicate_id_when_invalid_smiles_tag_is_replaced(tmp_path):
+    """Issue #169: an invalid tag must not hide a different structure sharing its ID."""
+    from rdkit import Chem
+
+    first_path = tmp_path / "tagged.sdf"
+    second_path = tmp_path / "untagged.sdf"
+    for path, smiles, invalid_tag in (
+        (first_path, "CCO", True),
+        (second_path, "CCC", False),
+    ):
+        molecule = Chem.MolFromSmiles(smiles)
+        molecule.SetProp("PUBCHEM_COMPOUND_CID", "4242")
+        if invalid_tag:
+            molecule.SetProp("PUBCHEM_SMILES", "not a smiles")
+        with Chem.SDWriter(str(path)) as writer:
+            writer.write(molecule)
+
+    paths = IndexPaths(tmp_path / "home")
+    build_chunks(paths, sources([first_path, second_path]), workers=1)
+
+    with pytest.raises(IndexBuildError, match="ID 4242 stands for different compounds"):
+        finalize(paths)
+
+
 def test_search_asks_for_more_when_duplicates_crowd_out_hits(built_home, monkeypatch):
     import numpy as np
     from rdkit import Chem
@@ -477,7 +525,42 @@ def test_search_asks_for_more_when_duplicates_crowd_out_hits(built_home, monkeyp
         (338, 0.8),
         (4133, 0.7),
     ]
-    assert asked == [3, 6]
+    # The first ask is one past the cut; the duplicate 2244/338 copies leave only
+    # two distinct CIDs in hand, so the search asks again and exhausts the hits.
+    assert asked == [4, 8]
+
+
+def test_search_widens_once_past_a_tie_at_the_cut(built_home, monkeypatch):
+    """A tie at the cut is complete once the lowest score in hand is below it.
+
+    The first fetch ends on a tie, so the score after the cut is no proof that
+    nothing outside the fetch ties with it; the second fetch shows a lower score,
+    which is. The search must stop there: two calls, not a doubling all the way
+    to the end of the hits (#159)."""
+    import numpy as np
+    from rdkit import Chem
+
+    rows = np.array(
+        [
+            (450661, 1.0),
+            (2244, 1.0),
+            (243, 0.8),
+            (338, 0.7),
+        ],
+        dtype=[("mol_id", "<u4"), ("coeff", "<f4")],
+    )
+    asked: list[int] = []
+
+    class StubEngine:
+        def top_k(self, query, k, **kwargs):
+            asked.append(k)
+            return rows[:k]
+
+    index = LocalIndex(built_home, mode="memory")
+    monkeypatch.setattr(index, "_ensure_loaded", lambda: (StubEngine(), index.merged))
+    index._in_memory = True
+    assert index.search(Chem.MolFromSmiles(ASPIRIN), 0.5, 1) == [(2244, 1.0)]
+    assert asked == [2, 4]
 
 
 # --- Index format ------------------------------------------------------------

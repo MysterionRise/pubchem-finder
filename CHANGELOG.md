@@ -9,6 +9,33 @@ All notable changes to this project are documented here. The format follows
 ### Added
 
 - `examples/openai_agents.py`: an OpenAI Agents SDK agent with pubchem-finder's tools over MCP (#106).
+- `compound_properties` and `props` include the molecular formula (#162).
+- Add `pubchem exact --max` and `max_records` for `pubchem_exact_match` (1 to 200, default 25). The result limit can now be raised when the search reaches it (#162).
+
+### Fixed
+
+- Batch inputs accept UTF-8 with a BOM, including standard input, without losing
+  the first SMILES column or identifier (#113). Files that are not valid UTF-8
+  report an actionable error instead of a traceback.
+- `draw -o missing-dir/out.png`, and `search` / `substructure` when the data
+  directory cannot be created (for example a wrong `PUBCHEM_FINDER_HOME`), ended in a
+  Python traceback instead of a single `error:` line like `index build` already prints
+  (#114). The write and the directory creation are now reported cleanly, naming the
+  path and, when it is the one `PUBCHEM_FINDER_HOME` sets, the setting.
+- `lookup` and the `pubchem ...` commands honour `--home DIR`. They now declare the option
+  the README documents, and the shared PubChem client is built per data directory, so
+  their response cache lands in `DIR/cache`, which is what `cache info --home DIR`
+  reports (#161).
+- Similarity search breaks score ties at the `top_k` cut by CID, so the answer no
+  longer depends on FPSim2's thread order (#159). With identical fingerprints,
+  as in aspirin and its 11C-labelled twin, `--top 1` could return either
+  compound; the lower CID now wins. The search asks FPSim2 for one hit past the
+  cut and widens the ask only while the cut is tied, instead of stopping at
+  whichever tied compound FPSim2 happened to place in the slot.
+- CLI commands and MCP tools can start on Linux without RDKit’s drawing libraries. Drawing reports which libraries are needed when they are missing (#175).
+- SDF indexing skips records with no atoms and replaces a `PUBCHEM_SMILES` tag that
+  RDKit cannot parse with a SMILES generated from the structure (#169). A chunk built
+  before this fix keeps its stored values until its source file changes and is rebuilt.
 
 ## [2.2.3] - 2026-11-11
 
