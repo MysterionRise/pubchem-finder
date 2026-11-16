@@ -1947,3 +1947,12 @@ def test_mcp_command_rejects_bad_options(monkeypatch, args):
     )
     result = runner.invoke(app, ["mcp", *args])
     assert result.exit_code == 2
+
+
+def test_resolve_home_treats_blank_as_default(monkeypatch):
+    from pubchem_finder.config import default_home, resolve_home
+
+    monkeypatch.delenv('PUBCHEM_FINDER_HOME', raising=False)
+    assert resolve_home('') == default_home()
+    assert resolve_home('   ') == default_home()
+

@@ -1,5 +1,6 @@
 """Tests for the commands and costs the index messages give."""
 
+import shlex
 from pathlib import Path
 
 import pytest
@@ -31,7 +32,9 @@ def test_commands_name_the_data_directory_unless_it_is_the_default(monkeypatch):
     custom = Path("/data/pubchem")
     assert hints.command("index status", custom).endswith(f"--home {custom}")
     spaced = Path("/Users/me/My Data")
-    assert hints.command("index status", spaced).endswith(f'--home "{spaced}"')
+    assert hints.command("index status", spaced).endswith(
+        f"--home {hints._quote(str(spaced))}"
+    )
 
 
 def test_build_hint_gives_the_command_and_its_cost():
@@ -66,3 +69,18 @@ def test_messages_name_a_command_that_runs_from_any_terminal(monkeypatch, tmp_pa
     assert f"`{launch} index build --home NEW_DIR`" in help_text
     assert "--sdf" in help_text  # the advice also fits people indexing their own files
     assert "`pubchem-finder " not in help_text
+
+
+def test_quote_uses_shlex_off_windows(monkeypatch):
+    monkeypatch.setattr(hints.sys, "platform", "linux")
+    assert hints._quote("a; rm -rf /") == shlex.quote("a; rm -rf /")
+    assert hints._quote("it's") == shlex.quote("it's")
+    assert hints._quote("plain") == "plain"
+
+
+def test_quote_uses_double_quotes_on_windows(monkeypatch):
+    monkeypatch.setattr(hints.sys, "platform", "win32")
+    assert hints._quote("plain") == "plain"
+    assert hints._quote(r"C:\My Data") == '"C:\\My Data"'
+    assert hints._quote('a"b') == '"a\\"b"'
+    assert hints._quote("") == '""'
