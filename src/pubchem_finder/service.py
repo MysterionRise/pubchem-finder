@@ -390,7 +390,12 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
             chunks_built=len(built),
             search_scope="demo" if demo_compounds else "none",
             demo_compounds=demo_compounds,
-            hint=hints.build_index(paths.home) + until_then,
+            hint=(
+                hints.finish_build(len(built))
+                if built
+                else hints.build_index(paths.home)
+            )
+            + until_then,
         )
     sub = manifest.substructure if paths.pattern_fingerprints.exists() else None
     hint_parts = [
