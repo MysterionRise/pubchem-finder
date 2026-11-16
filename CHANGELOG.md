@@ -26,7 +26,11 @@ All notable changes to this project are documented here. The format follows
   compound; the lower CID now wins. The search asks FPSim2 for one hit past the
   cut and widens the ask only while the cut is tied, instead of stopping at
   whichever tied compound FPSim2 happened to place in the slot.
+
 - Fixed Data directory: an empty or relative `--home`/`PUBCHEM_FINDER_HOME` silently uses the current directory, and printed commands break on shell characters (#231).
+
+- CLI commands and MCP tools can start on Linux without RDKit’s drawing libraries. Drawing reports which libraries are needed when they are missing (#175).
+
 
 ## [2.2.3] - 2026-11-11
 
