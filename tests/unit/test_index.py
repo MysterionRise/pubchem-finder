@@ -470,6 +470,30 @@ def test_overlapping_chunks_give_each_substructure_hit_once(overlap_home):
     assert [h.cid for h in found.hits] == [243, 338, 2244, 4133]
 
 
+def test_finalize_refuses_duplicate_id_when_invalid_smiles_tag_is_replaced(tmp_path):
+    """Issue #169: an invalid tag must not hide a different structure sharing its ID."""
+    from rdkit import Chem
+
+    first_path = tmp_path / "tagged.sdf"
+    second_path = tmp_path / "untagged.sdf"
+    for path, smiles, invalid_tag in (
+        (first_path, "CCO", True),
+        (second_path, "CCC", False),
+    ):
+        molecule = Chem.MolFromSmiles(smiles)
+        molecule.SetProp("PUBCHEM_COMPOUND_CID", "4242")
+        if invalid_tag:
+            molecule.SetProp("PUBCHEM_SMILES", "not a smiles")
+        with Chem.SDWriter(str(path)) as writer:
+            writer.write(molecule)
+
+    paths = IndexPaths(tmp_path / "home")
+    build_chunks(paths, sources([first_path, second_path]), workers=1)
+
+    with pytest.raises(IndexBuildError, match="ID 4242 stands for different compounds"):
+        finalize(paths)
+
+
 def test_search_asks_for_more_when_duplicates_crowd_out_hits(built_home, monkeypatch):
     import numpy as np
     from rdkit import Chem

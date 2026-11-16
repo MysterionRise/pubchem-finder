@@ -47,8 +47,9 @@ class SdfReader:
     """
     Iterate over the compounds in a (optionally gzipped) SDF file.
 
-    Records that RDKit cannot sanitize, or whose ID is not a whole number from 1
-    to :data:`MAX_ID`, are skipped and counted in :attr:`n_failed`;
+    Records that RDKit cannot sanitize, that have no atoms, or whose ID is not a
+    whole number from 1 to :data:`MAX_ID`, are skipped and counted in
+    :attr:`n_failed`;
     :attr:`skipped_id` keeps the first ID that could not be used, so the build can
     say why records are missing. The whole file is never loaded into memory.
 
