@@ -107,6 +107,49 @@ def test_cache_max_bytes_from_the_environment(monkeypatch):
     assert cache_max_bytes() == DEFAULT_MAX_BYTES
 
 
+def test_cache_max_bytes_inf_means_no_limit(monkeypatch):
+    import math
+
+    from pubchem_finder.config import cache_max_bytes
+
+    # "inf" used to crash in round(float("inf") * 1_000_000); it now means no limit.
+    for value in ("inf", "Infinity"):
+        monkeypatch.setenv("PUBCHEM_FINDER_CACHE_MAX_MB", value)
+        assert cache_max_bytes() == math.inf
+
+
+def test_no_limit_keeps_every_entry(tmp_path):
+    import math
+    import os
+
+    clock = Clock()
+    cache = ResponseCache(tmp_path / "cache.sqlite", max_bytes=math.inf, clock=clock)
+    for i in range(6):
+        clock.now += 1
+        cache.put(f"k{i}", os.urandom(4_000))  # would blow a small byte cap
+    assert cache.stats().entries == 6  # nothing evicted when there is no limit
+
+
+def test_the_file_shrinks_after_a_large_eviction(tmp_path):
+    import os
+
+    clock = Clock()
+    path = tmp_path / "cache.sqlite"
+    # Fill well past a small cap with incompressible bodies, then measure.
+    big = ResponseCache(path, max_bytes=40 * 1_000_000, clock=clock)
+    for i in range(400):
+        clock.now += 1
+        big.put(f"k{i}", os.urandom(100_000))  # ~40 MB of bodies
+    peak = path.stat().st_size
+    # Reopen with a far smaller cap: the trim pass drops the oldest and the
+    # freed pages are reclaimed, so the file on disk actually gets smaller.
+    trimmed = ResponseCache(path, max_bytes=5 * 1_000_000, clock=clock)
+    assert path.stat().st_size < peak
+    assert trimmed.stats().size_bytes <= trimmed.max_bytes
+    assert trimmed.get("k0") is None  # oldest gone
+    assert trimmed.get("k399") is not None  # newest kept
+
+
 @pytest.fixture
 def cached_client(tmp_path, monkeypatch):
     monkeypatch.setattr("pubchem_finder.data.pug_rest.time.sleep", lambda s: None)

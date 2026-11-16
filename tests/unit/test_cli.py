@@ -1663,6 +1663,15 @@ def test_cache_commands(tmp_path):
     assert "Removed 1 cached responses" in cleared.output
 
 
+def test_cache_info_shows_no_limit(tmp_path, monkeypatch):
+    from pubchem_finder.data.cache import ResponseCache
+
+    monkeypatch.setenv("PUBCHEM_FINDER_CACHE_MAX_MB", "inf")
+    ResponseCache(tmp_path / "cache" / "pubchem-http.sqlite").put("k", b"v")
+    info = runner.invoke(app, ["cache", "info", "--home", str(tmp_path)])
+    assert "(limit no limit)" in info.output
+
+
 def test_triage_single_and_json():
     text = runner.invoke(app, ["triage", "O=C1C(=Cc2ccccc2)SC(=S)N1"])
     assert text.exit_code == 0, text.output

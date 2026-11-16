@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- The PubChem response cache no longer grows without bound (#122). Expired entries
+  are pruned when the cache is opened and periodically as it is written, and once the
+  file passes a size limit the oldest entries are dropped and the freed space is
+  reclaimed so the file shrinks. The limit is 256 MB by default and is read from
+  SQLite's page counters, so the common in-bounds case stays cheap; set
+  `PUBCHEM_FINDER_CACHE_MAX_MB` to change it (in megabytes) or to `inf` for no limit.
+  `cache info` shows the limit.
+
 ## [2.2.3] - 2026-11-11
 
 ### Fixed

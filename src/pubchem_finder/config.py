@@ -6,6 +6,7 @@ pubchem-finder`` on macOS, ``%LOCALAPPDATA%\\pubchem-finder`` on Windows) and ca
 be overridden with ``PUBCHEM_FINDER_HOME`` or an explicit path.
 """
 
+import math
 import os
 from pathlib import Path
 
@@ -54,16 +55,21 @@ def cache_path(home: Path | str | None = None) -> Path:
     return resolve_home(home) / "cache" / "pubchem-http.sqlite"
 
 
-def cache_max_bytes() -> int:
+def cache_max_bytes() -> float:
     """The response cache's size limit in bytes (default 256 MB), set in megabytes
-    with ``PUBCHEM_FINDER_CACHE_MAX_MB``. An unreadable value falls back to the
-    default."""
+    with ``PUBCHEM_FINDER_CACHE_MAX_MB``. ``inf`` means no limit; an unreadable
+    value falls back to the default."""
     from .data.cache import DEFAULT_MAX_BYTES
 
     raw = os.environ.get(CACHE_MAX_MB_ENV)
     if raw is None:
         return DEFAULT_MAX_BYTES
     try:
-        return max(0, round(float(raw) * 1_000_000))
+        mb = float(raw)
     except ValueError:
         return DEFAULT_MAX_BYTES
+    if math.isinf(mb):
+        return math.inf  # "no limit"; keep as a float so nothing overflows
+    if math.isnan(mb):
+        return DEFAULT_MAX_BYTES
+    return max(0, round(mb * 1_000_000))

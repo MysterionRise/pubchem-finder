@@ -236,6 +236,10 @@ hit is scored here with ECFP4, the same fingerprint as the local index, and sort
 Successful responses are cached for 7 days, so repeated questions cost nothing and stay
 within PubChem's rate limits. `pubchem-finder cache info` shows the cache and
 `pubchem-finder cache clear` empties it; `PUBCHEM_FINDER_CACHE=0` turns it off.
+The cache is bounded: expired entries are pruned and, once the file passes a
+size limit, the oldest entries are dropped and the file is shrunk. The limit is
+256 MB by default; set `PUBCHEM_FINDER_CACHE_MAX_MB` to change it (in megabytes),
+or to `inf` for no limit.
 
 ### Pictures, triage and whole files
 
