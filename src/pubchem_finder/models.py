@@ -42,6 +42,7 @@ class Properties(BaseModel):
 
     input_smiles: str
     canonical_smiles: str
+    molecular_formula: str
     molecular_weight: float
     logp: float
     num_h_donors: int
