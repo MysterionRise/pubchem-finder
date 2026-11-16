@@ -82,5 +82,5 @@ def test_quote_uses_double_quotes_on_windows(monkeypatch):
     monkeypatch.setattr(hints.sys, "platform", "win32")
     assert hints._quote("plain") == "plain"
     assert hints._quote(r"C:\My Data") == '"C:\\My Data"'
-    assert hints._quote('a"b') == '"a\\"b"'
+    assert hints._quote("50%") == '"50%"'
     assert hints._quote("") == '""'

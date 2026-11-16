@@ -8,6 +8,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, cast
 
+import click
 import typer
 from pydantic import BaseModel
 
@@ -73,10 +74,32 @@ class HighlightMode(StrEnum):
     similarity_map = "similarity_map"
 
 
+class _HomeType(click.ParamType):
+    """A directory path that rejects an empty value.
+
+    Typer's callback only sees the converted value, where ``""`` has already become
+    ``Path(".")`` (the current directory). Checking the raw string has to happen
+    during conversion, which runs before any callback. An unset or empty
+    ``PUBCHEM_FINDER_HOME`` never reaches this: click treats it as not given.
+    """
+
+    name = "path"
+
+    def convert(self, value: Any, param: Any, ctx: Any) -> Path:
+        if isinstance(value, Path):
+            return value
+        if not str(value).strip():
+            raise typer.BadParameter(
+                "--home is empty; give a directory or leave the option out"
+            )
+        return Path(value)
+
+
 HomeOpt = Annotated[
     Path | None,
     typer.Option(
         "--home",
+        click_type=_HomeType(),
         envvar="PUBCHEM_FINDER_HOME",
         help="Data directory (default: platform user data dir).",
         show_default=False,

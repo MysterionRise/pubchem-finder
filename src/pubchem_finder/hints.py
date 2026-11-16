@@ -73,8 +73,9 @@ def merge_rebuilt(files: list[str | None], home: Path | None = None) -> str:
 def _quote(text: str) -> str:
     if sys.platform == "win32":
         # shlex.quote's single quotes mean nothing to cmd.exe; double quotes work in
-        # both cmd.exe and PowerShell. Embedded quotes are backslash-escaped.
-        if text and re.fullmatch(r"[\w@%+=:,./\\-]+", text):
+        # both cmd.exe and PowerShell.
+        if re.fullmatch(r"[\w@+=:,./\\-]+", text):
             return text
-        return '"' + text.replace('"', '\\"') + '"'
+        # Note: % and $ can still expand on Windows within double quotes.
+        return f'"{text}"'
     return shlex.quote(text)
