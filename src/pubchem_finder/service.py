@@ -449,7 +449,11 @@ SUBSTRUCTURE_NOTE = (
     "Every hit contains the query as a substructure. PubChem returns at most max_records "
     "hits; they are sorted by ecfp4_similarity to the query, so close analogues come first."
 )
-IDENTITY_NOTE = "Compounds PubChem considers identical to the query under identity_type={identity_type}."
+IDENTITY_NOTE = (
+    "Compounds PubChem considers identical to the query under identity_type={identity_type}. "
+    "Isotope-labelled or stereo variants can score below 1 in the ECFP4 column, because "
+    "that score ignores the labels that this identity rule treats as equal."
+)
 
 
 def _rank(query: Chem.Mol, records: list[CompoundRecord]) -> list[RemoteHit]:
