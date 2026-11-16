@@ -1765,6 +1765,13 @@ def test_batch_to_stdout_and_argument_checks(tmp_path):
     result = runner.invoke(app, ["props", "-i", str(src)])
     assert result.exit_code == 0
     assert "ethanol,CCO,CCO," in result.output
+    dst = tmp_path / "out.csv"
+    result = runner.invoke(app, ["props", "-i", str(src), "-o", str(dst)])
+    assert result.exit_code == 0
+    header, record = dst.read_text().splitlines()
+    columns = header.split(",")
+    assert columns[3] == "molecular_formula"
+    assert record.split(",")[3] == "C2H6O"
     both = runner.invoke(app, ["props", "CCO", "-i", str(src)])
     assert both.exit_code == 2
     neither = runner.invoke(app, ["props"])

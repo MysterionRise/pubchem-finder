@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `compound_properties` and `props` include the molecular formula (#162).
+
 ### Fixed
 
 - Batch inputs accept UTF-8 with a BOM, including standard input, without losing
