@@ -841,9 +841,10 @@ def _emit_hits(result: RemoteSearchResults, as_json: bool) -> None:
     # Stderr keeps stdout's hit rows unchanged for scripts that parse them.
     if result.note:
         typer.echo(result.note, err=True)
-    typer.echo(
-        "score column: ECFP4 similarity to the query (computed locally)", err=True
-    )
+    if result.hits:
+        typer.echo(
+            "score column: ECFP4 similarity to the query (computed locally)", err=True
+        )
     for hit in result.hits:
         sim = "  -  " if hit.ecfp4_similarity is None else f"{hit.ecfp4_similarity:.3f}"
         typer.echo(f"{sim}  CID {hit.cid:<10} {hit.smiles or ''}  {hit.title or ''}")

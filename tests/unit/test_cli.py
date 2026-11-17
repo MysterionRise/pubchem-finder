@@ -48,6 +48,30 @@ def test_pubchem_exact_labels_score_column(monkeypatch):
     assert "Stereoisomers score 1" in output, output
 
 
+def test_pubchem_exact_empty_results_omit_score_column_legend(monkeypatch):
+    stub = RemoteSearchResults(
+        query_smiles="CC(=O)Oc1ccccc1C(=O)O",
+        search="identity",
+        max_records=25,
+        truncated=False,
+        hits=[],
+        note=service.IDENTITY_NOTE.format(identity_type="same_connectivity"),
+    )
+    monkeypatch.setattr(service, "pubchem_exact_match", lambda *args, **kwargs: stub)
+    args = [
+        "pubchem",
+        "exact",
+        "CC(=O)Oc1ccccc1C(=O)O",
+        "--identity",
+        "same_connectivity",
+    ]
+
+    output = runner.invoke(app, args).output
+
+    assert "0 PubChem identity hit(s)" in output, output
+    assert "score column: ECFP4 similarity" not in output, output
+
+
 def test_pubchem_substructure_labels_score_column(monkeypatch):
     hit = RemoteHit(
         cid=1,
