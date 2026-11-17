@@ -90,8 +90,24 @@ async def test_compound_properties_structured(aspirin_smiles):
         )
     assert result.is_error is False
     assert result.structured_content["canonical_smiles"] == "CC(=O)Oc1ccccc1C(=O)O"
+    assert result.structured_content["molecular_weight"] == 180.159
+    assert result.structured_content["tpsa"] == 63.6
     assert result.structured_content["molecular_formula"] == "C9H8O4"
     assert result.structured_content["lipinski_ok"] is True
+
+
+@pytest.mark.parametrize("tool", ["compound_properties", "medchem_profile"])
+async def test_serialized_descriptors_match_for_equivalent_inputs(tool, aspirin_smiles):
+    keys = ("molecular_weight", "logp", "tpsa")
+    async with Client(mcp) as client:
+        for smiles in (aspirin_smiles, "OC(=O)c1ccccc1OC(C)=O"):
+            result = await client.call_tool(tool, {"smiles": smiles})
+            assert not result.is_error, result.content
+            assert tuple(result.structured_content[key] for key in keys) == (
+                180.159,
+                1.31,
+                63.6,
+            )
 
 
 async def test_invalid_smiles_is_tool_error(invalid_smiles):
