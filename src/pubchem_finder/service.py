@@ -451,8 +451,9 @@ SUBSTRUCTURE_NOTE = (
 )
 IDENTITY_NOTE = (
     "Compounds PubChem considers identical to the query under identity_type={identity_type}. "
-    "Isotope-labelled or stereo variants can score below 1 in the ECFP4 column, because "
-    "that score ignores the labels that this identity rule treats as equal."
+    "Isotope-labelled hits can score below 1 in the ECFP4 column: the fingerprint tells "
+    "isotopes apart, while this identity rule treats them as equal. Stereoisomers score 1, "
+    "because the fingerprint ignores stereo."
 )
 
 

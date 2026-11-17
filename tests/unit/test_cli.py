@@ -44,6 +44,8 @@ def test_pubchem_exact_labels_score_column(monkeypatch):
     assert "ECFP4" in before_first_hit, output
     assert "similarity" in before_first_hit, output
     assert "below 1" in output, output
+    assert "fingerprint tells isotopes apart" in output, output
+    assert "Stereoisomers score 1" in output, output
 
 
 def test_pubchem_substructure_labels_score_column(monkeypatch):
