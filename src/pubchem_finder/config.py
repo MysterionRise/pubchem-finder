@@ -22,6 +22,8 @@ DEMO_ENV = "PUBCHEM_FINDER_DEMO"
 def resolve_home(explicit: Path | str | None = None) -> Path:
     """Return the data directory: explicit path, then ``$PUBCHEM_FINDER_HOME``,
     then the platform default. The directory is not created."""
+    if explicit is not None and not str(explicit).strip():
+        explicit = None  # an empty path would otherwise resolve to the CWD
     if explicit is not None:
         return Path(explicit).expanduser().resolve()
     env = os.environ.get(HOME_ENV)

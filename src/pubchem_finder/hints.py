@@ -7,6 +7,8 @@ the data directory unless it is the default.
 """
 
 import re
+import shlex
+import sys
 from pathlib import Path
 
 from . import __version__
@@ -47,6 +49,15 @@ def build_index(home: Path | None = None) -> str:
     )
 
 
+def finish_build(chunks: int) -> str:
+    """What to do after a first build was stopped with some chunks finished."""
+    plural = "" if chunks == 1 else "s"
+    return (
+        f"A build was stopped after {chunks} chunk{plural}. Re-running the same "
+        "`index build` command finishes it: finished chunks are skipped."
+    )
+
+
 def add_substructure(home: Path | None = None) -> str:
     """How to add (or refresh) substructure search on an existing index."""
     return (
@@ -69,5 +80,11 @@ def merge_rebuilt(files: list[str | None], home: Path | None = None) -> str:
 
 
 def _quote(text: str) -> str:
-    # Double quotes work in POSIX shells, PowerShell and cmd.exe alike.
-    return f'"{text}"' if any(c.isspace() for c in text) else text
+    if sys.platform == "win32":
+        # shlex.quote's single quotes mean nothing to cmd.exe; double quotes work in
+        # both cmd.exe and PowerShell.
+        if re.fullmatch(r"[\w@+=:,./\\-]+", text):
+            return text
+        # Note: % and $ can still expand on Windows within double quotes.
+        return f'"{text}"'
+    return shlex.quote(text)

@@ -9,7 +9,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import duckdb
 import numpy as np
@@ -19,7 +19,7 @@ from rdkit import Chem
 
 from .. import hints
 from ..config import INDEX_MODE_ENV
-from ..core.exceptions import IndexNotBuilt
+from ..core.exceptions import IndexNotBuilt, InvalidInput
 from .layout import (
     ChunkStats,
     IndexPaths,
@@ -113,10 +113,12 @@ class LocalIndex:
         self, home: Path, mode: Mode | None = None, n_workers: int | None = None
     ):
         self.paths = IndexPaths(home)
-        env_mode = os.environ.get(INDEX_MODE_ENV, "auto")
-        self.mode: Mode = mode or (
-            env_mode if env_mode in ("memory", "disk") else "auto"
-        )  # type: ignore[assignment]
+        if mode is None:
+            env_mode = os.environ.get(INDEX_MODE_ENV, "auto")
+            if env_mode not in ("auto", "memory", "disk"):
+                raise InvalidInput(f"{INDEX_MODE_ENV} must be auto, memory, or disk.")
+            mode = cast(Mode, env_mode)
+        self.mode: Mode = mode
         self.n_workers = n_workers or SEARCH_WORKERS
         self._lock = threading.Lock()
         # One per engine, so a long substructure screen doesn't hold up similarity

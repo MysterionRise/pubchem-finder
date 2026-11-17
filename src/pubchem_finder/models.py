@@ -1,6 +1,8 @@
 """Pydantic models shared by the CLI and the MCP server."""
 
-from pydantic import BaseModel, Field, computed_field
+from typing import Annotated
+
+from pydantic import BaseModel, Field, PlainSerializer, computed_field
 
 PUBCHEM_COMPOUND_URL = "https://pubchem.ncbi.nlm.nih.gov/compound/{cid}"
 
@@ -37,16 +39,24 @@ class LookupResult(BaseModel):
     compounds: list[CompoundRecord]
 
 
+def _round_descriptor(value: float) -> float:
+    return round(value, 3)
+
+
+Descriptor = Annotated[float, PlainSerializer(_round_descriptor)]
+
+
 class Properties(BaseModel):
     """RDKit descriptors for one structure."""
 
     input_smiles: str
     canonical_smiles: str
-    molecular_weight: float
-    logp: float
+    molecular_formula: str
+    molecular_weight: Descriptor
+    logp: Descriptor
     num_h_donors: int
     num_h_acceptors: int
-    tpsa: float
+    tpsa: Descriptor
     num_rotatable_bonds: int
     num_aromatic_rings: int
     num_heavy_atoms: int
@@ -237,7 +247,7 @@ class RemoteSearchResults(BaseModel):
     )
     max_records: int
     truncated: bool = Field(
-        description="PubChem stopped at max_records; more may exist"
+        description="Identity matches were omitted, or another search reached its limit"
     )
     hits: list[RemoteHit]
     note: str
@@ -393,11 +403,11 @@ class MedchemProfile(BaseModel):
         default=None,
         description="Synthetic accessibility, 1 (easy) to 10 (very hard); None if unavailable",
     )
-    molecular_weight: float
-    logp: float
+    molecular_weight: Descriptor
+    logp: Descriptor
     num_h_donors: int
     num_h_acceptors: int
-    tpsa: float
+    tpsa: Descriptor
     num_rotatable_bonds: int
     lipinski_violations: list[str] = Field(description="Broken Rule-of-Five criteria")
     veber_ok: bool = Field(description="Rotatable bonds <= 10 and TPSA <= 140")

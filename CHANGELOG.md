@@ -6,8 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `compound_properties` and `props` include the molecular formula (#162).
+- Add `pubchem exact --max` and `max_records` for `pubchem_exact_match` (1 to 200, default 25). The result limit can now be raised when the search reaches it (#162).
+
 ### Fixed
 
+- Local index searches report invalid `PUBCHEM_FINDER_INDEX_MODE` values instead of silently choosing `auto` (#228).
+- `compound_properties`, `medchem_profile`, and the JSON output of `props` and `triage` serialize molecular weight, LogP, and TPSA to three decimal places. Batch CSV uses the same precision for these descriptors (#162).
 - Recognize mixed-case SDF and gzip suffixes, reject filenames without a chunk name, and reuse existing chunks named by older releases (#152).
 - Batch inputs accept UTF-8 with a BOM, including standard input, without losing
   the first SMILES column or identifier (#113). Files that are not valid UTF-8
@@ -27,7 +34,14 @@ All notable changes to this project are documented here. The format follows
   compound; the lower CID now wins. The search asks FPSim2 for one hit past the
   cut and widens the ask only while the cut is tied, instead of stopping at
   whichever tied compound FPSim2 happened to place in the slot.
+
+- An empty `--home` is refused instead of using the current directory, and commands printed in messages quote the data directory with `shlex.quote` (part of #231).
+
 - CLI commands and MCP tools can start on Linux without RDKit’s drawing libraries. Drawing reports which libraries are needed when they are missing (#175).
+- SDF indexing skips records with no atoms and replaces a `PUBCHEM_SMILES` tag that
+  RDKit cannot parse with a SMILES generated from the structure (#169). A chunk built
+  before this fix keeps its stored values until its source file changes and is rebuilt.
+
 
 ## [2.2.3] - 2026-11-11
 

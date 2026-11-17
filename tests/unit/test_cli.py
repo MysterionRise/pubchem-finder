@@ -11,8 +11,89 @@ from typer.testing import CliRunner
 
 from pubchem_finder import __version__, service
 from pubchem_finder.cli import app
+from pubchem_finder.models import RemoteHit, RemoteSearchResults
 
 runner = CliRunner()
+
+
+def test_pubchem_exact_labels_score_column(monkeypatch):
+    hit = RemoteHit(
+        cid=76973140,
+        smiles="CC(=O)Oc1ccccc1C(=O)O",
+        title="Acetylsalicylic Acid-d7",
+        ecfp4_similarity=0.405,
+    )
+    stub = RemoteSearchResults(
+        query_smiles="CC(=O)Oc1ccccc1C(=O)O",
+        search="identity",
+        max_records=25,
+        truncated=False,
+        hits=[hit],
+        note=service.IDENTITY_NOTE.format(identity_type="same_connectivity"),
+    )
+    monkeypatch.setattr(service, "pubchem_exact_match", lambda *args, **kwargs: stub)
+    args = [
+        "pubchem",
+        "exact",
+        "CC(=O)Oc1ccccc1C(=O)O",
+        "--identity",
+        "same_connectivity",
+    ]
+    output = runner.invoke(app, args).output
+    before_first_hit = output.partition("CID 76973140")[0]
+    assert "ECFP4" in before_first_hit, output
+    assert "similarity" in before_first_hit, output
+    assert "below 1" in output, output
+    assert "fingerprint tells isotopes apart" in output, output
+    assert "Stereoisomers score 1" in output, output
+
+
+def test_pubchem_exact_empty_results_omit_score_column_legend(monkeypatch):
+    stub = RemoteSearchResults(
+        query_smiles="CC(=O)Oc1ccccc1C(=O)O",
+        search="identity",
+        max_records=25,
+        truncated=False,
+        hits=[],
+        note=service.IDENTITY_NOTE.format(identity_type="same_connectivity"),
+    )
+    monkeypatch.setattr(service, "pubchem_exact_match", lambda *args, **kwargs: stub)
+    args = [
+        "pubchem",
+        "exact",
+        "CC(=O)Oc1ccccc1C(=O)O",
+        "--identity",
+        "same_connectivity",
+    ]
+
+    output = runner.invoke(app, args).output
+
+    assert "0 PubChem identity hit(s)" in output, output
+    assert "score column: ECFP4 similarity" not in output, output
+
+
+def test_pubchem_substructure_labels_score_column(monkeypatch):
+    hit = RemoteHit(
+        cid=1,
+        smiles="c1ccc2[nH]ccc2c1",
+        title="Indole",
+        ecfp4_similarity=1.0,
+    )
+    stub = RemoteSearchResults(
+        query_smiles="c1ccc2[nH]ccc2c1",
+        search="substructure",
+        max_records=50,
+        truncated=False,
+        hits=[hit],
+        note="",
+    )
+    monkeypatch.setattr(
+        service, "pubchem_substructure_search", lambda *args, **kwargs: stub
+    )
+    output = runner.invoke(app, ["pubchem", "substructure", "c1ccc2[nH]ccc2c1"]).output
+    before_first_hit = output.partition("CID 1 ")[0]
+    assert "ECFP4" in before_first_hit, output
+    assert "similarity" in before_first_hit, output
 
 
 def test_version():
@@ -101,6 +182,14 @@ def test_index_build_rejects_sdf_without_a_chunk_name(tmp_path):
     )
     assert result.exit_code == 1
     assert "no chunk name" in result.output
+
+
+def test_search_reports_invalid_index_mode(built_home, monkeypatch):
+    monkeypatch.setenv("PUBCHEM_FINDER_INDEX_MODE", "bogus")
+    result = runner.invoke(app, ["search", "CCO", "--home", str(built_home)])
+    assert result.exit_code == 1, result.output
+    assert "PUBCHEM_FINDER_INDEX_MODE" in result.output
+    assert "auto, memory, or disk" in result.output
 
 
 def test_index_build_from_sdf_then_status_and_search(tmp_path, sample_sdfs):
@@ -1589,6 +1678,27 @@ def test_index_build_reports_errors(tmp_path, monkeypatch):
     assert "mirror unreachable" in result.output
 
 
+@pytest.mark.parametrize(("limit", "truncated"), [(2, True), (3, False)])
+def test_pubchem_exact_accepts_a_result_limit(pubchem_knowledge_api, limit, truncated):
+    from tests.pubchem_fixtures import ASPIRIN, table
+
+    pubchem_knowledge_api["identity"].respond(
+        200, json=table(ASPIRIN, ASPIRIN | {"CID": 2245}, ASPIRIN | {"CID": 2246})
+    )
+    result = runner.invoke(
+        app,
+        ["pubchem", "exact", "CC(=O)Oc1ccccc1C(=O)O", "--max", str(limit), "--json"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["max_records"] == len(payload["hits"]) == limit
+    assert payload["truncated"] is truncated
+    assert (
+        "MaxRecords"
+        not in pubchem_knowledge_api["identity"].calls.last.request.url.params
+    )
+
+
 def test_pubchem_commands(pubchem_knowledge_api):
     aspirin = "CC(=O)Oc1ccccc1C(=O)O"
     sim = runner.invoke(app, ["pubchem", "similarity", aspirin, "--threshold", "90"])
@@ -1808,6 +1918,13 @@ def test_batch_to_stdout_and_argument_checks(tmp_path):
     result = runner.invoke(app, ["props", "-i", str(src)])
     assert result.exit_code == 0
     assert "ethanol,CCO,CCO," in result.output
+    dst = tmp_path / "out.csv"
+    result = runner.invoke(app, ["props", "-i", str(src), "-o", str(dst)])
+    assert result.exit_code == 0
+    header, record = dst.read_text().splitlines()
+    columns = header.split(",")
+    assert columns[3] == "molecular_formula"
+    assert record.split(",")[3] == "C2H6O"
     both = runner.invoke(app, ["props", "CCO", "-i", str(src)])
     assert both.exit_code == 2
     neither = runner.invoke(app, ["props"])
@@ -2060,6 +2177,14 @@ def test_mcp_command_rejects_bad_options(monkeypatch, args):
     assert result.exit_code == 2
 
 
+def test_resolve_home_treats_blank_as_default(monkeypatch):
+    from pubchem_finder.config import default_home, resolve_home
+
+    monkeypatch.delenv("PUBCHEM_FINDER_HOME", raising=False)
+    assert resolve_home("") == default_home()
+    assert resolve_home("   ") == default_home()
+
+
 # --- `--home` on the live PubChem commands moves their response cache (#161) --
 
 
@@ -2091,3 +2216,11 @@ def test_pubchem_commands_share_the_home_cache_they_report(
     assert info.exit_code == 0, info.output
     assert str(home.resolve() / "cache" / "pubchem-http.sqlite") in info.output
     assert "0 responses" not in info.output
+
+
+def test_empty_home_option_is_rejected(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PUBCHEM_FINDER_HOME", raising=False)
+    result = runner.invoke(app, ["search", "CCO", "--home", ""])
+    assert result.exit_code == 2
+    assert not (tmp_path / "demo").exists()

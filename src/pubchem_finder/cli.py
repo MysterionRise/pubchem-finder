@@ -73,10 +73,19 @@ class HighlightMode(StrEnum):
     similarity_map = "similarity_map"
 
 
+def _home_path(value: str) -> Path:
+    if not value.strip():
+        raise typer.BadParameter(
+            "--home is empty; give a directory or leave the option out"
+        )
+    return Path(value)
+
+
 HomeOpt = Annotated[
     Path | None,
     typer.Option(
         "--home",
+        parser=_home_path,
         envvar="PUBCHEM_FINDER_HOME",
         help="Data directory (default: platform user data dir).",
         show_default=False,
@@ -531,6 +540,7 @@ def draw(
 
 PROPS_COLUMNS = [
     "canonical_smiles",
+    "molecular_formula",
     "molecular_weight",
     "logp",
     "num_h_donors",
@@ -837,6 +847,13 @@ def _emit_hits(result: RemoteSearchResults, as_json: bool) -> None:
         return
     more = " (more exist; raise --max)" if result.truncated else ""
     typer.echo(f"{len(result.hits)} PubChem {result.search} hit(s){more}")
+    # Stderr keeps stdout's hit rows unchanged for scripts that parse them.
+    if result.note:
+        typer.echo(result.note, err=True)
+    if result.hits:
+        typer.echo(
+            "score column: ECFP4 similarity to the query (computed locally)", err=True
+        )
     for hit in result.hits:
         sim = "  -  " if hit.ecfp4_similarity is None else f"{hit.ecfp4_similarity:.3f}"
         typer.echo(f"{sim}  CID {hit.cid:<10} {hit.smiles or ''}  {hit.title or ''}")
@@ -891,13 +908,16 @@ def pubchem_exact(
     identity: Annotated[
         Identity, typer.Option(help="What counts as identical.")
     ] = Identity.same_stereo_isotope,
+    max_records: Annotated[
+        int, typer.Option("--max", min=1, max=200, help="Max hits.")
+    ] = 25,
     home: HomeOpt = None,
     as_json: JsonFlag = False,
 ) -> None:
     """The PubChem record(s) for exactly this structure."""
     try:
         result = service.pubchem_exact_match(
-            smiles, identity_type=identity.value, home=home
+            smiles, identity_type=identity.value, max_records=max_records, home=home
         )
     except PubChemFinderError as exc:
         _fail(exc)
