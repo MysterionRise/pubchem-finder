@@ -529,7 +529,9 @@ def _check_unique_names(
     for src in sources:
         alike = folded.get(chunk_key(src.name), [])
         have = next((chunk for chunk in alike if _is_file_of(src, chunk)), None)
-        if have is None and src.local_path is not None:
+        # A spelling match on an old chunk cannot tell us which file created it.
+        # Prefer the legacy name over that guess, while keeping a recorded match.
+        if (have is None or have.source is None) and src.local_path is not None:
             legacy = legacy_chunk_name(src.local_path, src.name)
             if legacy != src.name:
                 legacy_src = replace(src, name=legacy)
@@ -539,7 +541,7 @@ def _check_unique_names(
                         for chunk in folded.get(chunk_key(legacy), [])
                         if _is_file_of(legacy_src, chunk)
                     ),
-                    None,
+                    have,
                 )
                 if have is None and src.name not in exact and legacy in exact:
                     src = legacy_src

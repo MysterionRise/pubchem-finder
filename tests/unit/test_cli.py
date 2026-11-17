@@ -238,6 +238,39 @@ def _as_2_2_0_wrote_it(home, name="library"):
     return stats
 
 
+def test_index_build_prefers_legacy_spelling_for_unrecorded_chunks(
+    tmp_path, sample_sdfs
+):
+    home = tmp_path / "home"
+    modern = tmp_path / "a" / "LIB.sdf.gz"
+    legacy = tmp_path / "b" / "LIB.SDF.GZ"
+    for path, sample in zip((modern, legacy), sample_sdfs, strict=False):
+        path.parent.mkdir()
+        path.write_bytes(sample.read_bytes())
+    from pubchem_finder.index.builder import SdfSource, build_chunks
+    from pubchem_finder.index.layout import IndexPaths
+
+    build_chunks(
+        IndexPaths(home),
+        [
+            SdfSource(name="LIB", local_path=modern),
+            SdfSource(name=legacy.name, local_path=legacy),
+        ],
+        workers=1,
+    )
+    modern_stats = _as_2_2_0_wrote_it(home, "LIB")
+    _as_2_2_0_wrote_it(home, legacy.name)
+
+    result = _sdf_build(home, legacy)
+
+    assert result.exit_code == 0, result.output
+    assert (
+        f"rebuilding {legacy.name}: its chunk does not record the file" in result.output
+    )
+    assert json.loads(modern_stats.read_text()).get("source") is None
+    assert {1983, 2244} <= _cids(home)
+
+
 def test_index_build_rebuilds_a_chunk_that_records_no_file(
     tmp_path, same_named, sample_sdfs
 ):
