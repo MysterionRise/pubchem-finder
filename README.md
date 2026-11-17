@@ -296,8 +296,8 @@ about 60 ms; a 50-hit substructure search takes 35-50 ms in memory and 0.3 s on 
 Screening time grows roughly linearly with the size of the index.
 
 The index is searched in memory when it fits comfortably in available RAM and from disk
-otherwise; set `PUBCHEM_FINDER_INDEX_MODE=memory|disk` to force a mode. On a laptop, index
-a subset with `--limit` rather than all of PubChem.
+otherwise. `PUBCHEM_FINDER_INDEX_MODE` accepts `auto` (the default), `memory`, or
+`disk`. On a laptop, index a subset with `--limit` rather than all of PubChem.
 
 Data lives in the platform data directory (`~/.local/share/pubchem-finder` on Linux,
 `~/Library/Application Support/pubchem-finder` on macOS, `%LOCALAPPDATA%\pubchem-finder`

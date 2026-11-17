@@ -11,8 +11,89 @@ from typer.testing import CliRunner
 
 from pubchem_finder import __version__, service
 from pubchem_finder.cli import app
+from pubchem_finder.models import RemoteHit, RemoteSearchResults
 
 runner = CliRunner()
+
+
+def test_pubchem_exact_labels_score_column(monkeypatch):
+    hit = RemoteHit(
+        cid=76973140,
+        smiles="CC(=O)Oc1ccccc1C(=O)O",
+        title="Acetylsalicylic Acid-d7",
+        ecfp4_similarity=0.405,
+    )
+    stub = RemoteSearchResults(
+        query_smiles="CC(=O)Oc1ccccc1C(=O)O",
+        search="identity",
+        max_records=25,
+        truncated=False,
+        hits=[hit],
+        note=service.IDENTITY_NOTE.format(identity_type="same_connectivity"),
+    )
+    monkeypatch.setattr(service, "pubchem_exact_match", lambda *args, **kwargs: stub)
+    args = [
+        "pubchem",
+        "exact",
+        "CC(=O)Oc1ccccc1C(=O)O",
+        "--identity",
+        "same_connectivity",
+    ]
+    output = runner.invoke(app, args).output
+    before_first_hit = output.partition("CID 76973140")[0]
+    assert "ECFP4" in before_first_hit, output
+    assert "similarity" in before_first_hit, output
+    assert "below 1" in output, output
+    assert "fingerprint tells isotopes apart" in output, output
+    assert "Stereoisomers score 1" in output, output
+
+
+def test_pubchem_exact_empty_results_omit_score_column_legend(monkeypatch):
+    stub = RemoteSearchResults(
+        query_smiles="CC(=O)Oc1ccccc1C(=O)O",
+        search="identity",
+        max_records=25,
+        truncated=False,
+        hits=[],
+        note=service.IDENTITY_NOTE.format(identity_type="same_connectivity"),
+    )
+    monkeypatch.setattr(service, "pubchem_exact_match", lambda *args, **kwargs: stub)
+    args = [
+        "pubchem",
+        "exact",
+        "CC(=O)Oc1ccccc1C(=O)O",
+        "--identity",
+        "same_connectivity",
+    ]
+
+    output = runner.invoke(app, args).output
+
+    assert "0 PubChem identity hit(s)" in output, output
+    assert "score column: ECFP4 similarity" not in output, output
+
+
+def test_pubchem_substructure_labels_score_column(monkeypatch):
+    hit = RemoteHit(
+        cid=1,
+        smiles="c1ccc2[nH]ccc2c1",
+        title="Indole",
+        ecfp4_similarity=1.0,
+    )
+    stub = RemoteSearchResults(
+        query_smiles="c1ccc2[nH]ccc2c1",
+        search="substructure",
+        max_records=50,
+        truncated=False,
+        hits=[hit],
+        note="",
+    )
+    monkeypatch.setattr(
+        service, "pubchem_substructure_search", lambda *args, **kwargs: stub
+    )
+    output = runner.invoke(app, ["pubchem", "substructure", "c1ccc2[nH]ccc2c1"]).output
+    before_first_hit = output.partition("CID 1 ")[0]
+    assert "ECFP4" in before_first_hit, output
+    assert "similarity" in before_first_hit, output
 
 
 def test_version():
@@ -91,6 +172,14 @@ def test_index_build_requires_one_source(tmp_path):
     result = runner.invoke(app, ["index", "build", "--home", str(tmp_path)])
     assert result.exit_code == 2
     assert "exactly one" in result.output
+
+
+def test_search_reports_invalid_index_mode(built_home, monkeypatch):
+    monkeypatch.setenv("PUBCHEM_FINDER_INDEX_MODE", "bogus")
+    result = runner.invoke(app, ["search", "CCO", "--home", str(built_home)])
+    assert result.exit_code == 1, result.output
+    assert "PUBCHEM_FINDER_INDEX_MODE" in result.output
+    assert "auto, memory, or disk" in result.output
 
 
 def test_index_build_from_sdf_then_status_and_search(tmp_path, sample_sdfs):
