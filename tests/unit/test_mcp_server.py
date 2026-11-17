@@ -514,3 +514,38 @@ async def test_oversized_smiles_get_a_tool_error_not_a_crash():
     assert result.is_error is True
     assert "the limit is 10,000" in result.content[0].text
     assert after.is_error is False
+
+
+async def test_pubchem_urls_are_declared_in_output_schemas():
+    """Every returned pubchem_url must be declared in the published schema."""
+    expected_paths = {
+        "pubchem_lookup": ("compounds", "items", "pubchem_url"),
+        "similarity_search": ("hits", "items", "pubchem_url"),
+        "substructure_search": ("hits", "items", "pubchem_url"),
+        "pubchem_similarity_search": ("hits", "items", "pubchem_url"),
+        "pubchem_substructure_search": ("hits", "items", "pubchem_url"),
+        "pubchem_exact_match": ("hits", "items", "pubchem_url"),
+        "pubchem_bioactivity": ("pubchem_url",),
+    }
+
+    async with Client(mcp) as client:
+        result = await client.list_tools()
+
+    tools = {tool.name: tool for tool in result.tools}
+
+    for tool_name, path in expected_paths.items():
+        schema = tools[tool_name].output_schema
+        field_schema = schema
+
+        for segment in path:
+            if "$ref" in field_schema:
+                definition_name = field_schema["$ref"].rsplit("/", 1)[-1]
+                field_schema = schema["$defs"][definition_name]
+
+            if segment == "items":
+                field_schema = field_schema["items"]
+            else:
+                field_schema = field_schema["properties"][segment]
+
+        assert field_schema["type"] == "string", tool_name
+        assert field_schema["readOnly"] is True, tool_name

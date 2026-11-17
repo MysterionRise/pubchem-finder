@@ -581,6 +581,20 @@ def triage_structures(structures: str = "") -> str:
     )
 
 
+def _use_serialization_output_schemas() -> None:
+    """Publish serialization-mode schemas for registered MCP tool outputs."""
+    for tool in mcp._tool_manager.list_tools():
+        output_model = tool.fn_metadata.output_model
+
+        if output_model is not None:
+            tool.fn_metadata.output_schema = output_model.model_json_schema(
+                mode="serialization"
+            )
+
+
+_use_serialization_output_schemas()
+
+
 def main(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000) -> None:
     """Serve over stdio (the default) or streamable HTTP at http://HOST:PORT/mcp."""
     logging.basicConfig(
