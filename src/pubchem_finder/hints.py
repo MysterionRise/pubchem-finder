@@ -7,6 +7,8 @@ the data directory unless it is the default.
 """
 
 import re
+import shlex
+import sys
 from pathlib import Path
 
 from . import __version__
@@ -78,5 +80,11 @@ def merge_rebuilt(files: list[str | None], home: Path | None = None) -> str:
 
 
 def _quote(text: str) -> str:
-    # Double quotes work in POSIX shells, PowerShell and cmd.exe alike.
-    return f'"{text}"' if any(c.isspace() for c in text) else text
+    if sys.platform == "win32":
+        # shlex.quote's single quotes mean nothing to cmd.exe; double quotes work in
+        # both cmd.exe and PowerShell.
+        if re.fullmatch(r"[\w@+=:,./\\-]+", text):
+            return text
+        # Note: % and $ can still expand on Windows within double quotes.
+        return f'"{text}"'
+    return shlex.quote(text)

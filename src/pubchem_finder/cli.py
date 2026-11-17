@@ -73,10 +73,19 @@ class HighlightMode(StrEnum):
     similarity_map = "similarity_map"
 
 
+def _home_path(value: str) -> Path:
+    if not value.strip():
+        raise typer.BadParameter(
+            "--home is empty; give a directory or leave the option out"
+        )
+    return Path(value)
+
+
 HomeOpt = Annotated[
     Path | None,
     typer.Option(
         "--home",
+        parser=_home_path,
         envvar="PUBCHEM_FINDER_HOME",
         help="Data directory (default: platform user data dir).",
         show_default=False,

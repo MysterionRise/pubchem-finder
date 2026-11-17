@@ -2045,6 +2045,14 @@ def test_mcp_command_rejects_bad_options(monkeypatch, args):
     assert result.exit_code == 2
 
 
+def test_resolve_home_treats_blank_as_default(monkeypatch):
+    from pubchem_finder.config import default_home, resolve_home
+
+    monkeypatch.delenv("PUBCHEM_FINDER_HOME", raising=False)
+    assert resolve_home("") == default_home()
+    assert resolve_home("   ") == default_home()
+
+
 # --- `--home` on the live PubChem commands moves their response cache (#161) --
 
 
@@ -2076,3 +2084,11 @@ def test_pubchem_commands_share_the_home_cache_they_report(
     assert info.exit_code == 0, info.output
     assert str(home.resolve() / "cache" / "pubchem-http.sqlite") in info.output
     assert "0 responses" not in info.output
+
+
+def test_empty_home_option_is_rejected(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PUBCHEM_FINDER_HOME", raising=False)
+    result = runner.invoke(app, ["search", "CCO", "--home", ""])
+    assert result.exit_code == 2
+    assert not (tmp_path / "demo").exists()

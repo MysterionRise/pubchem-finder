@@ -31,10 +31,14 @@ All notable changes to this project are documented here. The format follows
   compound; the lower CID now wins. The search asks FPSim2 for one hit past the
   cut and widens the ask only while the cut is tied, instead of stopping at
   whichever tied compound FPSim2 happened to place in the slot.
+
+- An empty `--home` is refused instead of using the current directory, and commands printed in messages quote the data directory with `shlex.quote` (part of #231).
+
 - CLI commands and MCP tools can start on Linux without RDKit’s drawing libraries. Drawing reports which libraries are needed when they are missing (#175).
 - SDF indexing skips records with no atoms and replaces a `PUBCHEM_SMILES` tag that
   RDKit cannot parse with a SMILES generated from the structure (#169). A chunk built
   before this fix keeps its stored values until its source file changes and is rebuilt.
+
 
 ## [2.2.3] - 2026-11-11
 
