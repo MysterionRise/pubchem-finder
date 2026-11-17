@@ -13,6 +13,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Local index searches report invalid `PUBCHEM_FINDER_INDEX_MODE` values instead of silently choosing `auto` (#228).
+
 - Batch inputs accept UTF-8 with a BOM, including standard input, without losing
   the first SMILES column or identifier (#113). Files that are not valid UTF-8
   report an actionable error instead of a traceback.

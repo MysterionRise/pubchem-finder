@@ -93,6 +93,14 @@ def test_index_build_requires_one_source(tmp_path):
     assert "exactly one" in result.output
 
 
+def test_search_reports_invalid_index_mode(built_home, monkeypatch):
+    monkeypatch.setenv("PUBCHEM_FINDER_INDEX_MODE", "bogus")
+    result = runner.invoke(app, ["search", "CCO", "--home", str(built_home)])
+    assert result.exit_code == 1, result.output
+    assert "PUBCHEM_FINDER_INDEX_MODE" in result.output
+    assert "auto, memory, or disk" in result.output
+
+
 def test_index_build_from_sdf_then_status_and_search(tmp_path, sample_sdfs):
     home = tmp_path / "home"
     args = ["index", "build", "--home", str(home), "--workers", "1"]
