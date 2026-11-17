@@ -49,9 +49,11 @@ Python 3.11 to 3.14 are supported and tested in CI.
   3.15 yet, and which packages still lack them.
 - **Live PubChem** (weekly and on demand): the `live` tests against the real PubChem
   services. Run them locally with `PUBCHEM_LIVE=1 uv run pytest -m live`.
-- **Monthly real-data check**: the real-data end-to-end workflow below, on master. A
-  failing scheduled run (this one or the weekly live tests) opens an issue labelled
-  `ci-failure`, which closes itself when the next run passes.
+- **Released wheel smoke test** (daily and on demand): runs the latest PyPI release
+  with fresh dependencies on Linux, macOS and Windows, using that release's smoke script.
+- **Monthly real-data check**: the real-data end-to-end workflow below, on master.
+  Failures in the scheduled wheel, weekly live PubChem, or monthly real-data checks
+  open a `ci-failure` issue that closes when the next run passes.
 - **Real-data end-to-end** (on demand, monthly, and in every release dry run): downloads real PubChem SDF
   chunks, builds an index with substructure search, runs every CLI command and every MCP
   tool against it and against PubChem, and writes build time, file sizes, memory and query

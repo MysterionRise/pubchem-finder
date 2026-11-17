@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Literal
 
 import rdkit
 from rdkit import Chem, DataStructs, rdBase
+from rdkit.Chem import rdMolDescriptors
 
 from . import hints, medchem
 from .chemistry import MoleculeStandardizer, calculate_properties, is_druglike
@@ -23,6 +24,7 @@ from .core.limits import check_atoms, check_length
 from .data import parsers
 from .data.cache import CacheStats, ResponseCache
 from .data.pug_rest import (
+    MAX_SEARCH_RECORDS,
     XREF_TYPES,
     AnnotationHeading,
     AnnotationNotFound,
@@ -153,6 +155,7 @@ def properties(smiles: str) -> Properties:
         {
             "input_smiles": smiles,
             "canonical_smiles": Chem.MolToSmiles(mol),
+            "molecular_formula": rdMolDescriptors.CalcMolFormula(mol),
             "lipinski_ok": is_druglike(mol),
             **props,
         }
@@ -387,7 +390,12 @@ def index_status(home: Path | str | None = None) -> IndexStatus:
             chunks_built=len(built),
             search_scope="demo" if demo_compounds else "none",
             demo_compounds=demo_compounds,
-            hint=hints.build_index(paths.home) + until_then,
+            hint=(
+                hints.finish_build(len(built))
+                if built
+                else hints.build_index(paths.home)
+            )
+            + until_then,
         )
     sub = manifest.substructure if paths.pattern_fingerprints.exists() else None
     hint_parts = [
@@ -519,20 +527,22 @@ def pubchem_substructure_search(
 def pubchem_exact_match(
     smiles: str,
     identity_type: IdentityType = "same_stereo_isotope",
+    max_records: int = 25,
     home: Path | str | None = None,
 ) -> RemoteSearchResults:
     """PubChem compounds identical to ``smiles``."""
+    if not 1 <= max_records <= MAX_SEARCH_RECORDS:
+        raise BadQuery(f"max_records must be between 1 and {MAX_SEARCH_RECORDS}")
     mol = parse_smiles(smiles)
-    max_records = 25
     records = get_client(home).exact_match(
-        smiles, identity_type=identity_type, max_records=max_records
+        smiles, identity_type=identity_type, max_records=None
     )
     return RemoteSearchResults(
         query_smiles=smiles,
         search="identity",
         max_records=max_records,
-        truncated=len(records) >= max_records,
-        hits=_rank(mol, records),
+        truncated=len(records) > max_records,
+        hits=_rank(mol, records[:max_records]),
         note=IDENTITY_NOTE.format(identity_type=identity_type),
     )
 

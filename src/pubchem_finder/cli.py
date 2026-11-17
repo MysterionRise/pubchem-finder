@@ -73,10 +73,19 @@ class HighlightMode(StrEnum):
     similarity_map = "similarity_map"
 
 
+def _home_path(value: str) -> Path:
+    if not value.strip():
+        raise typer.BadParameter(
+            "--home is empty; give a directory or leave the option out"
+        )
+    return Path(value)
+
+
 HomeOpt = Annotated[
     Path | None,
     typer.Option(
         "--home",
+        parser=_home_path,
         envvar="PUBCHEM_FINDER_HOME",
         help="Data directory (default: platform user data dir).",
         show_default=False,
@@ -531,6 +540,7 @@ def draw(
 
 PROPS_COLUMNS = [
     "canonical_smiles",
+    "molecular_formula",
     "molecular_weight",
     "logp",
     "num_h_donors",
@@ -891,13 +901,16 @@ def pubchem_exact(
     identity: Annotated[
         Identity, typer.Option(help="What counts as identical.")
     ] = Identity.same_stereo_isotope,
+    max_records: Annotated[
+        int, typer.Option("--max", min=1, max=200, help="Max hits.")
+    ] = 25,
     home: HomeOpt = None,
     as_json: JsonFlag = False,
 ) -> None:
     """The PubChem record(s) for exactly this structure."""
     try:
         result = service.pubchem_exact_match(
-            smiles, identity_type=identity.value, home=home
+            smiles, identity_type=identity.value, max_records=max_records, home=home
         )
     except PubChemFinderError as exc:
         _fail(exc)

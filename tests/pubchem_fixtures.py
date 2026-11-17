@@ -333,7 +333,8 @@ def mock_pubchem(router: respx.Router) -> respx.Router:
         name="substructure",
     ).respond(200, json=table(METHYL_SALICYLATE, ASPIRIN))
     router.post(
-        url__regex=rx(REST) + r"/compound/fastidentity/smiles/property/.*"
+        url__regex=rx(REST) + r"/compound/fastidentity/smiles/property/.*",
+        name="identity",
     ).respond(200, json=table(ASPIRIN))
     router.get(rx_url(REST + "/compound/cid/2244/synonyms/JSON")).respond(
         200, json=SYNONYMS

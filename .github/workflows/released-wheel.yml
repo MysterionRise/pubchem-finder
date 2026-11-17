@@ -1,0 +1,67 @@
+name: Released wheel smoke test
+
+# Check the published wheel with fresh dependencies on the Python pinned in the docs.
+# RDKit 2026.9.2 broke scaffold operations on macOS while Linux checks stayed green.
+# Use the released tag's smoke script so unreleased tools cannot fail the check.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 7 * * *" # 07:37 UTC
+
+permissions: {}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      latest: ${{ steps.pypi.outputs.latest }}
+    steps:
+      - name: Resolve the published version
+        id: pypi
+        run: |
+          set -o pipefail
+          latest=$(curl -fsS https://pypi.org/pypi/pubchem-finder/json | jq -er '.info.version | select(test("^[0-9]+[.][0-9]+[.][0-9]+$"))')
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+
+  smoke:
+    needs: version
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: v${{ needs.version.outputs.latest }}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.14"
+      - name: Smoke-test the latest PyPI release
+        shell: bash
+        env:
+          LATEST: ${{ needs.version.outputs.latest }}
+        run: |
+          uv venv .smoke --python 3.14
+          uv pip install --python .smoke "pubchem-finder==$LATEST"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            .smoke/Scripts/python.exe scripts/smoke.py --command .smoke/Scripts/pubchem-finder.exe
+          else
+            .smoke/bin/python scripts/smoke.py --command .smoke/bin/pubchem-finder
+          fi
+
+  report:
+    needs: [version, smoke]
+    if: always() && github.event_name == 'schedule'
+    permissions:
+      issues: write
+    uses: ./.github/workflows/scheduled-failure.yml
+    with:
+      title: "The daily released wheel smoke test is failing"
+      result: ${{ needs.version.result != 'success' && needs.version.result || needs.smoke.result }}

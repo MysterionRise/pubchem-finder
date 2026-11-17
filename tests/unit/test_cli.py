@@ -1546,6 +1546,27 @@ def test_index_build_reports_errors(tmp_path, monkeypatch):
     assert "mirror unreachable" in result.output
 
 
+@pytest.mark.parametrize(("limit", "truncated"), [(2, True), (3, False)])
+def test_pubchem_exact_accepts_a_result_limit(pubchem_knowledge_api, limit, truncated):
+    from tests.pubchem_fixtures import ASPIRIN, table
+
+    pubchem_knowledge_api["identity"].respond(
+        200, json=table(ASPIRIN, ASPIRIN | {"CID": 2245}, ASPIRIN | {"CID": 2246})
+    )
+    result = runner.invoke(
+        app,
+        ["pubchem", "exact", "CC(=O)Oc1ccccc1C(=O)O", "--max", str(limit), "--json"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["max_records"] == len(payload["hits"]) == limit
+    assert payload["truncated"] is truncated
+    assert (
+        "MaxRecords"
+        not in pubchem_knowledge_api["identity"].calls.last.request.url.params
+    )
+
+
 def test_pubchem_commands(pubchem_knowledge_api):
     aspirin = "CC(=O)Oc1ccccc1C(=O)O"
     sim = runner.invoke(app, ["pubchem", "similarity", aspirin, "--threshold", "90"])
@@ -1765,6 +1786,13 @@ def test_batch_to_stdout_and_argument_checks(tmp_path):
     result = runner.invoke(app, ["props", "-i", str(src)])
     assert result.exit_code == 0
     assert "ethanol,CCO,CCO," in result.output
+    dst = tmp_path / "out.csv"
+    result = runner.invoke(app, ["props", "-i", str(src), "-o", str(dst)])
+    assert result.exit_code == 0
+    header, record = dst.read_text().splitlines()
+    columns = header.split(",")
+    assert columns[3] == "molecular_formula"
+    assert record.split(",")[3] == "C2H6O"
     both = runner.invoke(app, ["props", "CCO", "-i", str(src)])
     assert both.exit_code == 2
     neither = runner.invoke(app, ["props"])
@@ -2017,6 +2045,14 @@ def test_mcp_command_rejects_bad_options(monkeypatch, args):
     assert result.exit_code == 2
 
 
+def test_resolve_home_treats_blank_as_default(monkeypatch):
+    from pubchem_finder.config import default_home, resolve_home
+
+    monkeypatch.delenv("PUBCHEM_FINDER_HOME", raising=False)
+    assert resolve_home("") == default_home()
+    assert resolve_home("   ") == default_home()
+
+
 # --- `--home` on the live PubChem commands moves their response cache (#161) --
 
 
@@ -2048,3 +2084,11 @@ def test_pubchem_commands_share_the_home_cache_they_report(
     assert info.exit_code == 0, info.output
     assert str(home.resolve() / "cache" / "pubchem-http.sqlite") in info.output
     assert "0 responses" not in info.output
+
+
+def test_empty_home_option_is_rejected(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PUBCHEM_FINDER_HOME", raising=False)
+    result = runner.invoke(app, ["search", "CCO", "--home", ""])
+    assert result.exit_code == 2
+    assert not (tmp_path / "demo").exists()
