@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `examples/openai_agents.py`: an OpenAI Agents SDK agent with pubchem-finder's tools over MCP (#106).
 - `compound_properties` and `props` include the molecular formula (#162).
 - Add `pubchem exact --max` and `max_records` for `pubchem_exact_match` (1 to 200, default 25). The result limit can now be raised when the search reaches it (#162).
 
