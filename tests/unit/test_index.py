@@ -10,6 +10,7 @@ from pubchem_finder.core.exceptions import (
     IndexBuildError,
     IndexIncompatible,
     IndexNotBuilt,
+    InvalidInput,
     MoleculeValidationError,
     PubChemFinderError,
 )
@@ -199,8 +200,14 @@ def test_choose_in_memory(monkeypatch, built_home):
 def test_mode_from_environment(monkeypatch, built_home):
     monkeypatch.setenv("PUBCHEM_FINDER_INDEX_MODE", "disk")
     assert LocalIndex(built_home).mode == "disk"
-    monkeypatch.setenv("PUBCHEM_FINDER_INDEX_MODE", "bogus")
+    monkeypatch.setenv("PUBCHEM_FINDER_INDEX_MODE", "auto")
     assert LocalIndex(built_home).mode == "auto"
+    monkeypatch.setenv("PUBCHEM_FINDER_INDEX_MODE", "bogus")
+    assert LocalIndex(built_home, mode="memory").mode == "memory"
+    with pytest.raises(
+        InvalidInput, match="PUBCHEM_FINDER_INDEX_MODE must be auto, memory, or disk"
+    ):
+        LocalIndex(built_home)
 
 
 def test_available_memory_is_positive_or_unknown():
