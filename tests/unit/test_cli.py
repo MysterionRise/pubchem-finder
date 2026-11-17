@@ -174,6 +174,16 @@ def test_index_build_requires_one_source(tmp_path):
     assert "exactly one" in result.output
 
 
+def test_index_build_rejects_sdf_without_a_chunk_name(tmp_path):
+    path = tmp_path / ".sdf"
+    path.touch()
+    result = runner.invoke(
+        app, ["index", "build", "--sdf", str(path), "--home", str(tmp_path / "home")]
+    )
+    assert result.exit_code == 1
+    assert "no chunk name" in result.output
+
+
 def test_search_reports_invalid_index_mode(built_home, monkeypatch):
     monkeypatch.setenv("PUBCHEM_FINDER_INDEX_MODE", "bogus")
     result = runner.invoke(app, ["search", "CCO", "--home", str(built_home)])
@@ -315,6 +325,39 @@ def _as_2_2_0_wrote_it(home, name="library"):
     del data["source"], data["build_id"]
     stats.write_text(json.dumps(data))
     return stats
+
+
+def test_index_build_prefers_legacy_spelling_for_unrecorded_chunks(
+    tmp_path, sample_sdfs
+):
+    home = tmp_path / "home"
+    modern = tmp_path / "a" / "LIB.sdf.gz"
+    legacy = tmp_path / "b" / "LIB.SDF.GZ"
+    for path, sample in zip((modern, legacy), sample_sdfs, strict=False):
+        path.parent.mkdir()
+        path.write_bytes(sample.read_bytes())
+    from pubchem_finder.index.builder import SdfSource, build_chunks
+    from pubchem_finder.index.layout import IndexPaths
+
+    build_chunks(
+        IndexPaths(home),
+        [
+            SdfSource(name="LIB", local_path=modern),
+            SdfSource(name=legacy.name, local_path=legacy),
+        ],
+        workers=1,
+    )
+    modern_stats = _as_2_2_0_wrote_it(home, "LIB")
+    _as_2_2_0_wrote_it(home, legacy.name)
+
+    result = _sdf_build(home, legacy)
+
+    assert result.exit_code == 0, result.output
+    assert (
+        f"rebuilding {legacy.name}: its chunk does not record the file" in result.output
+    )
+    assert json.loads(modern_stats.read_text()).get("source") is None
+    assert {1983, 2244} <= _cids(home)
 
 
 def test_index_build_rebuilds_a_chunk_that_records_no_file(
