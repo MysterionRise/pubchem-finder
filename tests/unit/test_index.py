@@ -167,6 +167,17 @@ def test_status_not_built_and_ready(tmp_path, built_home):
     assert ready.built_at
 
 
+def test_status_offers_to_finish_an_interrupted_build(tmp_path, built_home):
+    first = sorted(IndexPaths(built_home).chunks.glob("*.json"))[0]
+    IndexPaths(tmp_path).chunks.mkdir(parents=True)
+    (IndexPaths(tmp_path).chunks / first.name).write_bytes(first.read_bytes())
+    status = service.index_status(tmp_path)
+    assert status.state == "not_built"
+    assert status.chunks_built == 1
+    assert "stopped after 1 chunk" in (status.hint or "")
+    assert "323 MB" not in (status.hint or "")
+
+
 def test_status_reports_loaded_mode(built_home):
     service.similarity_search(ASPIRIN, home=built_home)
     status = service.index_status(built_home)

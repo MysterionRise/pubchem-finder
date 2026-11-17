@@ -47,6 +47,15 @@ def build_index(home: Path | None = None) -> str:
     )
 
 
+def finish_build(chunks: int) -> str:
+    """What to do after a first build was stopped with some chunks finished."""
+    plural = "" if chunks == 1 else "s"
+    return (
+        f"A build was stopped after {chunks} chunk{plural}. Re-running the same "
+        "`index build` command finishes it: finished chunks are skipped."
+    )
+
+
 def add_substructure(home: Path | None = None) -> str:
     """How to add (or refresh) substructure search on an existing index."""
     return (
