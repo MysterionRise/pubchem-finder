@@ -1999,6 +1999,27 @@ def test_batch_refuses_to_write_over_its_input(tmp_path, name, content):
     assert src.read_text() == content
 
 
+@pytest.mark.parametrize("bad", ["encoding", "field"])
+def test_batch_late_input_error_preserves_previous_output(tmp_path, bad):
+    import csv
+
+    src = tmp_path / "late.csv"
+    valid = b"id,smiles,comment\n" + b"r,CCO,ok\n" * 3000
+    invalid = (
+        b"caf\xe9,CCO,ok\n"
+        if bad == "encoding"
+        else b"r,CCO," + b"x" * (csv.field_size_limit() + 1) + b"\n"
+    )
+    src.write_bytes(valid + invalid)
+    out = tmp_path / "keep.csv"
+    out.write_bytes(b"previous results")
+    result = runner.invoke(app, ["props", "-i", str(src), "-o", str(out)])
+    assert result.exit_code == 1, result.output
+    assert "error:" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert out.read_bytes() == b"previous results"
+
+
 def test_batch_checks_the_input_before_emptying_the_output(tmp_path):
     out = tmp_path / "out.csv"
     out.write_text("precious,data\n")
