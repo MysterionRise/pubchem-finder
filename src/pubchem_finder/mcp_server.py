@@ -18,6 +18,7 @@ from mcp.server.mcpserver.exceptions import (
     ResourceNotFoundError,
     ToolError,
 )
+from mcp.server.mcpserver.utilities.func_metadata import StrictJsonSchema
 from mcp.shared.exceptions import MCPError
 from mcp.types import INVALID_PARAMS, Icon, ToolAnnotations
 from pydantic import BaseModel
@@ -594,13 +595,14 @@ def triage_structures(structures: str = "") -> str:
 
 
 def _use_serialization_output_schemas() -> None:
-    """Publish serialization-mode schemas for registered MCP tool outputs."""
+    """Publish strict serialization-mode schemas for registered MCP tool outputs."""
     for tool in mcp._tool_manager.list_tools():
         output_model = tool.fn_metadata.output_model
 
         if output_model is not None:
             tool.fn_metadata.output_schema = output_model.model_json_schema(
-                mode="serialization"
+                mode="serialization",
+                schema_generator=StrictJsonSchema,
             )
 
 
