@@ -630,6 +630,8 @@ def _run_batch(
         f"{report.errors} error(s)",
         err=True,
     )
+    if report.rows_in and report.errors == report.rows_in:
+        raise typer.Exit(code=1)
 
 
 def _same_file(a: Path, b: Path) -> bool:
