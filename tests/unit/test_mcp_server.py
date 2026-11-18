@@ -27,6 +27,20 @@ EXPECTED_TOOLS = {
     "medchem_profile",
 }
 
+TOOLS_WITH_POSSIBLE_LOCAL_WRITES = {
+    "pubchem_lookup",
+    "pubchem_similarity_search",
+    "pubchem_substructure_search",
+    "pubchem_exact_match",
+    "pubchem_synonyms",
+    "pubchem_xrefs",
+    "pubchem_description",
+    "pubchem_annotations",
+    "pubchem_bioactivity",
+    "similarity_search",
+    "substructure_search",
+}
+
 
 async def test_tools_are_listed_with_schemas():
     async with Client(mcp) as client:
@@ -57,7 +71,8 @@ async def test_every_tool_is_annotated_read_only_with_a_title():
         assert notes is not None, tool.name
         assert tool.title, tool.name
         assert tool.title == notes.title, tool.name
-        assert notes.read_only_hint is True, tool.name
+        expected_read_only = tool.name not in TOOLS_WITH_POSSIBLE_LOCAL_WRITES
+        assert notes.read_only_hint is expected_read_only, tool.name
         assert notes.destructive_hint is False, tool.name
         assert notes.idempotent_hint is True, tool.name
         assert notes.open_world_hint is tool.name.startswith("pubchem_"), tool.name
