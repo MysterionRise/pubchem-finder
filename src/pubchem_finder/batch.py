@@ -51,7 +51,10 @@ def read_inputs(path: Path) -> Iterator[InputRow]:
     fh = _open_input(path)
     try:
         if suffix in (".csv", ".tsv"):
-            yield from _read_table(fh, "\t" if suffix == ".tsv" else ",")
+            try:
+                yield from _read_table(fh, "\t" if suffix == ".tsv" else ",")
+            except csv.Error as exc:
+                raise InvalidInput(f"Cannot read table {path}: {exc}") from exc
         else:
             yield from _read_smi(fh)
     except UnicodeDecodeError as exc:
@@ -76,18 +79,21 @@ def _strip_initial_bom(lines: Iterable[str]) -> Iterator[str]:
 
 def _read_table(fh: IO[str], delimiter: str) -> Iterator[InputRow]:
     reader = csv.DictReader(_strip_initial_bom(fh), delimiter=delimiter)
-    headers = reader.fieldnames or []
-    smiles_col = _pick(headers, SMILES_COLUMNS)
-    if smiles_col is None:
-        raise InvalidInput(
-            f"No SMILES column found; expected one of {', '.join(SMILES_COLUMNS)}, "
-            f"got {', '.join(headers) or 'no header'}"
-        )
-    id_col = _pick(headers, ID_COLUMNS)
-    for n, record in enumerate(reader, start=2):
-        smiles = (record.get(smiles_col) or "").strip()
-        ident = (record.get(id_col) or "").strip() if id_col else ""
-        yield InputRow(line=n, id=ident or str(n), smiles=smiles)
+    try:
+        headers = reader.fieldnames or []
+        smiles_col = _pick(headers, SMILES_COLUMNS)
+        if smiles_col is None:
+            raise InvalidInput(
+                f"No SMILES column found; expected one of {', '.join(SMILES_COLUMNS)}, "
+                f"got {', '.join(headers) or 'no header'}"
+            )
+        id_col = _pick(headers, ID_COLUMNS)
+        for n, record in enumerate(reader, start=2):
+            smiles = (record.get(smiles_col) or "").strip()
+            ident = (record.get(id_col) or "").strip() if id_col else ""
+            yield InputRow(line=n, id=ident or str(n), smiles=smiles)
+    except csv.Error as exc:
+        raise csv.Error(f"line {reader.line_num + 1}: {exc}") from exc
 
 
 def _read_smi(fh: IO[str]) -> Iterator[InputRow]:

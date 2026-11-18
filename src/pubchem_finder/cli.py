@@ -2,7 +2,9 @@
 
 import itertools
 import os
+import shutil
 import sys
+import tempfile
 from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
@@ -619,8 +621,14 @@ def _run_batch(
             report = batch.run(rows, sys.stdout, columns, fn)
             where = "stdout"
         else:
-            with output.open("w", newline="", encoding="utf-8") as fh:
-                report = batch.run(rows, fh, columns, fn)
+            # Finish parsing before touching an existing result file.
+            with tempfile.TemporaryFile(
+                mode="w+", newline="", encoding="utf-8"
+            ) as staged:
+                report = batch.run(rows, staged, columns, fn)
+                staged.seek(0)
+                with output.open("w", newline="", encoding="utf-8") as fh:
+                    shutil.copyfileobj(staged, fh)
             where = str(output)
     except (InvalidInput, OSError) as exc:
         _fail(exc)

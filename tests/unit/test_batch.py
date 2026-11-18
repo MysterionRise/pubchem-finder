@@ -48,6 +48,25 @@ def test_read_non_utf8_error_after_first_row(tmp_path):
         list(rows)
 
 
+@pytest.mark.parametrize("suffix", ["csv", "tsv"])
+def test_oversized_table_field_has_actionable_error(tmp_path, suffix):
+    delimiter = "," if suffix == "csv" else "\t"
+    path = tmp_path / f"large.{suffix}"
+    path.write_text(
+        "smiles"
+        + delimiter
+        + "comment\nCCO"
+        + delimiter
+        + "x" * (csv.field_size_limit() + 1)
+        + "\n"
+    )
+    with pytest.raises(InvalidInput) as exc:
+        list(batch.read_inputs(path))
+    assert str(path) in str(exc.value)
+    assert "line 2" in str(exc.value)
+    assert "field" in str(exc.value)
+
+
 def write(tmp_path, name, text):
     path = tmp_path / name
     path.write_text(text)
