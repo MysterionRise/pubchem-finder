@@ -278,6 +278,43 @@ def test_parse_annotations_numbers_and_units():
     assert annotations[0].source == "HSDB"
 
 
+def test_parse_annotations_keeps_entry_references():
+    payload = {
+        "Record": {
+            "RecordTitle": "Aspirin",
+            "Section": [
+                {
+                    "TOCHeading": "Experimental Properties",
+                    "Section": [
+                        {
+                            "TOCHeading": "Melting Point",
+                            "Information": [
+                                {
+                                    "ReferenceNumber": 3,
+                                    "Value": {"Number": [135], "Unit": "°C"},
+                                    "Reference": [
+                                        "O'Neil, M.J. (ed.). The Merck Index. 2013., p. 696",
+                                        "PMID:25632063",
+                                    ],
+                                },
+                                {"ReferenceNumber": 3, "Value": {"Number": [136]}},
+                            ],
+                        }
+                    ],
+                }
+            ],
+            "Reference": [{"ReferenceNumber": 3, "SourceName": "HSDB"}],
+        }
+    }
+    _, annotations = parsers.parse_annotations(payload)
+    assert annotations[0].references == [
+        "O'Neil, M.J. (ed.). The Merck Index. 2013., p. 696",
+        "PMID:25632063",
+    ]
+    assert annotations[0].source == "HSDB"
+    assert annotations[1].references == []
+
+
 def test_parse_headings():
     assert parsers.parse_headings(fx.VIEW_INDEX) == [
         "Names and Identifiers",

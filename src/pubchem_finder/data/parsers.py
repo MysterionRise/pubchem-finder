@@ -353,6 +353,9 @@ def parse_annotations(payload: dict[str, Any]) -> tuple[str | None, list[Annotat
                         source=ref.get("SourceName"),
                         url=ref.get("URL"),
                         license=ref.get("LicenseURL") or ref.get("LicenseNote"),
+                        references=[
+                            str(r) for r in info.get("Reference", []) if str(r).strip()
+                        ],
                     )
                 )
             walk(section.get("Section", []), here)
