@@ -426,6 +426,17 @@ def build_chunks(
             todo.append(src)
             continue
         action, note = _plan(src, stats)
+        if action == "skip" and src.local_path is not None:
+            # The file is unchanged, so rebuilding it from its SDF is safe, and
+            # without it the chunk blocks every extension after an RDKit upgrade.
+            built_with = _chunk_versions(paths, stats)
+            now = runtime_versions()
+            if built_with is not None and built_with != now:
+                action = "rebuild"
+                note = (
+                    f"fingerprinted with RDKit {built_with[0]} / FPSim2 "
+                    f"{built_with[1]}, rebuilding with RDKit {now[0]} / FPSim2 {now[1]}"
+                )
         if action == "rebuild":
             reasons[src.name] = note
             todo.append(src)
