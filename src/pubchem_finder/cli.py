@@ -692,10 +692,24 @@ def index_build(
     workers: Annotated[
         int, typer.Option(min=1, help="Parallel fingerprinting processes.")
     ] = _default_workers(),
-    radius: Annotated[int, typer.Option(min=1, max=6, help="Morgan radius.")] = 2,
+    radius: Annotated[
+        int | None,
+        typer.Option(
+            min=1,
+            max=6,
+            help="Morgan radius (existing index setting, or 2).",
+            show_default=False,
+        ),
+    ] = None,
     fp_size: Annotated[
-        int, typer.Option(min=64, max=8192, help="Fingerprint length in bits.")
-    ] = 1024,
+        int | None,
+        typer.Option(
+            min=64,
+            max=8192,
+            help="Fingerprint length in bits (existing index setting, or 1024).",
+            show_default=False,
+        ),
+    ] = None,
     keep_sdf: Annotated[
         bool, typer.Option(help="Keep downloaded SDF files after indexing them.")
     ] = False,
@@ -717,7 +731,13 @@ def index_build(
     Re-running is safe: finished chunks are skipped, so an interrupted build
     resumes and a larger --limit adds chunks to an existing index.
     """
-    from .index.builder import BuildReport, SdfSource, build_chunks, finalize
+    from .index.builder import (
+        DEFAULT_FP_PARAMS,
+        BuildReport,
+        SdfSource,
+        build_chunks,
+        finalize,
+    )
     from .index.layout import IndexPaths, chunk_name
 
     chosen = sum([limit is not None, all_chunks, bool(sdf), demo])
@@ -733,8 +753,15 @@ def index_build(
         )
         raise typer.Exit(code=2)
 
+    if (demo or chosen == 0) and (radius is not None or fp_size is not None):
+        typer.echo(
+            "error: --radius / --fp-size applies only when chunks are built "
+            "(--sdf, --limit, --all)",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
     paths = IndexPaths(resolve_home(home))
-    params = {"radius": radius, "fpSize": fp_size}
 
     def say(msg: str) -> None:
         typer.echo(msg, err=True)
@@ -744,6 +771,12 @@ def index_build(
         return
 
     try:
+        completed = paths.completed_chunks()
+        params = dict(completed[0].fp_params if completed else DEFAULT_FP_PARAMS)
+        if radius is not None:
+            params["radius"] = radius
+        if fp_size is not None:
+            params["fpSize"] = fp_size
         if chosen == 0:
             report = BuildReport()
         elif sdf:

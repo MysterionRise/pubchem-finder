@@ -630,7 +630,8 @@ def _check_params(
         if stats.fp_type != FP_TYPE or stats.fp_params != params:
             raise IndexBuildError(
                 f"Existing chunks in {paths.chunks} use {stats.fp_type} {stats.fp_params}, "
-                f"not {FP_TYPE} {params}. Use a different --home or delete the chunks."
+                f"not {FP_TYPE} {params}. Omit --radius / --fp-size to keep the current settings, "
+                "or use a different --home to change them."
             )
 
 
