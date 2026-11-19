@@ -25,6 +25,21 @@ def check_length(text: str, what: str = "SMILES") -> None:
         )
 
 
+def check_one_structure(text: str, what: str = "SMILES") -> None:
+    """Refuse text that is not a single structure, before parsing.
+
+    RDKit reads ``SMILES name`` as a molecule name and stops at the first non-ASCII
+    character, so anything after a space, tab, line break or such a character would
+    be dropped without a word. Pass the stripped text.
+    """
+    if any(not "!" <= c <= "~" for c in text):
+        raise MoleculeValidationError(
+            f"{what} must be one structure with no spaces, line breaks or non-ASCII "
+            "characters; send one structure per call and join the parts of a mixture "
+            "with '.'"
+        )
+
+
 def check_atoms(mol: Chem.Mol, what: str = "Molecule") -> Chem.Mol:
     """Refuse a parsed molecule or query with more than :data:`MAX_ATOMS` atoms."""
     n = mol.GetNumAtoms()

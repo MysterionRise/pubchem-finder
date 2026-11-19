@@ -2,8 +2,41 @@
 
 import pytest
 
-from pubchem_finder import service
+from pubchem_finder import drawing, service
 from pubchem_finder.core.exceptions import MoleculeValidationError
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "CCO CCN",
+        "CCO\tCCN",
+        "CCO\nCCN",
+        "CCO ethanol",
+        "CCO\N{GRINNING FACE}",
+        "éCCO",
+    ],
+)
+def test_text_after_a_space_or_non_ascii_is_refused_not_dropped(text):
+    # RDKit reads 'SMILES name' and stops at non-ASCII, so these used to answer
+    # as ethanol without a word about the rest of the input.
+    with pytest.raises(MoleculeValidationError, match="one structure"):
+        service.parse_smiles(text)
+    with pytest.raises(MoleculeValidationError, match="one structure"):
+        service.parse_query(text, "smarts")
+    with pytest.raises(MoleculeValidationError, match="one structure"):
+        drawing._parse([text])
+
+
+def test_compare_refuses_second_smiles_instead_of_scoring_first_piece():
+    with pytest.raises(MoleculeValidationError, match="one structure"):
+        service.compare("CCO CCCCCCCC", "CCO")
+
+
+def test_smarts_highlights_refuses_text_after_a_space():
+    mol = drawing._parse(["CCO"])[0]
+    with pytest.raises(MoleculeValidationError, match="one structure"):
+        drawing.smarts_highlights([mol], "[#6] [#8]")
 
 
 def test_properties_aspirin(aspirin_smiles):

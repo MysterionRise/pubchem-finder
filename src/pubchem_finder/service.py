@@ -20,7 +20,7 @@ from . import hints, medchem
 from .chemistry import MoleculeStandardizer, calculate_properties, is_druglike
 from .config import cache_enabled, cache_path, demo_enabled, resolve_home
 from .core.exceptions import MoleculeValidationError, PubChemFinderError
-from .core.limits import check_atoms, check_length
+from .core.limits import check_atoms, check_length, check_one_structure
 from .data import parsers
 from .data.cache import CacheStats, ResponseCache
 from .data.pug_rest import (
@@ -114,6 +114,7 @@ def parse_smiles(smiles: str) -> Chem.Mol:
     """Parse SMILES or raise ``MoleculeValidationError``, also for oversized input
     (see :mod:`pubchem_finder.core.limits`)."""
     check_length(smiles.strip())
+    check_one_structure(smiles.strip())
     mol: Chem.Mol | None = (
         Chem.MolFromSmiles(smiles.strip()) if smiles.strip() else None
     )
@@ -129,6 +130,7 @@ def parse_query(query: str, query_type: QueryType = "smiles") -> Chem.Mol:
     if query_type != "smarts":
         raise PubChemFinderError(f"Unknown query_type {query_type!r}")
     check_length(query.strip(), "SMARTS")
+    check_one_structure(query.strip(), "SMARTS")
     mol: Chem.Mol | None = Chem.MolFromSmarts(query.strip()) if query.strip() else None
     if mol is None:
         raise MoleculeValidationError(f"Invalid SMARTS: {query!r}")
