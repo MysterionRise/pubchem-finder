@@ -58,6 +58,7 @@ from .layout import (
     chunk_name,
     chunk_of,
     duckdb_path,
+    legacy_chunk_name,
     unmerged,
     write_json_atomic,
 )
@@ -526,17 +527,32 @@ def _check_unique_names(
     seen: dict[str, SdfSource] = {}
     out: list[SdfSource] = []
     for src in sources:
-        if src.name not in exact:
-            alike = folded.get(chunk_key(src.name), [])
-            have = next((c for c in alike if _is_file_of(src, c)), None)
-            if have is not None:  # the same file, typed in another case
-                src = replace(src, name=have.name)
-            elif alike:
-                raise IndexBuildError(
-                    f"{src.label()} would be chunk {src.name!r}, and this index "
-                    f"already has chunk {alike[0].name!r}: names are compared "
-                    "without case. Rename the file."
+        alike = folded.get(chunk_key(src.name), [])
+        have = next((chunk for chunk in alike if _is_file_of(src, chunk)), None)
+        # A spelling match on an old chunk cannot tell us which file created it.
+        # Prefer the legacy name over that guess, while keeping a recorded match.
+        if (have is None or have.source is None) and src.local_path is not None:
+            legacy = legacy_chunk_name(src.local_path, src.name)
+            if legacy != src.name:
+                legacy_src = replace(src, name=legacy)
+                have = next(
+                    (
+                        chunk
+                        for chunk in folded.get(chunk_key(legacy), [])
+                        if _is_file_of(legacy_src, chunk)
+                    ),
+                    have,
                 )
+                if have is None and src.name not in exact and legacy in exact:
+                    src = legacy_src
+        if have is not None:
+            src = replace(src, name=have.name)
+        elif src.name not in exact and alike:
+            raise IndexBuildError(
+                f"{src.label()} would be chunk {src.name!r}, and this index "
+                f"already has chunk {alike[0].name!r}: names are compared "
+                "without case. Rename the file."
+            )
         key = src.name if src.name in exact else chunk_key(src.name)
         other = seen.setdefault(key, src)
         if other is not src:

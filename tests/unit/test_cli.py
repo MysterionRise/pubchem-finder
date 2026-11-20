@@ -4,14 +4,96 @@ import contextlib
 import csv
 import json
 import os
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from pubchem_finder import __version__
+from pubchem_finder import __version__, service
 from pubchem_finder.cli import app
+from pubchem_finder.models import RemoteHit, RemoteSearchResults
 
 runner = CliRunner()
+
+
+def test_pubchem_exact_labels_score_column(monkeypatch):
+    hit = RemoteHit(
+        cid=76973140,
+        smiles="CC(=O)Oc1ccccc1C(=O)O",
+        title="Acetylsalicylic Acid-d7",
+        ecfp4_similarity=0.405,
+    )
+    stub = RemoteSearchResults(
+        query_smiles="CC(=O)Oc1ccccc1C(=O)O",
+        search="identity",
+        max_records=25,
+        truncated=False,
+        hits=[hit],
+        note=service.IDENTITY_NOTE.format(identity_type="same_connectivity"),
+    )
+    monkeypatch.setattr(service, "pubchem_exact_match", lambda *args, **kwargs: stub)
+    args = [
+        "pubchem",
+        "exact",
+        "CC(=O)Oc1ccccc1C(=O)O",
+        "--identity",
+        "same_connectivity",
+    ]
+    output = runner.invoke(app, args).output
+    before_first_hit = output.partition("CID 76973140")[0]
+    assert "ECFP4" in before_first_hit, output
+    assert "similarity" in before_first_hit, output
+    assert "below 1" in output, output
+    assert "fingerprint tells isotopes apart" in output, output
+    assert "Stereoisomers score 1" in output, output
+
+
+def test_pubchem_exact_empty_results_omit_score_column_legend(monkeypatch):
+    stub = RemoteSearchResults(
+        query_smiles="CC(=O)Oc1ccccc1C(=O)O",
+        search="identity",
+        max_records=25,
+        truncated=False,
+        hits=[],
+        note=service.IDENTITY_NOTE.format(identity_type="same_connectivity"),
+    )
+    monkeypatch.setattr(service, "pubchem_exact_match", lambda *args, **kwargs: stub)
+    args = [
+        "pubchem",
+        "exact",
+        "CC(=O)Oc1ccccc1C(=O)O",
+        "--identity",
+        "same_connectivity",
+    ]
+
+    output = runner.invoke(app, args).output
+
+    assert "0 PubChem identity hit(s)" in output, output
+    assert "score column: ECFP4 similarity" not in output, output
+
+
+def test_pubchem_substructure_labels_score_column(monkeypatch):
+    hit = RemoteHit(
+        cid=1,
+        smiles="c1ccc2[nH]ccc2c1",
+        title="Indole",
+        ecfp4_similarity=1.0,
+    )
+    stub = RemoteSearchResults(
+        query_smiles="c1ccc2[nH]ccc2c1",
+        search="substructure",
+        max_records=50,
+        truncated=False,
+        hits=[hit],
+        note="",
+    )
+    monkeypatch.setattr(
+        service, "pubchem_substructure_search", lambda *args, **kwargs: stub
+    )
+    output = runner.invoke(app, ["pubchem", "substructure", "c1ccc2[nH]ccc2c1"]).output
+    before_first_hit = output.partition("CID 1 ")[0]
+    assert "ECFP4" in before_first_hit, output
+    assert "similarity" in before_first_hit, output
 
 
 def test_version():
@@ -90,6 +172,24 @@ def test_index_build_requires_one_source(tmp_path):
     result = runner.invoke(app, ["index", "build", "--home", str(tmp_path)])
     assert result.exit_code == 2
     assert "exactly one" in result.output
+
+
+def test_index_build_rejects_sdf_without_a_chunk_name(tmp_path):
+    path = tmp_path / ".sdf"
+    path.touch()
+    result = runner.invoke(
+        app, ["index", "build", "--sdf", str(path), "--home", str(tmp_path / "home")]
+    )
+    assert result.exit_code == 1
+    assert "no chunk name" in result.output
+
+
+def test_search_reports_invalid_index_mode(built_home, monkeypatch):
+    monkeypatch.setenv("PUBCHEM_FINDER_INDEX_MODE", "bogus")
+    result = runner.invoke(app, ["search", "CCO", "--home", str(built_home)])
+    assert result.exit_code == 1, result.output
+    assert "PUBCHEM_FINDER_INDEX_MODE" in result.output
+    assert "auto, memory, or disk" in result.output
 
 
 def test_index_build_from_sdf_then_status_and_search(tmp_path, sample_sdfs):
@@ -225,6 +325,39 @@ def _as_2_2_0_wrote_it(home, name="library"):
     del data["source"], data["build_id"]
     stats.write_text(json.dumps(data))
     return stats
+
+
+def test_index_build_prefers_legacy_spelling_for_unrecorded_chunks(
+    tmp_path, sample_sdfs
+):
+    home = tmp_path / "home"
+    modern = tmp_path / "a" / "LIB.sdf.gz"
+    legacy = tmp_path / "b" / "LIB.SDF.GZ"
+    for path, sample in zip((modern, legacy), sample_sdfs, strict=False):
+        path.parent.mkdir()
+        path.write_bytes(sample.read_bytes())
+    from pubchem_finder.index.builder import SdfSource, build_chunks
+    from pubchem_finder.index.layout import IndexPaths
+
+    build_chunks(
+        IndexPaths(home),
+        [
+            SdfSource(name="LIB", local_path=modern),
+            SdfSource(name=legacy.name, local_path=legacy),
+        ],
+        workers=1,
+    )
+    modern_stats = _as_2_2_0_wrote_it(home, "LIB")
+    _as_2_2_0_wrote_it(home, legacy.name)
+
+    result = _sdf_build(home, legacy)
+
+    assert result.exit_code == 0, result.output
+    assert (
+        f"rebuilding {legacy.name}: its chunk does not record the file" in result.output
+    )
+    assert json.loads(modern_stats.read_text()).get("source") is None
+    assert {1983, 2244} <= _cids(home)
 
 
 def test_index_build_rebuilds_a_chunk_that_records_no_file(
@@ -1545,6 +1678,27 @@ def test_index_build_reports_errors(tmp_path, monkeypatch):
     assert "mirror unreachable" in result.output
 
 
+@pytest.mark.parametrize(("limit", "truncated"), [(2, True), (3, False)])
+def test_pubchem_exact_accepts_a_result_limit(pubchem_knowledge_api, limit, truncated):
+    from tests.pubchem_fixtures import ASPIRIN, table
+
+    pubchem_knowledge_api["identity"].respond(
+        200, json=table(ASPIRIN, ASPIRIN | {"CID": 2245}, ASPIRIN | {"CID": 2246})
+    )
+    result = runner.invoke(
+        app,
+        ["pubchem", "exact", "CC(=O)Oc1ccccc1C(=O)O", "--max", str(limit), "--json"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["max_records"] == len(payload["hits"]) == limit
+    assert payload["truncated"] is truncated
+    assert (
+        "MaxRecords"
+        not in pubchem_knowledge_api["identity"].calls.last.request.url.params
+    )
+
+
 def test_pubchem_commands(pubchem_knowledge_api):
     aspirin = "CC(=O)Oc1ccccc1C(=O)O"
     sim = runner.invoke(app, ["pubchem", "similarity", aspirin, "--threshold", "90"])
@@ -1700,6 +1854,31 @@ def test_draw_command(tmp_path):
     assert "reference" in bad.output
 
 
+def test_draw_reports_an_unwritable_output_path(tmp_path):
+    missing = tmp_path / "missing" / "grid.png"
+    result = runner.invoke(app, ["draw", "CCO", "-o", str(missing)])
+    assert result.exit_code == 1
+    assert result.output.startswith("error:")
+    assert str(missing) in result.output
+
+
+@pytest.mark.parametrize(
+    ("command", "query"),
+    [("search", "CCO"), ("substructure", "c1ccccc1")],
+)
+def test_search_reports_an_uncreatable_data_directory(
+    tmp_path, monkeypatch, command, query
+):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where the data directory should be")
+    monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(blocker / "home"))
+    monkeypatch.setenv("PUBCHEM_FINDER_DEMO", "1")
+    result = runner.invoke(app, [command, query])
+    assert result.exit_code == 1
+    assert "cannot create the data directory" in result.output
+    assert "PUBCHEM_FINDER_HOME" in result.output
+
+
 def test_batch_props_standardize_triage(tmp_path):
     src = tmp_path / "in.smi"
     src.write_text("CC(=O)[O-].[Na+] salt\nnope( broken\nCCO\n")
@@ -1739,6 +1918,13 @@ def test_batch_to_stdout_and_argument_checks(tmp_path):
     result = runner.invoke(app, ["props", "-i", str(src)])
     assert result.exit_code == 0
     assert "ethanol,CCO,CCO," in result.output
+    dst = tmp_path / "out.csv"
+    result = runner.invoke(app, ["props", "-i", str(src), "-o", str(dst)])
+    assert result.exit_code == 0
+    header, record = dst.read_text().splitlines()
+    columns = header.split(",")
+    assert columns[3] == "molecular_formula"
+    assert record.split(",")[3] == "C2H6O"
     both = runner.invoke(app, ["props", "CCO", "-i", str(src)])
     assert both.exit_code == 2
     neither = runner.invoke(app, ["props"])
@@ -1746,6 +1932,48 @@ def test_batch_to_stdout_and_argument_checks(tmp_path):
     no_column = tmp_path / "bad.csv"
     no_column.write_text("name\nx\n")
     assert runner.invoke(app, ["props", "-i", str(no_column)]).exit_code == 1
+
+
+@pytest.mark.parametrize("name", ["utf8_bom_smiles_first.csv", "utf8_bom_id_first.csv"])
+@pytest.mark.parametrize("command", ["props", "standardize", "triage"])
+def test_batch_utf8_bom_preserves_ids(tmp_path, name, command):
+    src = Path(__file__).parents[1] / "fixtures" / "batch" / name
+    out = tmp_path / "out.csv"
+    result = runner.invoke(app, [command, "-i", str(src), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    with out.open(encoding="utf-8", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    assert [(row["id"], row["smiles"], row["error"]) for row in rows] == [
+        ("ethanol", "CCO", "")
+    ]
+
+
+@pytest.mark.parametrize("command", ["props", "standardize", "triage"])
+def test_batch_stdin_utf8_bom_preserves_structure_and_id(command):
+    result = runner.invoke(app, [command, "-i", "-"], input="\ufeffCCO ethanol\n")
+    assert result.exit_code == 0, result.output
+    rows = list(csv.DictReader(result.stdout.splitlines()))
+    assert [(row["id"], row["smiles"], row["error"]) for row in rows] == [
+        ("ethanol", "CCO", "")
+    ]
+
+
+@pytest.mark.parametrize(
+    "command", ["props", "standardize", "triage", "search", "substructure"]
+)
+def test_batch_non_utf8_reports_error_without_emptying_output(tmp_path, command):
+    src = Path(__file__).parents[1] / "fixtures" / "batch" / "windows_1252.csv"
+    out = tmp_path / "out.csv"
+    out.write_text("precious,data\n")
+    result = runner.invoke(app, [command, "-i", str(src), "-o", str(out)])
+    assert result.exit_code == 1
+    assert "error:" in result.stderr
+    assert "UTF-8" in result.stderr
+    assert "save" in result.stderr.lower()
+    assert str(src) in result.stderr
+    assert "Traceback" not in result.output
+    assert isinstance(result.exception, SystemExit)
+    assert out.read_text() == "precious,data\n"
 
 
 # Hardening audit D2: the output was opened (and emptied) before the input was read,
@@ -1947,3 +2175,52 @@ def test_mcp_command_rejects_bad_options(monkeypatch, args):
     )
     result = runner.invoke(app, ["mcp", *args])
     assert result.exit_code == 2
+
+
+def test_resolve_home_treats_blank_as_default(monkeypatch):
+    from pubchem_finder.config import default_home, resolve_home
+
+    monkeypatch.delenv("PUBCHEM_FINDER_HOME", raising=False)
+    assert resolve_home("") == default_home()
+    assert resolve_home("   ") == default_home()
+
+
+# --- `--home` on the live PubChem commands moves their response cache (#161) --
+
+
+def test_lookup_home_puts_its_cache_there(tmp_path, pubchem_api, monkeypatch):
+    """A lookup run with --home caches its response under that data directory."""
+    monkeypatch.setattr(service, "_clients", {})
+    monkeypatch.setenv("PUBCHEM_FINDER_CACHE", "1")
+    monkeypatch.setattr("pubchem_finder.data.pug_rest.time.sleep", lambda s: None)
+    home = tmp_path / "home"
+    result = runner.invoke(app, ["lookup", "caffeine", "--home", str(home)])
+    assert result.exit_code == 0, result.output
+    assert "CID 2519  Caffeine" in result.output
+    assert (home / "cache" / "pubchem-http.sqlite").exists()
+
+
+def test_pubchem_commands_share_the_home_cache_they_report(
+    tmp_path, pubchem_knowledge_api, monkeypatch
+):
+    """`cache info --home DIR` sees what `pubchem ... --home DIR` cached."""
+    monkeypatch.setattr(service, "_clients", {})
+    monkeypatch.setenv("PUBCHEM_FINDER_CACHE", "1")
+    monkeypatch.setattr("pubchem_finder.data.pug_rest.time.sleep", lambda s: None)
+    home = tmp_path / "home"
+    synonyms = runner.invoke(app, ["pubchem", "synonyms", "2244", "--home", str(home)])
+    assert synonyms.exit_code == 0, synonyms.output
+    described = runner.invoke(app, ["pubchem", "describe", "2244", "--home", str(home)])
+    assert described.exit_code == 0, described.output
+    info = runner.invoke(app, ["cache", "info", "--home", str(home)])
+    assert info.exit_code == 0, info.output
+    assert str(home.resolve() / "cache" / "pubchem-http.sqlite") in info.output
+    assert "0 responses" not in info.output
+
+
+def test_empty_home_option_is_rejected(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PUBCHEM_FINDER_HOME", raising=False)
+    result = runner.invoke(app, ["search", "CCO", "--home", ""])
+    assert result.exit_code == 2
+    assert not (tmp_path / "demo").exists()

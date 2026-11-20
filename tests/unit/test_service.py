@@ -102,3 +102,15 @@ def test_oversized_smarts_queries_are_refused():
         service.parse_query("C" * 10_001, "smarts")
     with pytest.raises(MoleculeValidationError, match="SMARTS has 1,001 atoms"):
         service.parse_query("[#6]" * 1_001, "smarts")
+
+
+def test_get_client_keeps_one_client_per_data_directory(tmp_path, monkeypatch):
+    """The client's cache follows its data directory, one client per directory."""
+    monkeypatch.setattr(service, "_clients", {})
+    monkeypatch.setenv("PUBCHEM_FINDER_CACHE", "1")
+    home = tmp_path / "home"
+    client = service.get_client(home)
+    assert client.cache is not None
+    assert client.cache.path == home.resolve() / "cache" / "pubchem-http.sqlite"
+    assert service.get_client(home) is client
+    assert service.get_client(tmp_path / "other") is not client

@@ -39,6 +39,12 @@ def test_uncompressed_file_and_bad_weight(tmp_path):
     assert record.molecular_weight is None
 
 
+def test_reads_uppercase_gzip_suffix(tmp_path):
+    path = write_sdf(tmp_path / "Library.SDF.GZ", [(702, "CCO", "ethanol", "new")])
+    (record,) = SdfReader(path)
+    assert record.cid == 702
+
+
 def test_empty_file(tmp_path):
     path = tmp_path / "empty.sdf"
     path.write_text("")
@@ -210,3 +216,23 @@ def test_a_stream_that_is_not_deflate_is_named_as_the_problem(tmp_path):
     path.write_bytes(b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03\x07" + bytes(32))
     with pytest.raises(IndexBuildError, match="damaged or incomplete"):
         list(SdfReader(path))
+
+
+def test_record_without_atoms_is_skipped_and_bad_smiles_tag_is_replaced(tmp_path):
+    """Issue #169: a record with no atoms was indexed with an empty structure, and a
+    PUBCHEM_SMILES tag that is not SMILES was stored and shown as the SMILES."""
+    ethanol = Chem.MolFromSmiles("CCO")
+    ethanol.SetProp("PUBCHEM_COMPOUND_CID", "702")
+    ethanol.SetProp("PUBCHEM_SMILES", "not a smiles")
+    empty = Chem.RWMol()
+    empty.SetProp("PUBCHEM_COMPOUND_CID", "5000")
+    path = tmp_path / "bad.sdf"
+    with Chem.SDWriter(str(path)) as writer:
+        writer.write(ethanol)
+        writer.write(empty)
+
+    reader = SdfReader(path)
+    records = list(reader)
+    assert records[0].smiles == "CCO"
+    assert (reader.n_ok, reader.n_failed) == (1, 1)
+    assert [r.cid for r in records] == [702]

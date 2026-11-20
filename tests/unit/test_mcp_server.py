@@ -90,7 +90,24 @@ async def test_compound_properties_structured(aspirin_smiles):
         )
     assert result.is_error is False
     assert result.structured_content["canonical_smiles"] == "CC(=O)Oc1ccccc1C(=O)O"
+    assert result.structured_content["molecular_weight"] == 180.159
+    assert result.structured_content["tpsa"] == 63.6
+    assert result.structured_content["molecular_formula"] == "C9H8O4"
     assert result.structured_content["lipinski_ok"] is True
+
+
+@pytest.mark.parametrize("tool", ["compound_properties", "medchem_profile"])
+async def test_serialized_descriptors_match_for_equivalent_inputs(tool, aspirin_smiles):
+    keys = ("molecular_weight", "logp", "tpsa")
+    async with Client(mcp) as client:
+        for smiles in (aspirin_smiles, "OC(=O)c1ccccc1OC(C)=O"):
+            result = await client.call_tool(tool, {"smiles": smiles})
+            assert not result.is_error, result.content
+            assert tuple(result.structured_content[key] for key in keys) == (
+                180.159,
+                1.31,
+                63.6,
+            )
 
 
 async def test_invalid_smiles_is_tool_error(invalid_smiles):
@@ -180,6 +197,29 @@ async def test_substructure_search_tool_without_pattern_index(built_home, monkey
         result = await client.call_tool("substructure_search", {"query": "c1ccccc1"})
     assert result.is_error is True
     assert "index build --with-substructure" in result.content[0].text
+
+
+@pytest.mark.parametrize(("limit", "truncated"), [(2, True), (3, False)])
+async def test_pubchem_exact_tool_accepts_a_result_limit(
+    pubchem_knowledge_api, limit, truncated
+):
+    from tests.pubchem_fixtures import ASPIRIN, table
+
+    pubchem_knowledge_api["identity"].respond(
+        200, json=table(ASPIRIN, ASPIRIN | {"CID": 2245}, ASPIRIN | {"CID": 2246})
+    )
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "pubchem_exact_match",
+            {"smiles": "CC(=O)Oc1ccccc1C(=O)O", "max_records": limit},
+        )
+    assert not result.is_error
+    assert (
+        result.structured_content["max_records"]
+        == len(result.structured_content["hits"])
+        == limit
+    )
+    assert result.structured_content["truncated"] is truncated
 
 
 async def test_pubchem_knowledge_tools(pubchem_knowledge_api):
@@ -346,6 +386,16 @@ async def test_find_analogues_prompt():
     assert "also run" not in text
     default = await text_of("find_analogues", {"compound": "ibuprofen"})
     assert "threshold=0.6" in default
+
+
+@pytest.mark.parametrize("name", ["compound_dossier", "find_analogues"])
+@pytest.mark.parametrize("compound", ["", "   "])
+async def test_prompts_refuse_a_blank_compound(name, compound):
+    from mcp.shared.exceptions import MCPError
+
+    async with Client(mcp) as client:
+        with pytest.raises(MCPError, match="compound must be a name"):
+            await client.get_prompt(name, {"compound": compound})
 
 
 @pytest.mark.parametrize("threshold", ["abc", "0", "1.5"])
