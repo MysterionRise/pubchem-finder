@@ -1789,6 +1789,10 @@ def test_pubchem_xrefs_says_which_types_are_missing(pubchem_knowledge_api):
 
 
 def test_pubchem_command_errors(pubchem_knowledge_api):
+    no_names = runner.invoke(app, ["pubchem", "synonyms", "5", "--json"])
+    assert no_names.exit_code == 0, no_names.output
+    assert json.loads(no_names.output)["synonyms"] == []
+    assert json.loads(no_names.output)["total"] == 0
     missing = runner.invoke(
         app, ["pubchem", "annotations", "2244", "--heading", "Toxicity"]
     )
@@ -1796,7 +1800,7 @@ def test_pubchem_command_errors(pubchem_knowledge_api):
     assert "no 'Toxicity' section" in missing.output
     bad = runner.invoke(app, ["pubchem", "similarity", "not smiles("])
     assert bad.exit_code == 1
-    for args in (["synonyms", "5"], ["substructure", "not("], ["exact", "not("]):
+    for args in (["synonyms", "8"], ["substructure", "not("], ["exact", "not("]):
         assert runner.invoke(app, ["pubchem", *args]).exit_code == 1
     for cmd in ("xrefs", "describe", "bioactivity"):
         assert (
