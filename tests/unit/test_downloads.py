@@ -9,7 +9,12 @@ import pytest
 import respx
 
 from pubchem_finder.core.exceptions import DownloadError, InvalidInput
-from pubchem_finder.data.downloads import DEFAULT_SDF_URL, SdfMirror, file_md5
+from pubchem_finder.data.downloads import (
+    BLOCK,
+    DEFAULT_SDF_URL,
+    SdfMirror,
+    file_md5,
+)
 
 NAME = "Compound_000000001_000500000.sdf.gz"
 PAYLOAD = os.urandom(3 * 1024 * 1024 + 123)  # a few blocks, not block-aligned
@@ -208,6 +213,36 @@ def test_retry_resumes_where_the_first_attempt_stopped(api, mirror, tmp_path):
     )
     assert mirror.download(NAME, tmp_path).read_bytes() == PAYLOAD
     assert ranges == [f"bytes={half}-"]
+
+
+def test_connection_dropped_mid_file_resumes_at_the_bytes_received(
+    api, mirror, tmp_path
+):
+    """A connection that dies part-way through a file must not send the next
+    attempt back to zero: the whole blocks already on disk are kept and asked for
+    with a Range header, and the finished file matches the published checksum."""
+    dropped = 2 * BLOCK
+    part = tmp_path / f"{NAME}.part"
+    ranges: list[str | None] = []
+    part_sizes: list[int] = []
+
+    class DropsAfterTwoBlocks(httpx.SyncByteStream):
+        def __iter__(self):
+            yield PAYLOAD[:BLOCK]
+            yield PAYLOAD[BLOCK:dropped]
+            raise httpx.ReadError("connection reset")
+
+    def resume(request: httpx.Request) -> httpx.Response:
+        part_sizes.append(part.stat().st_size)
+        ranges.append(request.headers.get("Range"))
+        return httpx.Response(206, content=PAYLOAD[dropped:])
+
+    api.get(URL + NAME).mock(
+        side_effect=[httpx.Response(200, stream=DropsAfterTwoBlocks()), resume]
+    )
+    assert mirror.download(NAME, tmp_path).read_bytes() == PAYLOAD
+    assert part_sizes == [dropped]
+    assert ranges == [f"bytes={dropped}-"]
 
 
 def test_transient_errors_give_up_after_all_attempts(api, mirror, tmp_path):
