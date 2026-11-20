@@ -209,20 +209,24 @@ def test_similarity_search_without_an_index_searches_the_demo_set(demo_built, de
     found = service.similarity_search(ASPIRIN, threshold=0.4, home=demo_built)
     n = demo.provenance()["n_compounds"]
     assert found.search_scope == "demo"
+    assert found.note is not None
+    assert len(found.note) <= 120
+    assert "`" not in found.note
+    assert found.hint is not None
     assert found.n_indexed == n
     assert found.hits[0].cid == 2244
     assert f"demo set of {n:,} FDA-approved drugs, not PubChem" in found.note
-    assert "index build --limit 1 --with-substructure" in found.note
-    assert "pubchem_similarity_search" in found.note
-    # Through the search itself, not by formatting the note in the test: the
+    assert "index build --limit 1 --with-substructure" in found.hint
+    assert "pubchem_similarity_search" in found.hint
+    # Through the search itself, not by formatting the hint in the test: the
     # command is one that runs from any terminal, for the search that ran.
-    assert f"`{hints.command('pubchem similarity SMILES')}`" in found.note
-    assert "`pubchem-finder pubchem" not in found.note.replace(
+    assert f"`{hints.command('pubchem similarity SMILES')}`" in found.hint
+    assert "`pubchem-finder pubchem" not in found.hint.replace(
         hints.command("pubchem similarity SMILES"), ""
     )
     # Spelled out: the two lines above build their text with the function under
     # test, and passed when it printed a command only an installed copy can run.
-    assert "(`uvx --python 3.14 pubchem-finder==" in found.note
+    assert "(`uvx --python 3.14 pubchem-finder==" in found.hint
 
 
 def test_substructure_search_without_an_index_searches_the_demo_set(
@@ -230,9 +234,13 @@ def test_substructure_search_without_an_index_searches_the_demo_set(
 ):
     found = service.substructure_search("c1ccc2[nH]ccc2c1", home=demo_built)
     assert found.search_scope == "demo"
+    assert found.note is not None
+    assert len(found.note) <= 120
+    assert "`" not in found.note
+    assert found.hint is not None
     assert found.hits
-    assert f"`{hints.command('pubchem substructure SMILES')}`" in found.note
-    assert "pubchem similarity SMILES" not in found.note
+    assert f"`{hints.command('pubchem substructure SMILES')}`" in found.hint
+    assert "pubchem similarity SMILES" not in found.hint
 
 
 def test_status_says_searches_use_the_demo_set(demo_built, demo_on):
@@ -262,7 +270,7 @@ def test_a_built_index_takes_over_without_a_restart(tmp_path, sample_sdfs, demo_
     build_chunks(paths, [SdfSource(chunk_name(p), local_path=p) for p in sample_sdfs])
     finalize(paths)
     after = service.similarity_search(ASPIRIN, threshold=0.4, home=tmp_path)
-    assert (after.search_scope, after.note) == ("index", None)
+    assert (after.search_scope, after.note, after.hint) == ("index", None, None)
     assert after.n_indexed == 11
     assert service.index_status(tmp_path).search_scope == "index"
 
@@ -299,15 +307,21 @@ async def test_mcp_search_reports_the_demo_scope(demo_built, demo_on, monkeypatc
     assert result.structured_content["search_scope"] == "demo"
     assert result.structured_content["hits"][0]["cid"] == 2244
     assert "FDA-approved drugs" in result.structured_content["note"]
+    assert len(result.structured_content["note"]) <= 120
+    assert "index build" in result.structured_content["hint"]
 
 
 def test_cli_search_prints_the_demo_note(demo_built, demo_on):
     sim = runner.invoke(app, ["search", ASPIRIN, "--home", str(demo_built)])
     assert sim.exit_code == 0, sim.output
     assert "note: Searched the built-in demo set" in sim.output
+    assert "hint:" in sim.output
+    assert "index build" in sim.output
     assert "CID 2244" in sim.output
     sub = runner.invoke(
         app, ["substructure", "c1ccc2[nH]ccc2c1", "--home", str(demo_built)]
     )
     assert sub.exit_code == 0, sub.output
     assert "note: Searched the built-in demo set" in sub.output
+    assert "hint:" in sub.output
+    assert "index build" in sub.output
