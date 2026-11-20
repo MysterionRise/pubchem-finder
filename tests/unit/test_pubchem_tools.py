@@ -177,8 +177,35 @@ def test_synonyms(pubchem_knowledge_api):
     assert result.total == 6
     with pytest.raises(BadQuery):
         service.pubchem_synonyms(2244, limit=0)
-    with pytest.raises(CompoundNotFound):
-        service.pubchem_synonyms(5)
+    assert service.pubchem_synonyms(5).synonyms == []
+
+
+@pytest.mark.parametrize("exists", [False, True])
+def test_synonyms_distinguishes_no_names_from_no_compound(
+    pubchem_knowledge_api, tmp_path, exists
+):
+    cid = 10
+    pubchem_knowledge_api.get(f"{fx.REST}/compound/cid/{cid}/synonyms/JSON").respond(
+        404, json=fx.NOT_FOUND
+    )
+    properties = pubchem_knowledge_api.get(
+        url__regex=rf"{fx.REST}/compound/cid/{cid}/property/.*"
+    ).respond(
+        200 if exists else 404,
+        json=fx.table(fx.row(cid, "Example", "C", "CH4", "16.04"))
+        if exists
+        else fx.NOT_FOUND,
+    )
+    if exists:
+        found = service.pubchem_synonyms(cid, home=tmp_path)
+        assert found.cid == cid
+        assert found.synonyms == []
+        assert found.cas_numbers == []
+        assert found.total == 0
+    else:
+        with pytest.raises(CompoundNotFound):
+            service.pubchem_synonyms(cid, home=tmp_path)
+    assert properties.call_count == 1
 
 
 def test_xrefs(pubchem_knowledge_api):
