@@ -67,7 +67,7 @@ similarity_search finds the most similar compounds in the local index, and
 substructure_search the indexed compounds containing a SMILES or SMARTS fragment.
 Until the user builds a local PubChem index, both search a built-in demo set of about
 1,900 FDA-approved drugs and say so in note: tell the user, and offer the pubchem_*
-searches (all of PubChem, live) or the build command index_status gives.
+searches (all of PubChem, live) or the build command in the result's hint.
 The pubchem_* tools query PubChem live: structure searches over all of PubChem
 (similarity, substructure, exact match), synonyms and CAS numbers, cross-references
 (PubMed, patents, registry IDs), descriptions, curated page sections such as GHS
@@ -245,8 +245,8 @@ async def similarity_search(
     analogues; lower it to widen the search). Searches the index built with
     `pubchem-finder index build` (the first search loads it, which takes a while
     for a full PubChem index); until one is built, a demo set of about 1,900
-    FDA-approved drugs, with search_scope="demo" and a note to pass on to the
-    user. group_by_scaffold adds the hits grouped by
+    FDA-approved drugs, with search_scope="demo", a short note to pass on to the
+    user, and a hint with the build command and live-search alternatives. group_by_scaffold adds the hits grouped by
     Bemis-Murcko scaffold, to see how many chemical series the hits span.
     """
     return await _run(

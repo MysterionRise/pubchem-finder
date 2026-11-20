@@ -352,6 +352,8 @@ def search(
         return
     if result.note:
         typer.echo(f"note: {result.note}", err=True)
+    if result.hint:
+        typer.echo(f"hint: {result.hint}", err=True)
     if result.warning:
         typer.echo(f"warning: {result.warning}", err=True)
     typer.echo(
@@ -445,6 +447,8 @@ def substructure(
     )
     if result.note:
         typer.echo(f"note: {result.note}", err=True)
+    if result.hint:
+        typer.echo(f"hint: {result.hint}", err=True)
     if result.warning:
         typer.echo(f"warning: {result.warning}", err=True)
     for hit in result.hits:
