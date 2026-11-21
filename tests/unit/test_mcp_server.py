@@ -514,3 +514,60 @@ async def test_oversized_smiles_get_a_tool_error_not_a_crash():
     assert result.is_error is True
     assert "the limit is 10,000" in result.content[0].text
     assert after.is_error is False
+
+
+async def test_local_tools_do_not_queue_behind_pubchem_lookups(
+    monkeypatch, aspirin_smiles
+):
+    """Lookups waiting for the PubChem rate limit must not take every worker thread."""
+    import time
+
+    import anyio
+    import httpx
+
+    from pubchem_finder.data.pug_rest import PubChemClient
+    from tests.pubchem_fixtures import ASPIRIN, table
+
+    def answer(request):
+        return httpx.Response(200, json=table(ASPIRIN))
+
+    pubchem = PubChemClient(
+        client=httpx.Client(transport=httpx.MockTransport(answer)),
+        min_interval=0.1,
+        cache=None,
+    )
+    monkeypatch.setattr("pubchem_finder.service.get_client", lambda home=None: pubchem)
+    async with Client(mcp) as client, anyio.create_task_group() as tasks:
+        for cid in range(1, 61):  # more than the default pool's 40 threads
+            tasks.start_soon(
+                client.call_tool,
+                "pubchem_lookup",
+                {"query": str(cid), "by": "cid"},
+            )
+        await anyio.sleep(0.3)  # let the lookups queue behind the rate limit
+        started = time.monotonic()
+        result = await client.call_tool(
+            "compound_properties", {"smiles": aspirin_smiles}
+        )
+        waited = time.monotonic() - started
+    assert result.is_error is False
+    assert waited < 0.5, (
+        f"compound_properties waited {waited:.2f}s behind PubChem lookups"
+    )
+
+
+async def test_pubchem_limiter_is_not_shared_across_event_loops():
+    """A limiter is bound to the loop it was first used in, so each loop gets its own."""
+    import asyncio
+
+    import anyio
+
+    from pubchem_finder.mcp_server import _pubchem_limiter
+
+    async def limiter_in_new_loop():
+        return _pubchem_limiter()
+
+    here = _pubchem_limiter()
+    there = await anyio.to_thread.run_sync(lambda: asyncio.run(limiter_in_new_loop()))
+    assert there is not here
+    assert _pubchem_limiter() is here
