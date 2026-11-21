@@ -5,9 +5,11 @@ Run with ``pubchem-finder mcp`` (stdio, the default) or
 stdout: over stdio, stdout is the MCP transport.
 """
 
+import asyncio
 import functools
 import logging
 import sys
+import weakref
 from collections.abc import Callable
 from typing import Any, Literal, TypeVar
 
@@ -149,10 +151,37 @@ _NARROWABLE_SEARCHES = frozenset(
 )
 
 
-async def _run(fn: Callable[..., T], *args: object, **kwargs: object) -> T:
+# A PubChem call that is waiting for the rate limit holds its worker thread. Capping
+# those calls keeps them from taking every thread of the default pool, which the
+# local tools share, so a local tool does not queue behind a burst of lookups.
+_PUBCHEM_THREADS = 8
+# One limiter per event loop: an anyio CapacityLimiter keeps asyncio objects bound to
+# the loop it was first used in, so a limiter reused by a later asyncio.run() would fail.
+_pubchem_threads: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Any] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _pubchem_limiter() -> anyio.CapacityLimiter:
+    loop = asyncio.get_running_loop()
+    limiter = _pubchem_threads.get(loop)
+    if limiter is None:
+        limiter = anyio.CapacityLimiter(_PUBCHEM_THREADS)
+        _pubchem_threads[loop] = limiter
+    return limiter
+
+
+async def _run(
+    fn: Callable[..., T],
+    *args: object,
+    limiter: anyio.CapacityLimiter | None = None,
+    **kwargs: object,
+) -> T:
     """Run blocking RDKit/HTTP work off the event loop, mapping errors to ToolError."""
     try:
-        return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
+        return await anyio.to_thread.run_sync(
+            functools.partial(fn, *args, **kwargs), limiter=limiter
+        )
     except CompoundNotFound as exc:
         raise ToolError(
             f"{exc}. Check the spelling or try another identifier."
@@ -189,7 +218,9 @@ async def pubchem_lookup(
     formula, molecular weight, XLogP, H-bond counts, TPSA and the PubChem URL.
     Names resolve to the best matches; use limit to get more than the top 5.
     """
-    return await _run(service.lookup, query, by=by, limit=limit)
+    return await _run(
+        service.lookup, query, by=by, limit=limit, limiter=_pubchem_limiter()
+    )
 
 
 @_tool("Compute molecular properties", calls_pubchem=False)
@@ -309,6 +340,7 @@ async def pubchem_similarity_search(
         smiles,
         threshold=threshold,
         max_records=max_records,
+        limiter=_pubchem_limiter(),
     )
 
 
@@ -323,7 +355,10 @@ async def pubchem_substructure_search(
     sorted by ECFP4 similarity to the query, closest first. max_records: 1-200.
     """
     return await _run(
-        service.pubchem_substructure_search, smiles, max_records=max_records
+        service.pubchem_substructure_search,
+        smiles,
+        max_records=max_records,
+        limiter=_pubchem_limiter(),
     )
 
 
@@ -345,6 +380,7 @@ async def pubchem_exact_match(
         smiles,
         identity_type=identity_type,
         max_records=max_records,
+        limiter=_pubchem_limiter(),
     )
 
 
@@ -352,7 +388,9 @@ async def pubchem_exact_match(
 async def pubchem_synonyms(cid: int, limit: int = 25) -> Synonyms:
     """Names a compound is known by (common, brand, systematic), most common
     first, plus its CAS Registry Numbers. Get the CID from pubchem_lookup."""
-    return await _run(service.pubchem_synonyms, cid, limit=limit)
+    return await _run(
+        service.pubchem_synonyms, cid, limit=limit, limiter=_pubchem_limiter()
+    )
 
 
 @_tool("PubChem cross-references", calls_pubchem=True)
@@ -360,14 +398,14 @@ async def pubchem_xrefs(cid: int) -> CrossRefs:
     """Counts and examples of external identifiers linked to a compound:
     registry IDs (e.g. CAS, ChEMBL, DrugBank), PubMed articles (with links) and
     patents."""
-    return await _run(service.pubchem_xrefs, cid)
+    return await _run(service.pubchem_xrefs, cid, limiter=_pubchem_limiter())
 
 
 @_tool("PubChem compound description", calls_pubchem=True)
 async def pubchem_description(cid: int) -> Description:
     """Short curated descriptions of a compound (what it is, what it is used
     for), each with its source."""
-    return await _run(service.pubchem_description, cid)
+    return await _run(service.pubchem_description, cid, limiter=_pubchem_limiter())
 
 
 @_tool("PubChem page section", calls_pubchem=True, large_results=True)
@@ -384,7 +422,13 @@ async def pubchem_annotations(
     trimmed to max_chars (500-30000); truncated says when that happened. If the
     page lacks the section, the error lists the sections it has.
     """
-    return await _run(service.pubchem_annotations, cid, heading, max_chars=max_chars)
+    return await _run(
+        service.pubchem_annotations,
+        cid,
+        heading,
+        max_chars=max_chars,
+        limiter=_pubchem_limiter(),
+    )
 
 
 @_tool("PubChem bioactivity summary", calls_pubchem=True)
@@ -394,7 +438,7 @@ async def pubchem_bioactivity(cid: int) -> BioactivitySummary:
     its NCBI gene ID and a protein accession) and the lowest potency-type values
     among active results (IC50, EC50, AC50, Ki, Kd and similar, in µM). The lowest
     value is not always the most meaningful one: name the assay when you quote it."""
-    return await _run(service.pubchem_bioactivity, cid)
+    return await _run(service.pubchem_bioactivity, cid, limiter=_pubchem_limiter())
 
 
 @_tool("Draw molecules", calls_pubchem=False)
@@ -444,11 +488,17 @@ async def medchem_profile(smiles: str) -> MedchemProfile:
 # --------------------------------------------------------------------------- #
 
 
-async def _read(fn: Callable[..., BaseModel], *args: object) -> str:
+async def _read(
+    fn: Callable[..., BaseModel],
+    *args: object,
+    limiter: anyio.CapacityLimiter | None = None,
+) -> str:
     """Run a service call off the event loop and return its result as JSON; every
     failure becomes a ResourceError with the reason (the SDK's default hides it)."""
     try:
-        result = await anyio.to_thread.run_sync(functools.partial(fn, *args))
+        result = await anyio.to_thread.run_sync(
+            functools.partial(fn, *args), limiter=limiter
+        )
     except CompoundNotFound as exc:
         raise ResourceNotFoundError(str(exc)) from exc
     except PubChemFinderError as exc:
@@ -472,7 +522,7 @@ async def compound_resource(cid: str) -> str:
     number = parse_id(cid)  # ASCII digits, leading zeros allowed, at most 32 bits
     if number is None:
         raise ResourceNotFoundError(f"Not a PubChem CID: {cid[:20]!r}")
-    return await _read(_compound, number)
+    return await _read(_compound, number, limiter=_pubchem_limiter())
 
 
 def _compound(cid: int) -> CompoundRecord:
