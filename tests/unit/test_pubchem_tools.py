@@ -129,14 +129,25 @@ def test_client_argument_validation(call, match):
 
 
 @pytest.mark.parametrize(
-    "response",
+    ("response", "retries"),
     [
-        httpx.Response(504, text="Gateway Timeout"),
-        httpx.Response(503, json=fx.fault("PUGREST.Timeout", "Request timed out")),
-        httpx.Response(500, json=fx.fault("PUGREST.Timeout", "Request timed out")),
+        (httpx.Response(504, text="Gateway Timeout"), True),
+        (
+            httpx.Response(504, json=fx.fault("PUGREST.Timeout", "Request timed out")),
+            False,
+        ),
+        (
+            httpx.Response(503, json=fx.fault("PUGREST.Timeout", "Request timed out")),
+            False,
+        ),
+        (
+            httpx.Response(500, json=fx.fault("PUGREST.Timeout", "Request timed out")),
+            False,
+        ),
     ],
 )
-def test_search_timeouts(response, monkeypatch):
+def test_search_timeouts(response, retries, monkeypatch, fast_client):
+    monkeypatch.setattr(service, "get_client", lambda home=None: fast_client)
     monkeypatch.setattr("pubchem_finder.data.pug_rest.time.sleep", lambda s: None)
     with respx.mock() as router:
         route = router.post(url__regex=r".*fastsubstructure.*").mock(
@@ -144,7 +155,7 @@ def test_search_timeouts(response, monkeypatch):
         )
         with pytest.raises(PubChemTimeout):
             service.pubchem_substructure_search("c1ccccc1")
-    assert route.call_count == 1  # a timeout is not retried
+    assert route.call_count == (fast_client.max_retries if retries else 1)
 
 
 def test_transport_timeout(monkeypatch):
@@ -240,7 +251,7 @@ def test_xrefs_without_patents_when_pubchem_cannot_list_them(
         ),
         (
             httpx.Response(502, text="Bad Gateway"),
-            "could not be read (PubChem returned",
+            "too busy",
         ),
     ],
 )
