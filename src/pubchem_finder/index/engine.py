@@ -182,8 +182,9 @@ class LocalIndex:
 
         Each CID appears once. Chunks can overlap (an ``--sdf`` file repeating
         compounds of a PubChem chunk), and the copies of a CID take FPSim2's slots,
-        so the search asks for more until it has ``top_k`` distinct CIDs or no
-        more hits exist; without duplicates that is a single FPSim2 call.
+        so the search asks for more until it holds ``top_k`` distinct CIDs and the
+        tie at the cut is complete, or no more hits exist; without duplicates and
+        without a tie at the cut that is a single FPSim2 call.
         """
         return self.search_merged(query, threshold, top_k, metric)[0]
 
@@ -198,15 +199,26 @@ class LocalIndex:
         the new file has under the same ID.
         """
         engine, merged = self._ensure_loaded()
-        k = top_k
+        # One past the cut: ask for top_k + 1 so the score after the cut is in
+        # hand. If it ties with the score at the cut, compounds FPSim2 left out
+        # could still win on CID; if overlapping chunks leave fewer than top_k
+        # distinct CIDs, copies took slots. Either way, double the ask until the
+        # lowest score in hand is below the score at the cut (the tie is complete,
+        # so nothing omitted can reach it) or the hits run out (issue #159: the
+        # cut used to follow FPSim2's own order).
+        k = top_k + 1
         while True:
             hits = self._top_k(engine, query, threshold, k, metric)
             best: dict[int, float] = {}
             for hit in hits:
                 cid, sim = int(hit["mol_id"]), round(float(hit["coeff"]), 4)
                 best[cid] = max(sim, best.get(cid, sim))
-            if len(best) >= top_k or len(hits) < k:
+            if len(hits) < k:
                 break
+            if len(best) > top_k:
+                scores = sorted(best.values(), reverse=True)
+                if scores[-1] < scores[top_k - 1]:
+                    break
             k *= 2
         # FPSim2 returns equal scores in whatever order its threads finish. Break
         # ties by CID so results are stable and long-known compounds come first

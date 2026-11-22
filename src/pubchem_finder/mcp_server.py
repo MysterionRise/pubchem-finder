@@ -196,7 +196,7 @@ async def pubchem_lookup(
 async def compound_properties(smiles: str) -> Properties:
     """Calculate RDKit descriptors for a SMILES string.
 
-    Returns molecular weight, Crippen LogP, H-bond donors/acceptors, TPSA,
+    Returns molecular formula, molecular weight, Crippen LogP, H-bond donors/acceptors, TPSA,
     rotatable bonds, aromatic rings, heavy atoms, canonical SMILES and whether
     Lipinski's Rule of Five passes. Works for any valid SMILES, not only PubChem
     compounds.
@@ -329,16 +329,23 @@ async def pubchem_substructure_search(
 
 @_tool("PubChem exact structure match", calls_pubchem=True)
 async def pubchem_exact_match(
-    smiles: str, identity_type: IdentityType = "same_stereo_isotope"
+    smiles: str,
+    identity_type: IdentityType = "same_stereo_isotope",
+    max_records: int = 25,
 ) -> RemoteSearchResults:
     """Find the PubChem record(s) for exactly this structure.
 
     identity_type controls what counts as identical: same_stereo_isotope
     (default, strictest), same_stereo, same_isotope, same_connectivity (ignores
-    stereo and isotopes, finds all stereoisomers), same_tautomer,
-    nonconflicting_stereo.
+    stereo and isotopes), same_tautomer, nonconflicting_stereo.
+    max_records: 1-200; additional matches are omitted.
     """
-    return await _run(service.pubchem_exact_match, smiles, identity_type=identity_type)
+    return await _run(
+        service.pubchem_exact_match,
+        smiles,
+        identity_type=identity_type,
+        max_records=max_records,
+    )
 
 
 @_tool("PubChem synonyms and CAS numbers", calls_pubchem=True)

@@ -127,7 +127,7 @@ before binding it to anything but `127.0.0.1`.
 | `index_status()` | Whether the local index is built, what it holds, what local searches cover now, and how to build what is missing. |
 | `pubchem_similarity_search(smiles, threshold, max_records)` | Similar compounds across all of PubChem, live, re-scored with ECFP4. |
 | `pubchem_substructure_search(smiles, max_records)` | Compounds across all of PubChem that contain a fragment, live. |
-| `pubchem_exact_match(smiles, identity_type)` | The PubChem record(s) for exactly this structure, optionally ignoring stereo or isotopes. |
+| `pubchem_exact_match(smiles, identity_type, max_records)` | The PubChem record(s) for exactly this structure, optionally ignoring stereo or isotopes. |
 | `pubchem_synonyms(cid, limit)` | Common, brand and systematic names, plus CAS Registry Numbers. |
 | `pubchem_xrefs(cid)` | Registry IDs (CAS, ChEMBL, DrugBank...), PubMed articles and patents. |
 | `pubchem_description(cid)` | Curated descriptions, with sources. |
@@ -202,7 +202,11 @@ answer from the old file: they leave the structures of that file's hits out and 
 finishes it. A file with no usable record does not replace its chunk, and a file you
 moved keeps its chunk. A record's ID is its `PUBCHEM_COMPOUND_CID` tag or, when that is
 missing or not a number, its title line, and must be a whole number from 1 to
-4,294,967,295; other records are skipped and counted. An ID has to mean one compound
+4,294,967,295; records without atoms, with an invalid ID, or that RDKit cannot
+sanitize are skipped and counted.
+SMILES tags RDKit cannot parse are replaced with a SMILES generated from the
+structure. Existing chunks keep their stored values until the source file changes
+and is rebuilt. An ID has to mean one compound
 across the whole index, because a hit is reported by its ID: two files that both number
 their records from 1, or a library numbered from 1 next to PubChem's chunks (where an ID
 is a CID), are refused with the first ID that clashes. The same compound in two files is
@@ -223,7 +227,7 @@ The `pubchem` commands query PubChem's live services, with no index needed:
 ```bash
 pubchem-finder pubchem similarity "CC(=O)Oc1ccccc1C(=O)O" --threshold 90   # across all of PubChem
 pubchem-finder pubchem substructure "c1ccc2[nH]ccc2c1" --max 50
-pubchem-finder pubchem exact "CC(=O)Oc1ccccc1C(=O)O" --identity same_connectivity
+pubchem-finder pubchem exact "OCC1OC(O)C(O)C(O)C1O" --identity same_connectivity --max 100
 pubchem-finder pubchem synonyms 2244          # names and CAS numbers
 pubchem-finder pubchem xrefs 2244             # registry IDs, PubMed articles, patents
 pubchem-finder pubchem describe 2244          # curated descriptions with sources
@@ -380,9 +384,9 @@ fetches pubchem-finder's from GitHub.
   command or client config you write yourself.
 - **Linux on ARM (aarch64):** FPSim2 publishes no wheel there, so installing needs a C++
   compiler to build it.
-- **`ImportError: libXrender.so.1` on Linux** (a server or a slim container without a
-  desktop): RDKit's drawing code needs three system libraries there. On Debian or
-  Ubuntu: `apt-get install libxrender1 libxext6 libexpat1`.
+- **`RDKit drawing is unavailable` on Linux.** Drawing needs three system libraries.
+  Other commands and tools work without them. On Debian or Ubuntu, install them with
+  `apt-get install libxrender1 libxext6 libexpat1`.
 - **Starting over:** `pubchem-finder cache clear` empties the response cache; deleting the
   data directory removes the index too.
 

@@ -1,0 +1,30 @@
+Using CPython 3.12.13
+Creating virtual environment at: C:\Users\pauls\Documents\pubchem-finder\.venv
+   Building pubchem-finder @ file:///C:/Users/pauls/Documents/pubchem-finder
+Downloading blosc2 (4.5MiB)
+Downloading pydantic-core (2.1MiB)
+Downloading numpy (12.0MiB)
+Downloading pywin32 (6.6MiB)
+Downloading tables (6.2MiB)
+Downloading ast-serialize (1.1MiB)
+Downloading pyarrow (27.2MiB)
+Downloading pillow (6.9MiB)
+Downloading ruff (9.9MiB)
+Downloading mypy (10.9MiB)
+Downloading virtualenv (5.3MiB)
+Downloading duckdb (14.7MiB)
+Downloading cryptography (3.6MiB)
+Downloading rdkit (24.2MiB)
+Downloading scipy (35.0MiB)
+ Downloaded ast-serialize
+ Downloaded pydantic-core
+ Downloaded cryptography
+ Downloaded blosc2
+      Built pubchem-finder @ file:///C:/Users/pauls/Documents/pubchem-finder
+ Downloaded virtualenv
+ Downloaded tables
+ Downloaded pywin32
+ Downloaded pillow
+ Downloaded ruff
+ Downloaded mypy
+^C
