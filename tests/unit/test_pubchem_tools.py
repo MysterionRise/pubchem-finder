@@ -148,7 +148,6 @@ def test_client_argument_validation(call, match):
 )
 def test_search_timeouts(response, retries, monkeypatch, fast_client):
     monkeypatch.setattr(service, "get_client", lambda home=None: fast_client)
-    monkeypatch.setattr("pubchem_finder.data.pug_rest.time.sleep", lambda s: None)
     with respx.mock() as router:
         route = router.post(url__regex=r".*fastsubstructure.*").mock(
             return_value=response
