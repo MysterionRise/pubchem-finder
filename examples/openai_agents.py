@@ -10,10 +10,10 @@ Requires OPENAI_API_KEY in the environment.
 """
 
 import asyncio
+import os
 
 from agents import Agent, Runner
 from agents.mcp import MCPServerStdio
-import os
 
 QUESTION = "Find close analogues of aspirin and summarise what changed."
 

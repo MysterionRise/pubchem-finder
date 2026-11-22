@@ -322,9 +322,7 @@ API key). Examples for agent frameworks are welcome, see
 [#34](https://github.com/MysterionRise/pubchem-finder/issues/34).
 
 [examples/openai_agents.py](https://github.com/MysterionRise/pubchem-finder/blob/master/examples/openai_agents.py)
-does the same with the OpenAI Agents SDK (`uv run examples/openai_agents.py`, needs
-`OPENAI_API_KEY`). Examples for other frameworks are welcome, see
-[#34](https://github.com/MysterionRise/pubchem-finder/issues/34).
+does the same with the OpenAI Agents SDK (`uv run examples/openai_agents.py`, needs `OPENAI_API_KEY`).
 
 ## What leaves your machine
 
@@ -453,5 +451,3 @@ that code is in the git history before commit `06619d9`.
 ## License
 
 MIT. See [LICENSE](https://github.com/MysterionRise/pubchem-finder/blob/master/LICENSE).
-
-
