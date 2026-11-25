@@ -59,11 +59,11 @@ def test_messages_name_a_command_that_runs_from_any_terminal(monkeypatch, tmp_pa
 
     monkeypatch.setattr(hints, "__version__", "2.2.2")
     launch = "uvx --python 3.14 pubchem-finder==2.2.2"
-    note = service.DEMO_NOTE.format(
-        n=1932, live=hints.command("pubchem similarity SMILES"), build=""
+    hint = service.DEMO_HINT.format(
+        live=hints.command("pubchem similarity SMILES"), build=""
     )
-    assert f"`{launch} pubchem similarity SMILES`" in note
-    assert "`pubchem-finder " not in note
+    assert f"`{launch} pubchem similarity SMILES`" in hint
+    assert "`pubchem-finder " not in hint
 
     help_text = builder._version_help(IndexPaths(tmp_path))
     assert f"`{launch} index build --home NEW_DIR`" in help_text

@@ -129,7 +129,12 @@ class SimilarityResults(BaseModel):
     )
     note: str | None = Field(
         default=None,
-        description="What was searched, when it was the demo set; tell the user",
+        description="A one-sentence caveat about the demo set searched; tell the user",
+    )
+    hint: str | None = Field(
+        default=None,
+        description="How to search all of PubChem or build a local index when "
+        "the demo set was searched",
     )
     hits: list[SimilarityHit]
     scaffolds: list["ScaffoldGroup"] | None = Field(
@@ -155,7 +160,12 @@ class SubstructureResults(BaseModel):
     )
     note: str | None = Field(
         default=None,
-        description="What was searched, when it was the demo set; tell the user",
+        description="A one-sentence caveat about the demo set searched; tell the user",
+    )
+    hint: str | None = Field(
+        default=None,
+        description="How to search all of PubChem or build a local index when "
+        "the demo set was searched",
     )
     n_candidates: int = Field(
         description="Compounds that passed the fingerprint screen: an upper bound on matches"

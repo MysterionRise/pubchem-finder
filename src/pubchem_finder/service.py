@@ -210,8 +210,8 @@ def get_index(home: Path | str | None = None) -> LocalIndex:
         return _indexes[path]
 
 
-DEMO_NOTE = (
-    "Searched the built-in demo set of {n:,} FDA-approved drugs, not PubChem. "
+DEMO_NOTE = "Searched the built-in demo set of {n:,} FDA-approved drugs, not PubChem."
+DEMO_HINT = (
     "pubchem_similarity_search and pubchem_substructure_search (`{live}` in a "
     "terminal) search all of PubChem live. No local index is built yet. {build}"
 )
@@ -219,8 +219,8 @@ DEMO_NOTE = (
 
 def _search_index(
     home: Path | str | None, live: str = "pubchem similarity SMILES"
-) -> tuple[LocalIndex, str, str | None]:
-    """The index a local search uses, its scope and the note for the results.
+) -> tuple[LocalIndex, str, str | None, str | None]:
+    """The index a local search uses, its scope, caveat and actionable hint.
     ``live`` is the command that runs the same search over all of PubChem.
 
     The local index once one is built. Until then the built-in demo index (built
@@ -229,14 +229,14 @@ def _search_index(
     """
     index = get_index(home)
     if not demo_enabled() or index.paths.load_manifest() is not None:
-        return index, "index", None
+        return index, "index", None, None
     demo_index = get_index(demo.ensure_built(index.paths.home))
-    note = DEMO_NOTE.format(
-        n=demo_index.manifest.n_compounds,
+    note = DEMO_NOTE.format(n=demo_index.manifest.n_compounds)
+    hint = DEMO_HINT.format(
         live=hints.command(live),
         build=hints.build_index(index.paths.home),
     )
-    return demo_index, "demo", note
+    return demo_index, "demo", note, hint
 
 
 _UNMERGED_EFFECT = {
@@ -304,7 +304,7 @@ def similarity_search(
     if metric not in ("tanimoto", "dice", "cosine"):
         raise PubChemFinderError(f"Unknown metric {metric!r}")
     mol = parse_smiles(smiles)
-    index, scope, note = _search_index(home)
+    index, scope, note, hint = _search_index(home)
     # The hits are looked up, and judged, against the merge that gave them: a
     # build can finish between the two steps.
     pairs, merged = index.search_merged(
@@ -326,6 +326,7 @@ def similarity_search(
         n_indexed=manifest.n_compounds,
         search_scope=scope,
         note=note,
+        hint=hint,
         hits=hits,
         scaffolds=medchem.group_by_scaffold(hits) if group_by_scaffold else None,
         warning=_unmerged_warning(index, merged, "similarity"),
@@ -345,7 +346,7 @@ def substructure_search(
     if max_candidates < 1:
         raise PubChemFinderError("max_candidates must be at least 1")
     mol = parse_query(query, query_type)
-    index, scope, note = _search_index(home, live="pubchem substructure SMILES")
+    index, scope, note, hint = _search_index(home, live="pubchem substructure SMILES")
     found = index.substructure(mol, max_hits=max_hits, max_candidates=max_candidates)
     sub = found.merged.manifest.substructure
     warnings = [_unmerged_warning(index, found.merged, "substructure")]
@@ -363,6 +364,7 @@ def substructure_search(
         n_indexed=sub.n_compounds if sub is not None else 0,
         search_scope=scope,
         note=note,
+        hint=hint,
         n_candidates=found.n_candidates,
         n_checked=found.n_checked,
         exhaustive=found.exhaustive,
