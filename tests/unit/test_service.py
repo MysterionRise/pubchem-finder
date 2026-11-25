@@ -39,6 +39,49 @@ def test_smarts_highlights_refuses_text_after_a_space():
         drawing.smarts_highlights([mol], "[#6] [#8]")
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "C[C@H](N)C(=O)O |&1:1|",  # a racemate, which came back as one enantiomer
+        "C[C@H](N)C(=O)O |o1:1|",
+        "*CC(*)c1ccccc1 |$star_e;;;star_e;;;;;;$,Sg:n:1,2,4,5,6,7,8,9::ht|",
+    ],
+)
+def test_cxsmiles_is_refused_by_name_not_read_without_its_extension(text):
+    # Issue #212: the stereo groups were parsed and then lost by every output.
+    with pytest.raises(MoleculeValidationError, match="CXSMILES extension"):
+        service.parse_smiles(text)
+    with pytest.raises(MoleculeValidationError, match="CXSMILES extension"):
+        drawing._parse([text])
+    with pytest.raises(MoleculeValidationError, match="CXSMILES extension"):
+        service.standardize(text)
+
+
+PHENOL_AS_SMARTS = "[#6]1:[#6]:[#6]:[#6]:[#6]:[#6]:1-[#8]"
+
+
+def test_smarts_atoms_are_refused_where_a_smiles_belongs():
+    # Issue #212: read as SMILES these are atoms without hydrogens, and phenol
+    # came back with a molecular weight of 88.07 (94.11) and no warning.
+    for call in (
+        lambda: service.properties(PHENOL_AS_SMARTS),
+        lambda: service.medchem_profile(PHENOL_AS_SMARTS),
+        lambda: service.compare(PHENOL_AS_SMARTS, "Oc1ccccc1"),
+        lambda: service.parse_query(PHENOL_AS_SMARTS, "smiles"),
+        lambda: drawing._parse(["CCO", PHENOL_AS_SMARTS]),
+    ):
+        with pytest.raises(MoleculeValidationError, match="atomic numbers") as err:
+            call()
+        assert 'query_type="smarts"' in str(err.value)
+    with pytest.raises(MoleculeValidationError, match="SMILES at position 2"):
+        drawing._parse(["CCO", PHENOL_AS_SMARTS])
+    # As SMARTS it is a query, and still accepted as one.
+    assert service.parse_query(PHENOL_AS_SMARTS, "smarts").GetNumAtoms() == 7
+    # '#' as a triple bond next to a bracket atom is ordinary SMILES.
+    assert service.properties("[C-]#[O+]").molecular_formula == "CO"
+    assert service.properties("CC#N").molecular_formula == "C2H3N"
+
+
 def test_properties_aspirin(aspirin_smiles):
     props = service.properties(aspirin_smiles)
     assert props.input_smiles == aspirin_smiles

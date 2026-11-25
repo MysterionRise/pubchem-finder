@@ -14,6 +14,12 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 
 - SMILES and SMARTS inputs with a space, tab, line break, or non-ASCII character are refused with an error instead of being cut at that point. Previously `CCO CCN` or `CCO😀` was silently answered as ethanol. Clients that sent a `SMILES name` line or several structures in one string now get an error and should send one structure per call, joining the parts of a mixture with `.` (#212).
+- A SMARTS passed where a SMILES belongs is refused when its atoms are written as
+  atomic numbers (#212). RDKit reads `[#6]` in a SMILES as a carbon without hydrogens,
+  so phenol written `[#6]1:[#6]:[#6]:[#6]:[#6]:[#6]:1-[#8]` came back with a molecular
+  weight of 88.07 instead of 94.11. A CXSMILES extension (`C[C@H](N)C(=O)O |&1:1|`) is
+  refused with a message that names it: its stereo groups were read and then dropped,
+  so a racemate came back as one enantiomer.
 - Local similarity results say when they were cut at `top_k` (#191). A list of 20 looked
   like the whole answer, so counts were reported as totals: "17 hits in 4 series" where
   44 compounds in 17 series reach the threshold. `similarity_search` returns

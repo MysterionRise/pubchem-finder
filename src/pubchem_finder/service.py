@@ -20,7 +20,12 @@ from . import hints, medchem
 from .chemistry import MoleculeStandardizer, calculate_properties, is_druglike
 from .config import cache_enabled, cache_path, demo_enabled, resolve_home
 from .core.exceptions import MoleculeValidationError, PubChemFinderError
-from .core.limits import check_atoms, check_length, check_one_structure
+from .core.limits import (
+    check_atoms,
+    check_length,
+    check_one_structure,
+    check_smiles_atoms,
+)
 from .data import parsers
 from .data.cache import CacheStats, ResponseCache
 from .data.pug_rest import (
@@ -115,6 +120,7 @@ def parse_smiles(smiles: str) -> Chem.Mol:
     (see :mod:`pubchem_finder.core.limits`)."""
     check_length(smiles.strip())
     check_one_structure(smiles.strip())
+    check_smiles_atoms(smiles.strip())
     mol: Chem.Mol | None = (
         Chem.MolFromSmiles(smiles.strip()) if smiles.strip() else None
     )
