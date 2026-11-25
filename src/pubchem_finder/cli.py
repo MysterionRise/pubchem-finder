@@ -707,8 +707,13 @@ def _replacing(output: Path) -> Iterator[IO[str]]:
         if target.exists():
             with target.open("a", encoding="utf-8"):
                 pass  # writable and not locked; its content is untouched
-        fh = part.open("w", newline="", encoding="utf-8")
-    except OSError as exc:
+        # The name is predictable, so in a directory others can write to (/tmp)
+        # it may already be there as a link to some other file. Remove what is
+        # there (a leftover of an interrupted run, usually) and create the file
+        # exclusively, which never follows a link.
+        part.unlink(missing_ok=True)
+        fh = part.open("x", newline="", encoding="utf-8")
+    except (FileNotFoundError, NotADirectoryError, PermissionError) as exc:
         # Name the file the user asked for, not the temporary one beside it.
         raise type(exc)(exc.errno, exc.strerror, str(output)) from exc
     try:

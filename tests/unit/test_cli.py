@@ -2162,6 +2162,36 @@ def test_batch_output_keeps_links_modes_and_special_files(tmp_path):
     assert len(received[0].splitlines()) == 4
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX links")
+def test_batch_does_not_write_through_a_link_planted_as_its_partial_file(tmp_path):
+    # The partial file's name can be guessed. In a directory others can write
+    # to, one of them could put a link there and have the rows written to its
+    # target (and the link moved into place as the result).
+    src, _ = _write_inputs(tmp_path)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("not yours\n")
+    out = tmp_path / "out.csv"
+    (tmp_path / "out.csv.part").symlink_to(victim)
+    result = runner.invoke(app, ["props", "-i", str(src), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    assert victim.read_text() == "not yours\n"
+    assert out.is_file()
+    assert not out.is_symlink()
+    assert len(out.read_text().splitlines()) == 4
+    assert not (tmp_path / "out.csv.part").exists()
+
+
+def test_batch_replaces_the_partial_file_of_an_interrupted_run(tmp_path):
+    src, _ = _write_inputs(tmp_path)
+    out = tmp_path / "out.csv"
+    (tmp_path / "out.csv.part").write_text("rows of a run that was stopped\n")
+    result = runner.invoke(app, ["props", "-i", str(src), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    assert len(out.read_text().splitlines()) == 4
+    assert "stopped" not in out.read_text()
+    assert not (tmp_path / "out.csv.part").exists()
+
+
 def _library(tmp_path, n=1500):
     """A .smi file larger than a pipe's buffer (64 KiB on Linux)."""
     lib = tmp_path / "lib.smi"
