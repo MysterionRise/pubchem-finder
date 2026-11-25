@@ -478,7 +478,9 @@ async def medchem_profile(smiles: str) -> MedchemProfile:
     synthetic accessibility (1 easy - 10 hard), Lipinski violations, Veber rules,
     PAINS/Brenk/NIH structural alerts with matched atom indices (pass them to
     draw_molecules with the alert as SMARTS, or just describe them), and the
-    Bemis-Murcko scaffold."""
+    Bemis-Murcko scaffold. QED, synthetic accessibility and rotatable bonds are
+    those of the unlabelled structure: isotope labels such as deuterium change
+    only the molecular weight."""
     return await _run(service.medchem_profile, smiles)
 
 

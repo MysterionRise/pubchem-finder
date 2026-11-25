@@ -15,6 +15,20 @@ All notable changes to this project are documented here. The format follows
 
 - SMILES and SMARTS inputs with a space, tab, line break, or non-ASCII character are refused with an error instead of being cut at that point. Previously `CCO CCN` or `CCO😀` was silently answered as ethanol. Clients that sent a `SMILES name` line or several structures in one string now get an error and should send one structure per call, joining the parts of a mixture with `.` (#212).
 - At most eight MCP tool calls to PubChem run at once, so lookups waiting for the rate limit no longer hold every worker thread and delay local tools (#200).
+- PubChem's gateway answers 502 and 504 are retried like 429 and 503, with the same
+  backoff; they used to fail on the first request. PubChem's own timeout fault is still
+  not retried (part of #199).
+- `medchem_profile` and `triage` give the synthetic accessibility and QED of the
+  structure without its isotope labels, and rotatable bonds are counted the same way
+  (#211). DMSO-d6 scored 7.93 where DMSO scores 3.11, [14C]urea 6.4 against 1.93, and
+  `CCO[2H]` had one rotatable bond. Molecular weight still includes the labels.
+- `index build` can extend an index after an RDKit or FPSim2 upgrade (#214). A chunk
+  another version fingerprinted is built again when its `--sdf` file is given and has
+  not changed, instead of blocking the build; such a file is now fingerprinted again
+  even when nothing is being added. When the file is not given, the refusal names the
+  build that brings the chunks up to date (`index build --sdf` with their files) where
+  it used to offer only a new data directory. PubChem chunks and chunks whose file is
+  gone are still refused, and the message now says which ones they are.
 - `pubchem_synonyms` and `pubchem synonyms` return an empty list for an existing
   compound with no synonyms, instead of reporting it as not found (#223).
 - Demo similarity and substructure results keep their caveat in a short `note`

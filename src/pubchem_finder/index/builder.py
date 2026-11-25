@@ -688,20 +688,54 @@ def _version_help(paths: IndexPaths) -> str:
 
 
 def _check_versions(paths: IndexPaths, chunks: Sequence[ChunkStats]) -> None:
-    """Refuse to add chunks next to ones fingerprinted by another RDKit/FPSim2."""
+    """Refuse to add chunks next to ones fingerprinted by another RDKit/FPSim2.
+
+    ``chunks`` are the ones this build leaves as they are; the caller rebuilds an
+    unchanged local file whose chunk is stale when it is given that file.
+    """
     now = runtime_versions()
-    old: dict[tuple[str, str], int] = {}
+    old: dict[tuple[str, str], list[ChunkStats]] = {}
     for stats in chunks:
         built_with = _chunk_versions(paths, stats)
         if built_with is not None and built_with != now:
-            old[built_with] = old.get(built_with, 0) + 1
+            old.setdefault(built_with, []).append(stats)
     if old:
         rdkit_then, fpsim2_then = next(iter(old))
+        stale = [stats for group in old.values() for stats in group]
         raise IndexBuildError(
-            f"{sum(old.values())} chunk(s) in {paths.chunks} were fingerprinted with "
+            f"{len(stale)} chunk(s) in {paths.chunks} were fingerprinted with "
             f"RDKit {rdkit_then} / FPSim2 {fpsim2_then}; this pubchem-finder runs RDKit "
-            f"{now[0]} / FPSim2 {now[1]}. {_version_help(paths)}"
+            f"{now[0]} / FPSim2 {now[1]}. {_stale_help(paths, stale)}"
         )
+
+
+def _stale_help(paths: IndexPaths, stale: Sequence[ChunkStats]) -> str:
+    """The way out of a version refusal: building from the chunks' own files
+    again where every one of them still has its file, otherwise a new directory."""
+    files = [
+        stats.source.path
+        for stats in stale
+        if stats.source is not None and Path(stats.source.path).is_file()
+    ]
+    if len(files) == len(stale):
+        return (
+            "FPSim2 can't merge fingerprints written by different versions. The "
+            "current index is unchanged and still searchable. To grow it, first "
+            "fingerprint those chunks again with this version, from their files: "
+            f"{hints.rebuild_from_files(files, paths.home)}. Then run this build again."
+        )
+    stuck = [
+        stats.name
+        for stats in stale
+        if stats.source is None or not Path(stats.source.path).is_file()
+    ]
+    names = ", ".join(stuck[:3]) + (
+        f" and {len(stuck) - 3} more" if len(stuck) > 3 else ""
+    )
+    return (
+        f"{names} cannot be fingerprinted again from a local file (a PubChem chunk, "
+        f"or its file is gone). {_version_help(paths)}"
+    )
 
 
 def finalize(

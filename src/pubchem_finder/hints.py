@@ -79,6 +79,15 @@ def merge_rebuilt(files: list[str | None], home: Path | None = None) -> str:
     return f"`{command(f'index build {sdf}', home)}`"
 
 
+def rebuild_from_files(files: list[str], home: Path | None = None) -> str:
+    """The build that fingerprints existing chunks again, from the files they
+    were built from; names the first five."""
+    sdf = " ".join(f"--sdf {_quote(f)}" for f in files[:5])
+    more = len(files) - 5
+    rest = f" (with the other {more} file(s) of this index)" if more > 0 else ""
+    return f"`{command(f'index build {sdf}', home)}`{rest}"
+
+
 def _quote(text: str) -> str:
     if sys.platform == "win32":
         # shlex.quote's single quotes mean nothing to cmd.exe; double quotes work in

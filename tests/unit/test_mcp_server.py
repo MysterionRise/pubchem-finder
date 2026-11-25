@@ -550,6 +550,9 @@ async def test_local_tools_do_not_queue_behind_pubchem_lookups(
             "compound_properties", {"smiles": aspirin_smiles}
         )
         waited = time.monotonic() - started
+        # Measured: the other 50-odd lookups need not run to their end, six
+        # seconds behind the rate limit.
+        tasks.cancel_scope.cancel()
     assert result.is_error is False
     assert waited < 0.5, (
         f"compound_properties waited {waited:.2f}s behind PubChem lookups"

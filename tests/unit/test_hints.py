@@ -71,6 +71,17 @@ def test_messages_name_a_command_that_runs_from_any_terminal(monkeypatch, tmp_pa
     assert "`pubchem-finder " not in help_text
 
 
+def test_rebuild_from_files_names_at_most_five(monkeypatch, tmp_path):
+    monkeypatch.setattr(hints.sys, "platform", "linux")
+    two = hints.rebuild_from_files(["/data/a.sdf", "/data/my lib.sdf"], tmp_path)
+    assert "index build --sdf /data/a.sdf --sdf '/data/my lib.sdf' --home" in two
+    assert two.endswith("`")
+    many = hints.rebuild_from_files([f"/data/{n}.sdf" for n in range(8)], tmp_path)
+    assert "--sdf /data/4.sdf" in many
+    assert "/data/5.sdf" not in many
+    assert many.endswith("(with the other 3 file(s) of this index)")
+
+
 def test_quote_uses_shlex_off_windows(monkeypatch):
     monkeypatch.setattr(hints.sys, "platform", "linux")
     assert hints._quote("a; rm -rf /") == shlex.quote("a; rm -rf /")

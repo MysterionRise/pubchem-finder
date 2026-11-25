@@ -509,10 +509,35 @@ def test_chunk_whose_file_is_gone_from_another_rdkit_is_still_refused(
     paths = IndexPaths(tmp_path / "home")
     before = _build_old_chunk(paths, gone, monkeypatch)
     gone.unlink()
-    with pytest.raises(IndexBuildError, match=f"RDKit {OLD_RDKIT}"):
+    with pytest.raises(IndexBuildError, match=f"RDKit {OLD_RDKIT}") as err:
         build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
     assert not paths.chunk_stats(CHUNK_NAMES[1]).exists()
     assert paths.load_manifest() == before
+    # Nothing to build it from again: the message names the chunk and keeps the
+    # advice that still works.
+    assert f"{CHUNK_NAMES[0]} cannot be fingerprinted again" in str(err.value)
+    assert "index build --home NEW_DIR" in str(err.value)
+
+
+def test_version_refusal_names_the_build_that_brings_the_chunks_up_to_date(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """Issue #214: the refusal offered only a new data directory or deleting the
+    index, although building from the chunks' own files again is enough."""
+    paths = IndexPaths(tmp_path)
+    _build_old_chunk(paths, sample_sdfs[0], monkeypatch)
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    message = str(err.value)
+    assert f"index build --sdf {sample_sdfs[0].resolve()}" in message
+    assert "Then run this build again" in message
+    assert "NEW_DIR" not in message
+
+    # The advice works: that build, then the one that was refused.
+    build_chunks(paths, sources([sample_sdfs[0]]), workers=1)
+    finalize(paths)
+    build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    assert finalize(paths).n_compounds == N_GOOD
 
 
 def test_chunks_from_2_1_0_are_checked_through_their_h5(

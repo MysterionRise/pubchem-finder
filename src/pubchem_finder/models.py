@@ -407,11 +407,13 @@ class MedchemProfile(BaseModel):
     input_smiles: str
     canonical_smiles: str
     qed: float = Field(
-        description="Quantitative estimate of drug-likeness, 0 (poor) to 1"
+        description="Quantitative estimate of drug-likeness, 0 (poor) to 1, of the "
+        "structure without isotope labels"
     )
     sa_score: float | None = Field(
         default=None,
-        description="Synthetic accessibility, 1 (easy) to 10 (very hard); None if unavailable",
+        description="Synthetic accessibility, 1 (easy) to 10 (very hard), of the "
+        "structure without isotope labels; None if unavailable",
     )
     molecular_weight: Descriptor
     logp: Descriptor
