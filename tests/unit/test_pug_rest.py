@@ -95,6 +95,28 @@ def test_retries_on_503_then_succeeds(fast_client):
         assert route.call_count == 2
 
 
+def test_retries_on_gateway_502_then_succeeds(fast_client):
+    with respx.mock(base_url="https://pubchem.ncbi.nlm.nih.gov/rest/pug") as router:
+        route = router.get(path__regex=r"/compound/name/caffeine/property/.*")
+        route.side_effect = [
+            httpx.Response(502, text="<html>502 Bad Gateway</html>"),
+            httpx.Response(200, json=property_table(CAFFEINE_ROW)),
+        ]
+        assert fast_client.lookup("caffeine")[0].cid == 2519
+        assert route.call_count == 2
+
+
+def test_retries_on_gateway_504_then_succeeds(fast_client):
+    with respx.mock(base_url="https://pubchem.ncbi.nlm.nih.gov/rest/pug") as router:
+        route = router.get(path__regex=r"/compound/name/caffeine/property/.*")
+        route.side_effect = [
+            httpx.Response(504, text="<html>504 Gateway Time-out</html>"),
+            httpx.Response(200, json=property_table(CAFFEINE_ROW)),
+        ]
+        assert fast_client.lookup("caffeine")[0].cid == 2519
+        assert route.call_count == 2
+
+
 def test_retries_exhausted_raises_unavailable(fast_client):
     with respx.mock(base_url="https://pubchem.ncbi.nlm.nih.gov/rest/pug") as router:
         route = router.get(path__regex=r"/compound/name/caffeine/property/.*")

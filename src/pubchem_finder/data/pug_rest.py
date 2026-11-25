@@ -94,7 +94,7 @@ AnnotationHeading = Literal[
 ]
 ANNOTATION_HEADINGS: tuple[str, ...] = get_args(AnnotationHeading)
 
-RETRY_STATUSES = frozenset({429, 503})
+RETRY_STATUSES = frozenset({429, 502, 503, 504})
 MAX_SEARCH_RECORDS = 200
 
 
