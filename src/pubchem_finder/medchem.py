@@ -24,6 +24,7 @@ from rdkit.Chem import QED, FilterCatalog
 from rdkit.Chem.Scaffolds import MurckoScaffold
 
 from .chemistry import calculate_properties
+from .chemistry.properties import unlabelled
 from .core.limits import MAX_ATOMS
 from .models import MedchemProfile, ScaffoldGroup, SimilarityHit, StructuralAlert
 
@@ -59,12 +60,12 @@ def _sascorer() -> ModuleType | None:
 
 
 def sa_score(mol: Chem.Mol) -> float | None:
-    """Synthetic accessibility score, or None if unavailable."""
+    """Synthetic accessibility score of the unlabelled structure, or None if unavailable."""
     with _lock:  # the module lazily loads its fragment table on first use
         module = _sascorer()
         if module is None:
             return None
-        return round(float(module.calculateScore(mol)), 2)
+        return round(float(module.calculateScore(unlabelled(mol))), 2)
 
 
 def structural_alerts(mol: Chem.Mol) -> list[StructuralAlert]:
@@ -113,7 +114,7 @@ def profile(mol: Chem.Mol, input_smiles: str) -> MedchemProfile:
     return MedchemProfile(
         input_smiles=input_smiles,
         canonical_smiles=Chem.MolToSmiles(mol),
-        qed=round(float(QED.qed(mol)), 3),  # type: ignore[no-untyped-call]
+        qed=round(float(QED.qed(unlabelled(mol))), 3),  # type: ignore[no-untyped-call]
         sa_score=sa_score(mol),
         molecular_weight=props["molecular_weight"],
         logp=props["logp"],
