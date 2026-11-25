@@ -20,6 +20,9 @@ All notable changes to this project are documented here. The format follows
 - Demo similarity and substructure results keep their caveat in a short `note`
   and expose build instructions and live-search alternatives separately in `hint`
   (#224).
+- Index builds inherit existing fingerprint settings when `--radius` and
+  `--fp-size` are omitted. These options are refused with `--demo` or a
+  substructure-only build, which previously ignored them (#227).
 
 - Local index searches report invalid `PUBCHEM_FINDER_INDEX_MODE` values instead of silently choosing `auto` (#228).
 - `compound_properties`, `medchem_profile`, and the JSON output of `props` and `triage` serialize molecular weight, LogP, and TPSA to three decimal places. Batch CSV uses the same precision for these descriptors (#162).

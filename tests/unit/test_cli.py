@@ -2228,3 +2228,56 @@ def test_empty_home_option_is_rejected(monkeypatch, tmp_path):
     result = runner.invoke(app, ["search", "CCO", "--home", ""])
     assert result.exit_code == 2
     assert not (tmp_path / "demo").exists()
+
+
+@pytest.mark.parametrize(
+    "mode", ["--demo", "--with-substructure", "--without-substructure"]
+)
+@pytest.mark.parametrize(("option", "value"), [("--fp-size", "512"), ("--radius", "3")])
+def test_fingerprint_options_are_refused_without_chunk_sources(
+    tmp_path, mode, option, value
+):
+    home = tmp_path / "home"
+    result = runner.invoke(
+        app, ["index", "build", mode, option, value, "--home", str(home)]
+    )
+    assert result.exit_code == 2, result.output
+    assert "applies only when chunks are built" in result.output
+    assert not home.exists()
+
+
+@pytest.mark.parametrize("finalized", [False, True])
+def test_extending_an_index_keeps_its_fingerprint_settings(
+    tmp_path, sample_sdfs, finalized
+):
+    from pubchem_finder.index.layout import IndexPaths
+
+    home = tmp_path / "home"
+    common = ["index", "build", "--home", str(home), "--workers", "1"]
+    first = runner.invoke(
+        app,
+        [*common, "--sdf", str(sample_sdfs[0]), "--radius", "3", "--fp-size", "512"],
+    )
+    assert first.exit_code == 0, first.output
+    paths = IndexPaths(home)
+    before = paths.load_manifest()
+    assert before.fp_params == {"radius": 3, "fpSize": 512}
+    if not finalized:
+        paths.manifest.unlink()
+
+    extended = runner.invoke(app, [*common, "--sdf", str(sample_sdfs[1])])
+    assert extended.exit_code == 0, extended.output
+    after = paths.load_manifest()
+    assert after.fp_params == before.fp_params
+    assert after.n_compounds > before.n_compounds
+
+    matching = runner.invoke(
+        app, [*common, "--sdf", str(sample_sdfs[1]), "--fp-size", "512"]
+    )
+    assert matching.exit_code == 0, matching.output
+    mismatched = runner.invoke(
+        app, [*common, "--sdf", str(sample_sdfs[1]), "--radius", "2"]
+    )
+    assert mismatched.exit_code == 1, mismatched.output
+    assert "Existing chunks" in mismatched.output
+    assert paths.load_manifest() == after

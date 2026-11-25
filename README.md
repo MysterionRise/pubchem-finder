@@ -191,6 +191,9 @@ fingerprints it, deletes the download and merges everything into one searchable 
 chunks are skipped, so an interrupted build resumes and a larger `--limit` extends an
 existing index. `--all` indexes all of PubChem. The default fingerprint is ECFP4 (Morgan
 radius 2, 1024 bits); `--radius` and `--fp-size` change it for a new index.
+Later builds reuse the index's settings unless those options are given explicitly.
+The options apply to chunk builds (`--sdf`, `--limit`, `--all`); combining them with
+`--demo` or only changing substructure search is refused.
 
 `--sdf FILE` (repeatable) indexes your own files, alongside PubChem's chunks or on their
 own. Each file becomes a chunk named after it, so two files with the same name (two
