@@ -185,6 +185,10 @@ def test_index_build_rejects_sdf_without_a_chunk_name(tmp_path):
 
 
 def test_search_reports_invalid_index_mode(built_home, monkeypatch):
+    # The mode is read when an index is first opened, and built_home is shared by
+    # the whole session: start without the indexes earlier tests opened, or this
+    # one passes or fails with the order the files run in.
+    monkeypatch.setattr(service, "_indexes", {})
     monkeypatch.setenv("PUBCHEM_FINDER_INDEX_MODE", "bogus")
     result = runner.invoke(app, ["search", "CCO", "--home", str(built_home)])
     assert result.exit_code == 1, result.output
