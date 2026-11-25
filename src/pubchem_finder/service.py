@@ -560,9 +560,12 @@ def pubchem_synonyms(
     """Names, CAS numbers and other identifiers PubChem lists for a CID."""
     if not 1 <= limit <= 500:
         raise BadQuery("limit must be between 1 and 500")
-    payload = get_client(home).compound_json(cid, "synonyms")
     try:
+        payload = get_client(home).compound_json(cid, "synonyms")
         names = parsers.parse_synonyms(payload)
+    except CompoundNotFound:
+        _require_compound(cid, home)
+        names = []
     except parsers.PayloadError as exc:
         raise PubChemError(f"Unexpected synonyms response: {exc}") from exc
     return Synonyms(
