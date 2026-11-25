@@ -25,6 +25,15 @@ All notable changes to this project are documented here. The format follows
   substructure-only build, which previously ignored them (#227).
 - Batch commands exit with status 1 when every input row fails, while retaining the error CSV and summary (#216).
 - Batch inputs with oversized CSV or TSV fields report the file and line. A parsing error after valid rows preserves an existing output file (#216).
+- Batch mode no longer destroys its input when standard input comes from the `-o` file
+  (#195). `props -i - -o lib.smi < lib.smi` kept 179 of 5,000 rows and
+  `cat lib.smi | props -i - -o lib.smi` 3,478, both with exit status 0. Input redirected
+  from the output file is now refused, as `-i lib.smi -o lib.smi` already was, also when
+  it is spelled `-i /dev/stdin`. The rows are written to `FILE.part` beside the output and
+  take its place in one step when the run ends: piped input is read to its end first, a
+  run that fails leaves an existing output file untouched, and Ctrl+C keeps the rows
+  finished so far in the `.part` file. An output that cannot be written (a missing
+  directory, a read-only file) is reported before the first row is processed.
 
 - Local index searches report invalid `PUBCHEM_FINDER_INDEX_MODE` values instead of silently choosing `auto` (#228).
 - `compound_properties`, `medchem_profile`, and the JSON output of `props` and `triage` serialize molecular weight, LogP, and TPSA to three decimal places. Batch CSV uses the same precision for these descriptors (#162).

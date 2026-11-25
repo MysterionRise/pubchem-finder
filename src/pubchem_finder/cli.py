@@ -1,14 +1,16 @@
 """Command-line interface: ``pubchem-finder``."""
 
+import contextlib
 import itertools
 import os
+import re
 import shutil
+import stat
 import sys
-import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import IO, Annotated, Any, cast
 
 import typer
 from pydantic import BaseModel
@@ -618,21 +620,15 @@ def _run_batch(
     try:
         reader = batch.read_inputs(input_file)
         # Read the first row now: that opens the input and checks its header before
-        # the output file is opened, and so emptied.
+        # anything is created for the output.
         first = next(reader, None)
         rows = itertools.chain([] if first is None else [first], reader)
         if output is None or str(output) == "-":
             report = batch.run(rows, sys.stdout, columns, fn)
             where = "stdout"
         else:
-            # Finish parsing before touching an existing result file.
-            with tempfile.TemporaryFile(
-                mode="w+", newline="", encoding="utf-8"
-            ) as staged:
-                report = batch.run(rows, staged, columns, fn)
-                staged.seek(0)
-                with output.open("w", newline="", encoding="utf-8") as fh:
-                    shutil.copyfileobj(staged, fh)
+            with _replacing(output) as fh:
+                report = batch.run(rows, fh, columns, fn)
             where = str(output)
     except (InvalidInput, OSError) as exc:
         _fail(exc)
@@ -646,13 +642,90 @@ def _run_batch(
         raise typer.Exit(code=1)
 
 
+# Paths that name an open file descriptor rather than a file: `-i /dev/stdin` reads
+# what `-i -` reads.
+_FD_PATH = re.compile(r"(?:/dev/fd|/proc/self/fd)/(\d+)")
+
+
+def _input_descriptor(path: Path) -> int | None:
+    """The open descriptor ``path`` stands for (0 for ``-``), or None for a file."""
+    text = path.as_posix()
+    if text in ("-", "/dev/stdin"):
+        return 0
+    named = _FD_PATH.fullmatch(text)
+    return int(named.group(1)) if named else None
+
+
 def _same_file(a: Path, b: Path) -> bool:
-    if str(a) == "-" or not b.exists():
+    """Whether the batch input ``a`` and the output ``b`` are one file.
+
+    Standard input counts when it is redirected from a file (`< lib.smi`):
+    reading a file while writing over it lost most of it. Piped input
+    (`cat lib.smi | ...`) cannot be recognised; :func:`_replacing` keeps that
+    case whole.
+    """
+    if not b.exists():
         return False
     try:
-        return os.path.samefile(a, b)
-    except OSError:
+        descriptor = _input_descriptor(a)
+        if descriptor is None:
+            return os.path.samefile(a, b)
+        source = os.fstat(descriptor)
+        if not stat.S_ISREG(source.st_mode):  # a terminal or a pipe
+            return False
+        target = b.stat()
+        return (source.st_dev, source.st_ino) == (target.st_dev, target.st_ino)
+    except (OSError, ValueError):  # no such file, or no such descriptor
         return False
+
+
+@contextlib.contextmanager
+def _replacing(output: Path) -> Iterator[IO[str]]:
+    """Open a text file whose content replaces ``output`` when the block succeeds.
+
+    The rows go to ``<output>.part`` beside it, which takes the output's place in
+    one step at the end. So a run that fails leaves an existing output as it was,
+    and input that is being piped from the output file is read to its end before
+    the file is replaced. What cannot be written is reported before the batch
+    runs, not after it: a missing directory, a read-only or locked output.
+
+    After an error the partial file is removed. After Ctrl+C it is kept: the rows
+    finished so far may be hours of work.
+    """
+    target = Path(os.path.realpath(output))  # write through a link, as open() does
+    if target.exists() and not target.is_file():
+        # A device or a pipe (`-o /dev/null`): nothing to protect, and replacing
+        # it would put a regular file in its place.
+        with target.open("w", newline="", encoding="utf-8") as fh:
+            yield fh
+        return
+    part = target.with_name(target.name + ".part")
+    try:
+        if target.exists():
+            with target.open("a", encoding="utf-8"):
+                pass  # writable and not locked; its content is untouched
+        fh = part.open("w", newline="", encoding="utf-8")
+    except OSError as exc:
+        # Name the file the user asked for, not the temporary one beside it.
+        raise type(exc)(exc.errno, exc.strerror, str(output)) from exc
+    try:
+        with fh:
+            yield fh
+    except KeyboardInterrupt:
+        typer.echo(f"interrupted: the rows finished so far are in {part}", err=True)
+        raise
+    except Exception:
+        part.unlink(missing_ok=True)
+        raise
+    try:
+        if target.exists():
+            shutil.copymode(target, part)
+        os.replace(part, target)
+    except OSError as exc:
+        raise OSError(
+            f"could not replace {output} ({exc.strerror or exc}); "
+            f"the results are in {part}"
+        ) from exc
 
 
 def _default_workers() -> int:

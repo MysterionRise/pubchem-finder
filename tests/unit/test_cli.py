@@ -2046,6 +2046,172 @@ def test_batch_late_input_error_preserves_previous_output(tmp_path, bad):
     assert out.read_bytes() == b"previous results"
 
 
+def test_batch_reports_an_unwritable_output_before_the_run(tmp_path, monkeypatch):
+    # A mistyped --output must not cost the whole batch: it is reported before
+    # any row is processed, and names the file that was asked for.
+    calls = []
+    monkeypatch.setattr(service, "properties", calls.append)
+    src = tmp_path / "in.smi"
+    src.write_text("CCO\nCCN\n")
+    missing = tmp_path / "missing-dir" / "out.csv"
+    result = runner.invoke(app, ["props", "-i", str(src), "-o", str(missing)])
+    assert result.exit_code == 1, result.output
+    assert f"error: No such file or directory: {missing}" in result.stderr
+    assert ".part" not in result.stderr
+    assert calls == []
+
+
+def _write_inputs(tmp_path):
+    src = tmp_path / "in.smi"
+    src.write_text("CCO first\nCCN second\nCCC third\n")
+    out = tmp_path / "keep.csv"
+    out.write_text("previous results\n")
+    return src, out
+
+
+def test_batch_keeps_the_previous_output_when_the_run_fails(tmp_path):
+    """Issue #195: an existing output is only ever replaced by a complete result."""
+    from pubchem_finder.cli import _run_batch
+
+    src, out = _write_inputs(tmp_path)
+
+    def breaks_on_the_second(row):
+        if row.line == 2:
+            raise RuntimeError("no space left")
+        return [{"value": row.line}]
+
+    with pytest.raises(RuntimeError):
+        _run_batch(src, out, ["value"], breaks_on_the_second)
+    assert out.read_text() == "previous results\n"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["in.smi", "keep.csv"]
+
+
+def test_interrupted_batch_keeps_the_rows_done_and_the_previous_output(
+    tmp_path, capsys
+):
+    from pubchem_finder.cli import _run_batch
+
+    src, out = _write_inputs(tmp_path)
+
+    def interrupted_on_the_third(row):
+        if row.line == 3:
+            raise KeyboardInterrupt
+        return [{"value": row.line}]
+
+    with pytest.raises(KeyboardInterrupt):
+        _run_batch(src, out, ["value"], interrupted_on_the_third)
+    part = tmp_path / "keep.csv.part"
+    assert out.read_text() == "previous results\n"
+    with part.open(newline="") as fh:
+        assert [row["value"] for row in csv.DictReader(fh)] == ["1", "2"]
+    assert f"the rows finished so far are in {part}" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX links, file modes and pipes")
+def test_batch_output_keeps_links_modes_and_special_files(tmp_path):
+    import stat
+    import threading
+
+    src, _ = _write_inputs(tmp_path)
+    real = tmp_path / "real.csv"
+    real.write_text("old\n")
+    real.chmod(0o640)
+    link = tmp_path / "link.csv"
+    link.symlink_to(real)
+    result = runner.invoke(app, ["props", "-i", str(src), "-o", str(link)])
+    assert result.exit_code == 0, result.output
+    assert link.is_symlink()  # written through, not replaced by a file
+    assert stat.S_IMODE(real.stat().st_mode) == 0o640
+    assert len(real.read_text().splitlines()) == 4
+    assert not (tmp_path / "real.csv.part").exists()
+
+    # A pipe (or /dev/null) is written to directly: putting a regular file in its
+    # place would break whatever reads it.
+    fifo = tmp_path / "results.fifo"
+    os.mkfifo(fifo)
+    received: list[str] = []
+    reader = threading.Thread(target=lambda: received.append(fifo.read_text()))
+    reader.start()
+    result = runner.invoke(app, ["props", "-i", str(src), "-o", str(fifo)])
+    reader.join(timeout=30)
+    assert result.exit_code == 0, result.output
+    assert stat.S_ISFIFO(fifo.stat().st_mode)
+    assert len(received[0].splitlines()) == 4
+
+
+def _library(tmp_path, n=1500):
+    """A .smi file larger than a pipe's buffer (64 KiB on Linux)."""
+    lib = tmp_path / "lib.smi"
+    lib.write_text(
+        "".join(f"C{'C' * (i % 5)}O compound-{i:05d}-{'x' * 80}\n" for i in range(n))
+    )
+    return lib
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "-",
+        pytest.param(
+            "/dev/stdin",
+            marks=pytest.mark.skipif(os.name == "nt", reason="no /dev/stdin"),
+        ),
+    ],
+)
+def test_batch_refuses_to_write_over_redirected_standard_input(tmp_path, spelling):
+    """Issue #195: `props -i - -o lib.smi < lib.smi` left 179 of 5,000 rows, exit 0."""
+    import subprocess
+    import sys
+
+    lib = _library(tmp_path)
+    before = lib.read_bytes()
+    command = [sys.executable, "-m", "pubchem_finder", "props"]
+    with lib.open("rb") as stdin:
+        result = subprocess.run(
+            [*command, "-i", spelling, "-o", str(lib)],
+            stdin=stdin,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    assert result.returncode == 2, result.stderr
+    assert "is the input file" in result.stderr
+    assert lib.read_bytes() == before
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="Windows cannot replace a file another process reads"
+)
+def test_batch_reads_piped_input_to_its_end_before_replacing_its_source(tmp_path):
+    """`cat lib.smi | props -i - -o lib.smi` cannot be recognised as writing over
+    the input, so the results replace the file only once every row was read:
+    emptying it first lost 1,522 of 5,000 rows, with exit 0."""
+    import subprocess
+    import sys
+
+    lib = _library(tmp_path)
+    feed = "import shutil, sys; shutil.copyfileobj(open(sys.argv[1], 'rb'), sys.stdout.buffer)"
+    feeder = subprocess.Popen(
+        [sys.executable, "-c", feed, str(lib)], stdout=subprocess.PIPE
+    )
+    result = subprocess.run(
+        [sys.executable, "-m", "pubchem_finder", "props", "-i", "-", "-o", str(lib)],
+        stdin=feeder.stdout,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert feeder.stdout is not None
+    feeder.stdout.close()
+    assert feeder.wait(timeout=30) == 0
+    assert result.returncode == 0, result.stderr
+    assert "1500 input(s), 1500 row(s) written" in result.stderr
+    with lib.open(newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    assert len(rows) == 1500
+    assert not any(row["error"] for row in rows)
+
+
 def test_batch_checks_the_input_before_emptying_the_output(tmp_path):
     out = tmp_path / "out.csv"
     out.write_text("precious,data\n")

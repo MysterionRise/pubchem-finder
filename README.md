@@ -260,7 +260,10 @@ pubchem-finder search -i queries.smi -o hits.csv --threshold 0.6 --top 50
 pubchem-finder substructure -i fragments.smi -o hits.csv
 ```
 
-Rows that fail in batch mode get an `error` column instead of stopping the run.
+Rows that fail in batch mode get an `error` column instead of stopping the run; the exit
+status is 1 only when every row failed. The rows are written to `FILE.part` beside the
+output file and take its place when the run ends, so a run that fails leaves an existing
+output as it was, and Ctrl+C keeps the rows finished so far in the `.part` file.
 
 ![Aspirin analogues, with the atoms each one adds to aspirin highlighted](https://raw.githubusercontent.com/MysterionRise/pubchem-finder/master/docs/images/analogues-diff.png)
 
