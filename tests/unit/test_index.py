@@ -3,7 +3,9 @@
 import json
 import os
 
+import numpy as np
 import pytest
+import tables as tb
 
 from pubchem_finder import service
 from pubchem_finder.core.exceptions import (
@@ -15,10 +17,16 @@ from pubchem_finder.core.exceptions import (
     PubChemFinderError,
 )
 from pubchem_finder.index import engine as engine_mod
-from pubchem_finder.index.builder import SdfSource, build_chunks, finalize
+from pubchem_finder.index.builder import (
+    SdfSource,
+    build_chunks,
+    finalize,
+    h5_versions,
+    runtime_versions,
+)
 from pubchem_finder.index.engine import LocalIndex, choose_in_memory
 from pubchem_finder.index.layout import IndexPaths, chunk_name
-from tests.conftest import CHUNK_NAMES, N_GOOD, write_sdf
+from tests.conftest import CHUNK_A, CHUNK_NAMES, N_GOOD, write_sdf
 
 ASPIRIN = "CC(=O)Oc1ccccc1C(=O)O"
 
@@ -434,6 +442,77 @@ def test_extending_after_an_rdkit_upgrade_is_refused_and_keeps_the_index(
     assert paths.load_manifest() == before
     found = service.similarity_search(ASPIRIN, threshold=0.3, home=tmp_path)
     assert found.hits[0].cid == 2244
+
+
+def _h5_payload(path):
+    """Every array and table in an FPSim2 file, as bytes, keyed by node path.
+    The config node holds in-memory pointers, so it is left out."""
+    with tb.open_file(str(path), mode="r") as f:
+        return {
+            node._v_pathname: np.asarray(node.read()).tobytes()
+            for node in f.walk_nodes("/")
+            if hasattr(node, "read") and node._v_name != "config"
+        }
+
+
+def test_unchanged_chunk_from_another_rdkit_is_rebuilt_when_extending(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """An unchanged local file is rebuilt from its SDF, not refused, after an
+    RDKit upgrade: the index can grow without a new data directory."""
+    import rdkit
+
+    paths = IndexPaths(tmp_path / "grown")
+    _build_old_chunk(paths, sample_sdfs[0], monkeypatch)
+    build_chunks(paths, sources(sample_sdfs[:2]), workers=1)
+    finalize(paths)
+
+    chunks = {c.name: c for c in paths.completed_chunks()}
+    assert {c.rdkit_version for c in chunks.values()} == {rdkit.__version__}
+    assert len(chunks) == 2
+    fresh = IndexPaths(tmp_path / "fresh")
+    build_chunks(fresh, sources(sample_sdfs[:1]), workers=1)
+    finalize(fresh)
+    expected = fresh.completed_chunks()[0]
+    rebuilt = chunks[CHUNK_NAMES[0]]
+    assert rebuilt.n_records == expected.n_records == len(CHUNK_A)
+    assert rebuilt.n_failed == expected.n_failed
+    assert _h5_payload(paths.chunk_h5(CHUNK_NAMES[0])) == _h5_payload(
+        fresh.chunk_h5(CHUNK_NAMES[0])
+    )
+    assert h5_versions(paths.chunk_h5(CHUNK_NAMES[0])) == runtime_versions()
+    found = service.similarity_search(ASPIRIN, threshold=0.3, home=tmp_path / "grown")
+    assert found.hits[0].cid == 2244
+
+
+def test_pubchem_chunk_from_another_rdkit_is_still_refused_when_extending(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """A PubChem chunk has no local file to rebuild from, so it still blocks."""
+    paths = IndexPaths(tmp_path)
+    before = _build_old_chunk(paths, sample_sdfs[0], monkeypatch)
+    pubchem = [SdfSource(name=CHUNK_NAMES[0])]
+    with pytest.raises(IndexBuildError, match=f"RDKit {OLD_RDKIT}"):
+        build_chunks(paths, pubchem + sources([sample_sdfs[1]]), workers=1)
+    assert not paths.chunk_stats(CHUNK_NAMES[1]).exists()
+    assert paths.load_manifest() == before
+
+
+def test_chunk_whose_file_is_gone_from_another_rdkit_is_still_refused(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """A chunk whose recorded file was deleted cannot be rebuilt, so it blocks."""
+    gone_dir = tmp_path / "gone"
+    gone_dir.mkdir()
+    gone = gone_dir / sample_sdfs[0].name
+    gone.write_bytes(sample_sdfs[0].read_bytes())
+    paths = IndexPaths(tmp_path / "home")
+    before = _build_old_chunk(paths, gone, monkeypatch)
+    gone.unlink()
+    with pytest.raises(IndexBuildError, match=f"RDKit {OLD_RDKIT}"):
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    assert not paths.chunk_stats(CHUNK_NAMES[1]).exists()
+    assert paths.load_manifest() == before
 
 
 def test_chunks_from_2_1_0_are_checked_through_their_h5(
