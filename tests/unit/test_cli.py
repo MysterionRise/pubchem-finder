@@ -196,6 +196,28 @@ def test_search_reports_invalid_index_mode(built_home, monkeypatch):
     assert "auto, memory, or disk" in result.output
 
 
+def test_search_header_says_when_the_list_was_cut_at_top(built_home):
+    """Issue #191: "20 hit(s) >= 0.6" was printed where 44 compounds reach 0.6."""
+
+    def search(top, *more):
+        args = ["search", ASPIRIN, "--threshold", "0.1", "--top", top, *more]
+        return runner.invoke(app, [*args, "--home", str(built_home)])
+
+    cut = search("2")
+    assert cut.exit_code == 0, cut.output
+    assert (
+        "top 2 of more than 2 hit(s) >= 0.1 tanimoto among 11 compounds" in cut.stdout
+    )
+    assert "More compounds reach the threshold than the 2 returned" in cut.stderr
+    whole = search("50")
+    assert whole.exit_code == 0, whole.output
+    n = len([line for line in whole.stdout.splitlines() if " CID " in line])
+    assert n > 2
+    assert whole.stdout.startswith(f"{n} hit(s) >= 0.1 tanimoto")
+    assert "note:" not in whole.stderr
+    assert json.loads(search("2", "--json").stdout)["truncated"] is True
+
+
 def test_index_build_from_sdf_then_status_and_search(tmp_path, sample_sdfs):
     home = tmp_path / "home"
     args = ["index", "build", "--home", str(home), "--workers", "1"]
@@ -1022,7 +1044,8 @@ def test_a_merge_that_completes_under_a_search_does_not_lend_it_structures(
         build_chunks(paths, [SdfSource(name="library", local_path=library)])
         finalize(paths)
 
-    pairs, merged = index.search_merged(Chem.MolFromSmiles(ASPIRIN), 0.9, 5)
+    found = index.search_merged(Chem.MolFromSmiles(ASPIRIN), 0.9, 5)
+    pairs, merged = found.pairs, found.merged
     assert pairs == [(1, 1.0)]
     rebuild()
     assert index.metadata([1])[1]["smiles"] == CAFFEINE  # what ID 1 is now

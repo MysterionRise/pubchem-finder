@@ -229,6 +229,61 @@ def test_similarity_search_without_an_index_searches_the_demo_set(demo_built, de
     assert "(`uvx --python 3.14 pubchem-finder==" in found.hint
 
 
+def _demo_similarities(smiles):
+    """ECFP4 Tanimoto of ``smiles`` to every drug of the demo set, by brute force."""
+    import csv
+    import io
+
+    from rdkit import Chem, DataStructs
+    from rdkit.Chem import rdFingerprintGenerator
+
+    morgan = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=1024)
+    query = morgan.GetFingerprint(Chem.MolFromSmiles(smiles))
+    best: dict[str, float] = {}
+    rows = csv.DictReader(io.StringIO(demo.data().decode("utf-8")), delimiter="\t")
+    for row in rows:
+        mol = Chem.MolFromSmiles(row["smiles"])
+        score = DataStructs.TanimotoSimilarity(query, morgan.GetFingerprint(mol))
+        best[row["cid"]] = max(score, best.get(row["cid"], 0.0))
+    return best
+
+
+def test_similarity_search_says_when_more_compounds_reach_the_threshold(
+    demo_built, demo_on
+):
+    """Issue #191: a list cut at top_k looked like the whole answer, so models
+    reported "17 hits in 4 series" where 44 hits in 17 series reach the threshold."""
+    scores = _demo_similarities(ASPIRIN)
+    cut = service.similarity_search(
+        ASPIRIN, threshold=0.1, top_k=3, home=demo_built, group_by_scaffold=True
+    )
+    assert len(cut.hits) == 3 < sum(score >= 0.1 for score in scores.values())
+    assert cut.truncated is True
+    assert "than the 3 returned" in cut.note
+    assert "demo set" in cut.note  # the demo caveat stays, as the first sentence
+    assert sum(len(group.cids) for group in cut.scaffolds) == 3
+
+    # A threshold no ratio of bit counts equals, so both sides cut at the same place.
+    whole = service.similarity_search(
+        ASPIRIN, threshold=0.2999, top_k=1000, home=demo_built
+    )
+    expected = sum(score >= 0.2999 for score in scores.values())
+    assert 3 < expected < 1000
+    assert len(whole.hits) == expected
+    assert whole.truncated is False
+    assert "returned" not in whole.note
+
+    exact = service.similarity_search(
+        ASPIRIN, threshold=0.2999, top_k=expected, home=demo_built
+    )
+    assert len(exact.hits) == expected  # exactly top_k hits exist: nothing was cut
+    assert exact.truncated is False
+    one_short = service.similarity_search(
+        ASPIRIN, threshold=0.2999, top_k=expected - 1, home=demo_built
+    )
+    assert one_short.truncated is True
+
+
 def test_substructure_search_without_an_index_searches_the_demo_set(
     demo_built, demo_on
 ):
@@ -308,6 +363,7 @@ async def test_mcp_search_reports_the_demo_scope(demo_built, demo_on, monkeypatc
     assert result.structured_content["hits"][0]["cid"] == 2244
     assert "FDA-approved drugs" in result.structured_content["note"]
     assert len(result.structured_content["note"]) <= 120
+    assert result.structured_content["truncated"] is False
     assert "index build" in result.structured_content["hint"]
 
 

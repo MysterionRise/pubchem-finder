@@ -14,6 +14,13 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 
 - SMILES and SMARTS inputs with a space, tab, line break, or non-ASCII character are refused with an error instead of being cut at that point. Previously `CCO CCN` or `CCO😀` was silently answered as ethanol. Clients that sent a `SMILES name` line or several structures in one string now get an error and should send one structure per call, joining the parts of a mixture with `.` (#212).
+- Local similarity results say when they were cut at `top_k` (#191). A list of 20 looked
+  like the whole answer, so counts were reported as totals: "17 hits in 4 series" where
+  44 compounds in 17 series reach the threshold. `similarity_search` returns
+  `truncated: true` and a sentence in `note` when more compounds reach the threshold
+  than were returned, the `search` command prints "top 20 of more than 20 hit(s)"
+  instead of "20 hit(s)", and the `find_analogues` prompt asks for 100 hits and tells
+  the model to say when its counts are partial.
 - At most eight MCP tool calls to PubChem run at once, so lookups waiting for the rate limit no longer hold every worker thread and delay local tools (#200).
 - PubChem's gateway answers 502 and 504 are retried like 429 and 503, with the same
   backoff; they used to fail on the first request. PubChem's own timeout fault is still

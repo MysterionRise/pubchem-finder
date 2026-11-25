@@ -378,7 +378,14 @@ async def test_find_analogues_prompt():
     text = await text_of(
         "find_analogues", {"compound": "ibuprofen", "threshold": "0.70"}
     )
-    assert "similarity_search with threshold=0.7 and group_by_scaffold=true" in text
+    assert (
+        "similarity_search with threshold=0.7, top_k=100 and group_by_scaffold=true"
+        in text
+    )
+    # Issue #191: with the default top_k the list was cut at 20 and its counts
+    # reported as totals; ask for more and say when the result is still cut.
+    assert "truncated=true" in text
+    assert "not totals" in text
     assert 'search_scope is "demo"' in text
     # PubChem's search sends the structure there: offered, not run unasked.
     assert "offer to run pubchem_similarity_search" in text

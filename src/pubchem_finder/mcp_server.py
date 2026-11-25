@@ -273,7 +273,11 @@ async def similarity_search(
     Exact fingerprint similarity (ECFP4/Morgan by default) over every indexed
     compound, best first, with CID, SMILES, InChIKey, IUPAC name, formula, MW
     and PubChem link. threshold is the minimum similarity (0-1, 0.7 finds close
-    analogues; lower it to widen the search). Searches the index built with
+    analogues; lower it to widen the search) and top_k (1-1000) the most hits
+    returned: both apply. truncated=true means more compounds reach the threshold
+    than were returned, so the hits and scaffold groups are the best top_k and
+    their counts are not totals; raise top_k for the rest. A query that is in
+    the index is itself a hit, with similarity 1. Searches the index built with
     `pubchem-finder index build` (the first search loads it, which takes a while
     for a full PubChem index); until one is built, a demo set of about 1,900
     FDA-approved drugs, with search_scope="demo", a short note to pass on to the
@@ -598,7 +602,10 @@ def find_analogues(compound: str, threshold: str = "0.6") -> str:
     return (
         f"Find close analogues of {compound}.\n"
         "1. Get its SMILES with pubchem_lookup unless it is one already.\n"
-        f"2. Run similarity_search with threshold={value:g} and group_by_scaffold=true. "
+        f"2. Run similarity_search with threshold={value:g}, top_k=100 and "
+        "group_by_scaffold=true. If the result says truncated=true, more compounds "
+        "reach the threshold than were returned: say that your counts of hits and "
+        "series are of the best 100, not totals. "
         'If the result\'s search_scope is "demo", tell me that only the built-in demo '
         "set of FDA-approved drugs was searched, and offer to run "
         "pubchem_similarity_search to cover all of PubChem (it sends the structure to "

@@ -217,6 +217,15 @@ DEMO_HINT = (
 )
 
 
+# Counts read off a cut list were reported as totals ("17 hits in 4 series" where
+# 44 compounds in 17 series reach the threshold, issue #191).
+CUT_NOTE = (
+    "More compounds reach the threshold than the {n} returned: the hits, and any "
+    "scaffold groups, are the best {n} and their counts are not totals. Ask for more "
+    "(up to 1000) to see the rest."
+)
+
+
 def _search_index(
     home: Path | str | None, live: str = "pubchem similarity SMILES"
 ) -> tuple[LocalIndex, str, str | None, str | None]:
@@ -307,17 +316,19 @@ def similarity_search(
     index, scope, note, hint = _search_index(home)
     # The hits are looked up, and judged, against the merge that gave them: a
     # build can finish between the two steps.
-    pairs, merged = index.search_merged(
-        mol, threshold=threshold, top_k=top_k, metric=metric
-    )
+    found = index.search_merged(mol, threshold=threshold, top_k=top_k, metric=metric)
+    merged = found.merged
     manifest = merged.manifest
-    meta = index.metadata([cid for cid, _ in pairs], merged)
+    meta = index.metadata([cid for cid, _ in found.pairs], merged)
     hits = [
         SimilarityHit.model_validate(
             {**meta.get(cid, {}), "cid": cid, "similarity": sim}
         )
-        for cid, sim in pairs
+        for cid, sim in found.pairs
     ]
+    notes = [note] if note else []
+    if found.truncated:
+        notes.append(CUT_NOTE.format(n=len(hits)))
     return SimilarityResults(
         query_smiles=smiles,
         threshold=threshold,
@@ -325,7 +336,8 @@ def similarity_search(
         fingerprint=manifest.fingerprint,
         n_indexed=manifest.n_compounds,
         search_scope=scope,
-        note=note,
+        truncated=found.truncated,
+        note=" ".join(notes) or None,
         hint=hint,
         hits=hits,
         scaffolds=medchem.group_by_scaffold(hits) if group_by_scaffold else None,

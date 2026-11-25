@@ -83,6 +83,18 @@ def _open_engine(path: Path, in_memory: bool) -> Any:
 
 
 @dataclass
+class SimilarityMatches:
+    """The best-scoring compounds, and whether the list was cut at ``top_k``."""
+
+    pairs: list[tuple[int, float]]
+    """(cid, similarity), best first, equal scores by CID."""
+    merged: Merged
+    """The merge whose fingerprints answered."""
+    truncated: bool = False
+    """More compounds score at or above the threshold than ``top_k``."""
+
+
+@dataclass
 class SubstructureMatches:
     """Verified substructure matches, in CID order, plus how far the search got."""
 
@@ -188,17 +200,18 @@ class LocalIndex:
         tie at the cut is complete, or no more hits exist; without duplicates and
         without a tie at the cut that is a single FPSim2 call.
         """
-        return self.search_merged(query, threshold, top_k, metric)[0]
+        return self.search_merged(query, threshold, top_k, metric).pairs
 
     def search_merged(
         self, query: Chem.Mol, threshold: float, top_k: int, metric: Metric = "tanimoto"
-    ) -> tuple[list[tuple[int, float]], Merged]:
-        """:meth:`search`, and the merge that answered it.
+    ) -> SimilarityMatches:
+        """:meth:`search`, with the merge that answered it and whether more
+        compounds reach the threshold than the ``top_k`` returned.
 
-        Pass that on to :meth:`metadata` and :meth:`unmerged`. A build can finish
-        between the search and the lookup of its hits; judged against the manifest
-        then on disk, a hit from the old fingerprints would be given the structure
-        the new file has under the same ID.
+        Pass the merge on to :meth:`metadata` and :meth:`unmerged`. A build can
+        finish between the search and the lookup of its hits; judged against the
+        manifest then on disk, a hit from the old fingerprints would be given the
+        structure the new file has under the same ID.
         """
         engine, merged = self._ensure_loaded()
         # One past the cut: ask for top_k + 1 so the score after the cut is in
@@ -226,7 +239,9 @@ class LocalIndex:
         # ties by CID so results are stable and long-known compounds come first
         # (e.g. aspirin, CID 2244, before its 11C-labelled twin, CID 450661).
         ranked = sorted(best.items(), key=lambda pair: (-pair[1], pair[0]))[:top_k]
-        return ranked, merged
+        # The loop stops with every hit in hand or with at least one past the cut,
+        # so this is exact: more compounds reach the threshold than are returned.
+        return SimilarityMatches(ranked, merged, truncated=len(best) > top_k)
 
     def _top_k(
         self, engine: Any, query: Chem.Mol, threshold: float, k: int, metric: Metric

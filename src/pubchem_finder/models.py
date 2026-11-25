@@ -127,9 +127,16 @@ class SimilarityResults(BaseModel):
         description="'index': the local index built with `index build`; 'demo': the "
         "built-in demo set of FDA-approved drugs, searched while no index is built",
     )
+    truncated: bool = Field(
+        default=False,
+        description="True when more compounds reach the threshold than top_k: hits "
+        "and scaffolds then hold only the best top_k, so their counts are not "
+        "totals. Raise top_k (up to 1000) to see more",
+    )
     note: str | None = Field(
         default=None,
-        description="A one-sentence caveat about the demo set searched; tell the user",
+        description="Caveats in a sentence each: that the demo set was searched, "
+        "that the list was cut at top_k; tell the user",
     )
     hint: str | None = Field(
         default=None,
@@ -138,7 +145,8 @@ class SimilarityResults(BaseModel):
     )
     hits: list[SimilarityHit]
     scaffolds: list["ScaffoldGroup"] | None = Field(
-        default=None, description="Hits grouped by Murcko scaffold, when requested"
+        default=None,
+        description="The hits returned, grouped by Murcko scaffold, when requested",
     )
     warning: str | None = Field(
         default=None,

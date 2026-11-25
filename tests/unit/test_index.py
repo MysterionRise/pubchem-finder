@@ -178,6 +178,23 @@ def test_search_finds_aspirin_first(built_home):
     assert sims == sorted(sims, reverse=True)
 
 
+def test_search_merged_says_whether_more_reach_the_threshold(built_home):
+    from rdkit import Chem
+
+    index = LocalIndex(built_home)
+    query = Chem.MolFromSmiles(ASPIRIN)
+    everything = index.search_merged(query, 0.1, 1000)
+    n = len(everything.pairs)
+    assert n > 2
+    assert everything.truncated is False
+    assert index.search_merged(query, 0.1, n).truncated is False
+    cut = index.search_merged(query, 0.1, n - 1)
+    assert cut.truncated is True
+    assert cut.pairs == everything.pairs[: n - 1]
+    assert index.search_merged(query, 0.1, 1).truncated is True
+    assert index.search_merged(query, 0.99, 1).truncated is False  # aspirin alone
+
+
 def test_threshold_and_top_k(built_home):
     strict = service.similarity_search(ASPIRIN, threshold=0.99, home=built_home)
     assert [h.cid for h in strict.hits] == [2244]

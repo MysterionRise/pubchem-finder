@@ -360,8 +360,11 @@ def search(
         typer.echo(f"hint: {result.hint}", err=True)
     if result.warning:
         typer.echo(f"warning: {result.warning}", err=True)
+    # A list cut at --top is not the count at the threshold; say which it is.
+    n = len(result.hits)
+    count = f"top {n} of more than {n} hit(s)" if result.truncated else f"{n} hit(s)"
     typer.echo(
-        f"{len(result.hits)} hit(s) >= {result.threshold} {result.metric} "
+        f"{count} >= {result.threshold} {result.metric} "
         f"among {result.n_indexed:,} compounds ({result.fingerprint})"
     )
     for hit in result.hits:
