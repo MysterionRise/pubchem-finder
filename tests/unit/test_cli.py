@@ -1916,6 +1916,24 @@ def test_standardize_batch_says_what_was_left_out_and_why(tmp_path):
     assert std[1]["removed"] == "O=S(=O)(O)O.[Na+]"  # one SMILES, dot-separated
 
 
+@pytest.mark.parametrize(
+    "command", ["props", "standardize", "triage", "search", "substructure"]
+)
+@pytest.mark.parametrize(
+    ("content", "expected"), [("nope( first\nnope( second\n", 1), ("", 0)]
+)
+def test_batch_exit_status_reports_no_successes(tmp_path, command, content, expected):
+    src = tmp_path / "inputs.smi"
+    src.write_text(content)
+    output = tmp_path / "out.csv"
+    result = runner.invoke(app, [command, "-i", str(src), "-o", str(output)])
+    assert result.exit_code == expected, result.output
+    rows = list(csv.DictReader(output.open()))
+    assert len(rows) == (2 if content else 0)
+    assert all(row["error"] for row in rows)
+    assert f"{len(rows)} error(s)" in result.stderr
+
+
 def test_batch_to_stdout_and_argument_checks(tmp_path):
     src = tmp_path / "in.csv"
     src.write_text("id,smiles\nethanol,CCO\n")
