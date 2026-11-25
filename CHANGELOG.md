@@ -24,6 +24,7 @@ All notable changes to this project are documented here. The format follows
   `--fp-size` are omitted. These options are refused with `--demo` or a
   substructure-only build, which previously ignored them (#227).
 - Batch commands exit with status 1 when every input row fails, while retaining the error CSV and summary (#216).
+- Batch inputs with oversized CSV or TSV fields report the file and line. A parsing error after valid rows preserves an existing output file (#216).
 
 - Local index searches report invalid `PUBCHEM_FINDER_INDEX_MODE` values instead of silently choosing `auto` (#228).
 - `compound_properties`, `medchem_profile`, and the JSON output of `props` and `triage` serialize molecular weight, LogP, and TPSA to three decimal places. Batch CSV uses the same precision for these descriptors (#162).
