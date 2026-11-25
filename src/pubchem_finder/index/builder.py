@@ -209,6 +209,7 @@ def write_chunk(
         # Optional on a reader: only SdfReader meets IDs it cannot use.
         skipped_id=getattr(reader, "skipped_id", None),
         build_id=uuid.uuid4().hex,
+        fingerprint_of="smiles",
     )
     write_json_atomic(paths.chunk_stats(name), stats)
     return stats

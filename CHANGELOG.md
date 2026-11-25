@@ -14,6 +14,14 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 
 - SMILES and SMARTS inputs with a space, tab, line break, or non-ASCII character are refused with an error instead of being cut at that point. Previously `CCO CCN` or `CCO😀` was silently answered as ethanol. Clients that sent a `SMILES name` line or several structures in one string now get an error and should send one structure per call, joining the parts of a mixture with `.` (#212).
+- `index build` fingerprints the structure it stores and shows (#187). Read from
+  PubChem's mol block, a compound with an imine or amidine N-H kept that hydrogen as an
+  atom, so 0.8% of PubChem did not match themselves: metformin scored 0.68 against its
+  own SMILES, benzamidine 0.67 and guanidine 0.5, and at the default threshold of 0.7
+  they were not found at all. Records without a SMILES field no longer store
+  `[H]/N=...`. A chunk built before this fix keeps its fingerprints until it is built
+  again; chunks built from now on record `fingerprint_of: "smiles"`, so older ones can
+  be told apart.
 - A SMARTS passed where a SMILES belongs is refused when its atoms are written as
   atomic numbers (#212). RDKit reads `[#6]` in a SMILES as a carbon without hydrogens,
   so phenol written `[#6]1:[#6]:[#6]:[#6]:[#6]:[#6]:1-[#8]` came back with a molecular

@@ -36,6 +36,7 @@ class SdfRecord:
 
     cid: int
     mol: Chem.Mol
+    """The structure of ``smiles``, which is what gets fingerprinted."""
     smiles: str
     inchikey: str | None
     iupac_name: str | None
@@ -159,19 +160,39 @@ def _shorten(value: str) -> str:
     return value if len(value) <= 24 else value[:21] + "..."
 
 
+def _without_hydrogens(mol: Chem.Mol) -> Chem.Mol:
+    """``mol`` with every hydrogen removed, also the ones RDKit keeps from a mol
+    block because they hold a double bond's geometry (the N-H of an imine)."""
+    options = Chem.RemoveHsParameters()
+    # RDKit's generated stubs type this flag as the parameters object itself.
+    options.removeDefiningBondStereo = True  # type: ignore[assignment]
+    try:
+        return Chem.RemoveHs(mol, options)
+    except Exception:  # RDKit raises several types; the record is still usable
+        logger.debug("could not remove hydrogens from a record", exc_info=True)
+        return mol
+
+
 def _to_record(mol: Chem.Mol, cid: int) -> SdfRecord:
-    # A tag that does not parse is not SMILES: the index would store and show it,
-    # and the ID check could not compare it, so RDKit's own SMILES stands in.
-    smiles = next(
-        (
-            s
-            for s in (_prop(mol, t) for t in SMILES_TAGS)
-            if s and Chem.MolFromSmiles(s) is not None
-        ),
-        None,
-    )
-    if smiles is None:
-        smiles = str(Chem.MolToSmiles(mol))
+    # The index stores a SMILES, shows it, and is searched with SMILES: the
+    # fingerprint has to be the one of that structure. The mol block's can differ:
+    # read with its 2D coordinates, an imine or amidine keeps its N-H as an atom,
+    # and the compound then scored 0.68 against its own SMILES (0.8% of PubChem,
+    # metformin among them: issue #187).
+    smiles: str | None = None
+    shown: Chem.Mol | None = None
+    for tag in SMILES_TAGS:
+        text = _prop(mol, tag)
+        # A tag that does not parse is not SMILES: the index would store and show
+        # it, and the ID check could not compare it, so RDKit's own stands in.
+        parsed = Chem.MolFromSmiles(text) if text else None
+        if text and parsed is not None:
+            smiles, shown = text, parsed
+            break
+    if smiles is None or shown is None:
+        bare = _without_hydrogens(mol)
+        smiles = str(Chem.MolToSmiles(bare))
+        shown = Chem.MolFromSmiles(smiles) or bare
     mw_text = _prop(mol, MW_TAG)
     try:
         mw = float(mw_text) if mw_text else None
@@ -179,7 +200,7 @@ def _to_record(mol: Chem.Mol, cid: int) -> SdfRecord:
         mw = None
     return SdfRecord(
         cid=cid,
-        mol=mol,
+        mol=shown,
         smiles=smiles,
         inchikey=_prop(mol, INCHIKEY_TAG),
         iupac_name=_prop(mol, IUPAC_NAME_TAG),

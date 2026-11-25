@@ -26,7 +26,14 @@ from pubchem_finder.index.builder import (
 )
 from pubchem_finder.index.engine import LocalIndex, choose_in_memory
 from pubchem_finder.index.layout import IndexPaths, chunk_name
-from tests.conftest import CHUNK_A, CHUNK_NAMES, N_GOOD, write_sdf
+from tests.conftest import (
+    CHUNK_A,
+    CHUNK_NAMES,
+    IMINES,
+    N_GOOD,
+    pubchem_block,
+    write_sdf,
+)
 
 ASPIRIN = "CC(=O)Oc1ccccc1C(=O)O"
 
@@ -193,6 +200,37 @@ def test_search_merged_says_whether_more_reach_the_threshold(built_home):
     assert cut.pairs == everything.pairs[: n - 1]
     assert index.search_merged(query, 0.1, 1).truncated is True
     assert index.search_merged(query, 0.99, 1).truncated is False  # aspirin alone
+
+
+@pytest.mark.parametrize("tag", [True, False])
+def test_a_compound_scores_one_against_the_smiles_stored_for_it(tmp_path, tag):
+    """Issue #187: 0.8% of PubChem (compounds with an imine or amidine N-H) were
+    fingerprinted with an extra hydrogen atom and did not match themselves:
+    metformin 0.68, benzamidine 0.67, guanidine 0.5."""
+    library = tmp_path / "imines.sdf"
+    library.write_text(
+        "".join(pubchem_block(cid, smiles, tag) for cid, smiles in IMINES)
+    )
+    paths = IndexPaths(tmp_path / "home")
+    report = build_chunks(paths, sources([library]), workers=1)
+    finalize(paths)
+    assert report.built[0].fingerprint_of == "smiles"
+    stored = service.get_index(paths.home).metadata([cid for cid, _ in IMINES])
+    for cid, smiles in IMINES:
+        for query in (stored[cid]["smiles"], smiles):
+            found = service.similarity_search(query, threshold=1.0, home=paths.home)
+            assert [(hit.cid, hit.similarity) for hit in found.hits] == [(cid, 1.0)]
+
+
+def test_every_indexed_compound_finds_itself(built_home):
+    from tests.conftest import CHUNK_B
+
+    cids = [cid for cid, *_ in CHUNK_A + CHUNK_B]
+    stored = service.get_index(built_home).metadata(cids)
+    assert len(stored) == N_GOOD
+    for cid, row in stored.items():
+        found = service.similarity_search(row["smiles"], threshold=1.0, home=built_home)
+        assert cid in [hit.cid for hit in found.hits], row["smiles"]
 
 
 def test_threshold_and_top_k(built_home):
