@@ -2111,6 +2111,10 @@ def test_batch_keeps_the_previous_output_when_the_run_fails(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["in.smi", "keep.csv"]
 
 
+def _partial_files(folder):
+    return sorted(p.name for p in folder.iterdir() if p.name.endswith(".part"))
+
+
 def test_interrupted_batch_keeps_the_rows_done_and_the_previous_output(
     tmp_path, capsys
 ):
@@ -2125,7 +2129,9 @@ def test_interrupted_batch_keeps_the_rows_done_and_the_previous_output(
 
     with pytest.raises(KeyboardInterrupt):
         _run_batch(src, out, ["value"], interrupted_on_the_third)
-    part = tmp_path / "keep.csv.part"
+    (name,) = _partial_files(tmp_path)
+    part = tmp_path / name
+    assert name.startswith("keep.csv.")
     assert out.read_text() == "previous results\n"
     with part.open(newline="") as fh:
         assert [row["value"] for row in csv.DictReader(fh)] == ["1", "2"]
@@ -2148,14 +2154,26 @@ def test_batch_output_keeps_links_modes_and_special_files(tmp_path):
     assert link.is_symlink()  # written through, not replaced by a file
     assert stat.S_IMODE(real.stat().st_mode) == 0o640
     assert len(real.read_text().splitlines()) == 4
-    assert not (tmp_path / "real.csv.part").exists()
+    assert _partial_files(tmp_path) == []
+
+    # A link to nothing yet: the file is created where the link points, as
+    # open() does it.
+    (tmp_path / "later.csv").symlink_to(tmp_path / "made.csv")
+    result = runner.invoke(
+        app, ["props", "-i", str(src), "-o", str(tmp_path / "later.csv")]
+    )
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "later.csv").is_symlink()
+    assert len((tmp_path / "made.csv").read_text().splitlines()) == 4
 
     # A pipe (or /dev/null) is written to directly: putting a regular file in its
     # place would break whatever reads it.
     fifo = tmp_path / "results.fifo"
     os.mkfifo(fifo)
     received: list[str] = []
-    reader = threading.Thread(target=lambda: received.append(fifo.read_text()))
+    reader = threading.Thread(
+        target=lambda: received.append(fifo.read_text()), daemon=True
+    )
     reader.start()
     result = runner.invoke(app, ["props", "-i", str(src), "-o", str(fifo)])
     reader.join(timeout=30)
@@ -2164,11 +2182,111 @@ def test_batch_output_keeps_links_modes_and_special_files(tmp_path):
     assert len(received[0].splitlines()) == 4
 
 
+@pytest.mark.skipif(os.name == "nt", reason="names for open descriptors are POSIX")
+@pytest.mark.parametrize("stdout_is", ["a pipe", "a file"])
+def test_batch_writes_to_a_name_for_an_open_descriptor(tmp_path, stdout_is):
+    # `-o /dev/stdout | head`, `-o >(gzip > out.csv.gz)`: the path names a pipe,
+    # or a file the shell holds open. Looking for a file to replace behind it
+    # found none ("No such file or directory: /dev/stdout") or, for a file that
+    # was replaced once already, made one called "both.csv (deleted)".
+    import subprocess
+    import sys
+
+    src, _ = _write_inputs(tmp_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    command = [sys.executable, "-m", "pubchem_finder", "props", "-i", str(src)]
+    if stdout_is == "a pipe":
+        result = subprocess.run(
+            [*command, "-o", "/dev/stdout"],
+            cwd=work,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        written = result.stdout
+    else:
+        with (work / "both.csv").open("w") as stdout:
+            for _ in range(2):  # as in `{ props ...; props ...; } > both.csv`
+                result = subprocess.run(
+                    [*command, "-o", "/dev/stdout"],
+                    cwd=work,
+                    stdout=stdout,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=120,
+                )
+                assert result.returncode == 0, result.stderr
+        written = (work / "both.csv").read_text()
+        assert [p.name for p in work.iterdir()] == ["both.csv"]
+    assert result.returncode == 0, result.stderr
+    assert "3 input(s), 3 row(s) written to /dev/stdout" in result.stderr
+    ids = [line.split(",")[0] for line in written.splitlines()]
+    # Opening /dev/stdout starts the file again on Linux and carries on where the
+    # descriptor is on macOS, so two runs leave one copy of the rows or two.
+    assert ids in (["id", "first", "second", "third"] * n for n in (1, 2))
+
+
+@pytest.mark.parametrize(
+    ("path", "descriptor"),
+    [
+        ("-", 0),
+        ("/dev/stdin", 0),
+        ("/dev/fd/0", 0),
+        ("/dev/fd/7", 7),
+        ("/proc/self/fd/12", 12),
+        ("lib.smi", None),
+        ("/dev/fd/x", None),
+        ("/dev/stdin.smi", None),
+    ],
+)
+def test_batch_input_names_for_open_descriptors(path, descriptor):
+    from pubchem_finder.cli import _input_descriptor
+
+    assert _input_descriptor(Path(path)) == descriptor
+
+
+def test_batch_input_check_survives_a_descriptor_that_is_not_open(tmp_path):
+    from pubchem_finder.cli import _same_file
+
+    out = tmp_path / "out.csv"
+    out.write_text("previous results\n")
+    for descriptor in ("987654", "99999999999999999999"):  # the second overflows
+        assert _same_file(Path(f"/dev/fd/{descriptor}"), out) is False
+    assert _same_file(tmp_path / "missing.smi", out) is False
+    assert _same_file(out, tmp_path / "missing.csv") is False
+
+
+def test_batch_leaves_files_it_did_not_create_alone(tmp_path):
+    # The partial file once had a fixed name, <output>.part, and whatever was
+    # there was removed to make room: the rows an interrupted run had left, or
+    # the input itself (`props -i lib.smi.part -o lib.smi` deleted its input,
+    # and with it everything when the run then failed).
+    src, _ = _write_inputs(tmp_path)
+    content = src.read_text()
+    for name in ("lib.smi.part", "out.csv.part"):
+        (tmp_path / name).write_text(content)
+    lib = tmp_path / "lib.smi"
+    result = runner.invoke(
+        app, ["props", "-i", str(tmp_path / "lib.smi.part"), "-o", str(lib)]
+    )
+    assert result.exit_code == 0, result.output
+    assert len(lib.read_text().splitlines()) == 4
+    result = runner.invoke(
+        app, ["props", "-i", str(src), "-o", str(tmp_path / "out.csv")]
+    )
+    assert result.exit_code == 0, result.output
+    assert len((tmp_path / "out.csv").read_text().splitlines()) == 4
+    assert (tmp_path / "lib.smi.part").read_text() == content
+    assert (tmp_path / "out.csv.part").read_text() == content
+    assert _partial_files(tmp_path) == ["lib.smi.part", "out.csv.part"]
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX links")
 def test_batch_does_not_write_through_a_link_planted_as_its_partial_file(tmp_path):
-    # The partial file's name can be guessed. In a directory others can write
-    # to, one of them could put a link there and have the rows written to its
-    # target (and the link moved into place as the result).
+    # In a directory others can write to, a partial file whose name can be
+    # guessed could be put there first, as a link: the rows went to its target,
+    # and the link was moved into place as the result.
     src, _ = _write_inputs(tmp_path)
     victim = tmp_path / "victim.txt"
     victim.write_text("not yours\n")
@@ -2180,18 +2298,217 @@ def test_batch_does_not_write_through_a_link_planted_as_its_partial_file(tmp_pat
     assert out.is_file()
     assert not out.is_symlink()
     assert len(out.read_text().splitlines()) == 4
-    assert not (tmp_path / "out.csv.part").exists()
+    assert (tmp_path / "out.csv.part").is_symlink()
 
 
-def test_batch_replaces_the_partial_file_of_an_interrupted_run(tmp_path):
-    src, _ = _write_inputs(tmp_path)
-    out = tmp_path / "out.csv"
-    (tmp_path / "out.csv.part").write_text("rows of a run that was stopped\n")
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_batch_keeps_the_rows_of_a_private_output_private(tmp_path):
+    import stat
+
+    from pubchem_finder.cli import _run_batch
+
+    src, out = _write_inputs(tmp_path)
+    out.chmod(0o600)
+    seen = []
+
+    def look(row):
+        seen.extend(
+            stat.S_IMODE((tmp_path / name).stat().st_mode)
+            for name in _partial_files(tmp_path)
+        )
+        return [{"value": row.line}]
+
+    _run_batch(src, out, ["value"], look)
+    assert seen == [0o600, 0o600, 0o600]
+    assert stat.S_IMODE(out.stat().st_mode) == 0o600
+    assert len(out.read_text().splitlines()) == 4
+
+
+def _fails_on_the_second(row):
+    if row.line == 2:
+        raise RuntimeError("no space left")
+    return [{"value": row.line}]
+
+
+@pytest.mark.parametrize("obstacle", ["no room beside it", "cannot be replaced"])
+def test_batch_writes_in_place_an_output_it_cannot_replace(
+    tmp_path, monkeypatch, obstacle
+):
+    # Replacing a file needs more than writing it does: a place for the partial
+    # file beside it (not in a read-only directory) and leave to rename over it
+    # (not for a file mounted into a container, nor in a directory that lets
+    # only a file's owner rename it). Such an output was refused, or the run
+    # failed after its last row. Its rows are staged all the same and copied
+    # into it at the end.
+    import errno
+    import tempfile
+
+    from pubchem_finder import cli
+
+    src, out = _write_inputs(tmp_path)
+    before = out.stat()
+    staging = tmp_path / "system-tmp"
+    staging.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(staging))
+    if obstacle == "no room beside it":
+
+        def refuse(target, previous):
+            raise PermissionError(errno.EACCES, "Permission denied", str(target))
+
+        monkeypatch.setattr(cli, "_stage_beside", refuse)
+    else:
+
+        def busy(src, dst):
+            raise OSError(errno.EBUSY, "Device or resource busy", str(dst))
+
+        monkeypatch.setattr(cli.os, "replace", busy)
+
+    with pytest.raises(RuntimeError):
+        cli._run_batch(src, out, ["value"], _fails_on_the_second)
+    assert out.read_text() == "previous results\n"
+
     result = runner.invoke(app, ["props", "-i", str(src), "-o", str(out)])
     assert result.exit_code == 0, result.output
     assert len(out.read_text().splitlines()) == 4
-    assert "stopped" not in out.read_text()
-    assert not (tmp_path / "out.csv.part").exists()
+    after = out.stat()
+    assert (after.st_dev, after.st_ino) == (before.st_dev, before.st_ino)
+    assert _partial_files(tmp_path) == []
+    assert list(staging.iterdir()) == []
+
+
+def test_batch_says_where_the_rows_are_when_the_output_cannot_be_written(
+    tmp_path, monkeypatch
+):
+    import errno
+
+    from pubchem_finder import cli
+
+    src, _ = _write_inputs(tmp_path)
+    out = tmp_path / "new.csv"
+
+    def busy(src, dst):
+        raise OSError(errno.EBUSY, "Device or resource busy", str(dst))
+
+    monkeypatch.setattr(cli.os, "replace", busy)
+    result = runner.invoke(app, ["props", "-i", str(src), "-o", str(out)])
+    assert result.exit_code == 1, result.output
+    (name,) = _partial_files(tmp_path)
+    assert (
+        f"error: could not write {out} (Device or resource busy); "
+        f"the results are in {tmp_path / name}"
+    ) in result.stderr.replace("\n", "")
+    assert len((tmp_path / name).read_text().splitlines()) == 4
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX hard links")
+def test_batch_keeps_the_other_names_of_its_output(tmp_path):
+    # Renaming a new file over one name of a file leaves its other names with
+    # the old content.
+    src, out = _write_inputs(tmp_path)
+    other = tmp_path / "other-name.csv"
+    os.link(out, other)
+    result = runner.invoke(app, ["props", "-i", str(src), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    assert len(other.read_text().splitlines()) == 4
+    assert out.stat().st_ino == other.stat().st_ino
+    assert _partial_files(tmp_path) == []
+
+
+def _file_permissions_apply(tmp_path):
+    """False for root, which may read and write whatever the modes say."""
+    probe = tmp_path / "permission-probe"
+    probe.mkdir()
+    probe.chmod(0)
+    try:
+        return not os.access(probe, os.R_OK | os.W_OK | os.X_OK)
+    finally:
+        probe.chmod(0o755)
+        probe.rmdir()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX directory modes")
+def test_batch_writes_a_file_in_a_directory_it_cannot_write(tmp_path):
+    if not _file_permissions_apply(tmp_path):
+        pytest.skip("this user is not held to file modes")
+    src, _ = _write_inputs(tmp_path)
+    results = tmp_path / "results"
+    results.mkdir()
+    out = results / "out.csv"
+    out.write_text("previous results\n")
+    results.chmod(0o555)
+    try:
+        result = runner.invoke(app, ["props", "-i", str(src), "-o", str(out)])
+        assert result.exit_code == 0, result.output
+        assert len(out.read_text().splitlines()) == 4
+        # A file that does not exist yet cannot be made there, which is said
+        # before the first row is processed.
+        missing = results / "new.csv"
+        result = runner.invoke(app, ["props", "-i", str(src), "-o", str(missing)])
+        assert result.exit_code == 1, result.output
+        assert f"error: Permission denied: {missing}" in result.stderr
+    finally:
+        results.chmod(0o755)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX links and directory modes")
+def test_batch_does_not_follow_a_link_the_system_refuses(tmp_path):
+    # A link the kernel will not follow (one planted in /tmp by another user,
+    # where fs.protected_symlinks is on; here, one through a directory that may
+    # not be entered) was resolved by reading it, and its target was replaced
+    # with the results.
+    if not _file_permissions_apply(tmp_path):
+        pytest.skip("this user is not held to file modes")
+    src, _ = _write_inputs(tmp_path)
+    shared = tmp_path / "shared"
+    (shared / "closed").mkdir(parents=True)
+    victim = shared / "victim.txt"
+    victim.write_text("not yours\n")
+    out = shared / "out.csv"
+    out.symlink_to("closed/../victim.txt")
+    (shared / "closed").chmod(0)
+    try:
+        for source in (["-i", str(src)], ["-i", "-"]):
+            result = runner.invoke(
+                app, ["props", *source, "-o", str(out)], input="CCO first\n"
+            )
+            assert result.exit_code == 1, result.output
+            assert f"error: Permission denied: {out}" in result.stderr
+            assert "Traceback" not in result.output
+            assert isinstance(result.exception, SystemExit)
+    finally:
+        (shared / "closed").chmod(0o755)
+    assert victim.read_text() == "not yours\n"
+    assert out.is_symlink()
+
+
+def test_batch_asks_the_system_before_following_a_link(tmp_path, monkeypatch):
+    # The same refusal, for users who are not held to file modes (root in a
+    # container): what the system says about the link decides.
+    from pubchem_finder import cli
+
+    real = tmp_path / "real.csv"
+    real.write_text("previous results\n")
+    link = tmp_path / "link.csv"
+    try:
+        link.symlink_to(real)
+    except OSError:
+        pytest.skip("no permission to create links here")
+    plan = cli._replaceable(link)
+    assert plan is not None
+    assert plan[1] is not None
+    assert plan[0] == Path(os.path.realpath(real))  # the file, not the link
+    assert plan[1].st_ino == real.stat().st_ino
+    plain = cli._replaceable(real)
+    assert plain is not None
+    assert plain[0] == real
+    assert cli._replaceable(tmp_path / "new.csv") == (tmp_path / "new.csv", None)
+    assert cli._replaceable(tmp_path) is None  # not a file: open() reports it
+
+    def refused(path, *args, **kwargs):
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr(cli.os, "stat", refused)
+    assert cli._replaceable(link) is None
 
 
 def _library(tmp_path, n=1500):

@@ -4,9 +4,11 @@ import contextlib
 import itertools
 import os
 import re
+import secrets
 import shutil
 import stat
 import sys
+import tempfile
 from collections.abc import Callable, Iterator
 from enum import StrEnum
 from pathlib import Path
@@ -667,9 +669,15 @@ def _run_batch(
         raise typer.Exit(code=1)
 
 
-# Paths that name an open file descriptor rather than a file: `-i /dev/stdin` reads
-# what `-i -` reads.
+# Paths that name an open descriptor rather than a file. `-i /dev/stdin` reads what
+# `-i -` reads; `-o /dev/stdout`, or the /dev/fd/63 that `-o >(command)` becomes,
+# writes to whatever that descriptor is: a pipe, or a file another program holds
+# open, which must be written through the descriptor and not replaced.
 _FD_PATH = re.compile(r"(?:/dev/fd|/proc/self/fd)/(\d+)")
+_DESCRIPTOR_PATH = re.compile(
+    r"/dev/(?:stdin|stdout|stderr|fd/\d+)|/proc/[^/]+/(?:task/[^/]+/)?fd/\d+"
+)
+_PART_STEM = 60  # characters of the output's name that its partial file's name keeps
 
 
 def _input_descriptor(path: Path) -> int | None:
@@ -689,71 +697,170 @@ def _same_file(a: Path, b: Path) -> bool:
     (`cat lib.smi | ...`) cannot be recognised; :func:`_replacing` keeps that
     case whole.
     """
-    if not b.exists():
-        return False
     try:
+        target = os.stat(b)
         descriptor = _input_descriptor(a)
         if descriptor is None:
-            return os.path.samefile(a, b)
+            return os.path.samestat(os.stat(a), target)
         source = os.fstat(descriptor)
-        if not stat.S_ISREG(source.st_mode):  # a terminal or a pipe
-            return False
-        target = b.stat()
-        return (source.st_dev, source.st_ino) == (target.st_dev, target.st_ino)
-    except (OSError, ValueError):  # no such file, or no such descriptor
+        # A terminal or a pipe is not a file that could be written over.
+        return stat.S_ISREG(source.st_mode) and os.path.samestat(source, target)
+    except (OSError, ValueError, OverflowError):
+        # No such file or descriptor, or one that cannot be looked at. Nothing
+        # says the two are one file, and opening them reports what is wrong.
         return False
+
+
+def _replaceable(output: Path) -> tuple[Path, os.stat_result | None] | None:
+    """The regular file a batch writing ``output`` replaces, with what is known of
+    it now (None for a file that does not exist yet); or None when ``output`` has
+    to be written the way :func:`open` writes it.
+
+    That is the case for whatever is not a file of its own: a device, a FIFO, a
+    name for an open descriptor. And for a link the kernel does not follow, be it
+    dangling or refused (as one planted in a shared directory is): following it
+    here would overrule the kernel.
+    """
+    if _DESCRIPTOR_PATH.fullmatch(Path(os.path.abspath(output)).as_posix()):
+        return None
+    try:
+        entry = os.lstat(output)
+    except FileNotFoundError:
+        return output, None  # or its directory is missing, which staging reports
+    except OSError:
+        return None
+    if stat.S_ISREG(entry.st_mode):
+        return output, entry
+    if not stat.S_ISLNK(entry.st_mode):
+        return None
+    try:
+        found = os.stat(output)  # the kernel follows the link, by its own rules
+        resolved = Path(os.path.realpath(output))
+        if stat.S_ISREG(found.st_mode) and os.path.samestat(found, os.stat(resolved)):
+            return resolved, found  # the link stays, the file it names is replaced
+    except OSError:
+        pass
+    return None
+
+
+def _stage_beside(
+    target: Path, previous: os.stat_result | None
+) -> tuple[IO[str], Path]:
+    """Create the partial file for ``target`` next to it, under a name nothing has.
+
+    No file is removed or written over to make room for it (a guessable name
+    could be the batch's own input, or a link someone put there), and others can
+    read it no more than they can read the output it will replace.
+    """
+    mode = 0o666
+    if previous is not None:
+        mode = (stat.S_IMODE(previous.st_mode) & 0o777) | 0o600  # this user's to write
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    while True:
+        name = f"{target.name[:_PART_STEM]}.{secrets.token_hex(4)}.part"
+        part = target.with_name(name)
+        try:
+            descriptor = os.open(part, flags, mode)
+        except FileExistsError:
+            continue
+        return os.fdopen(descriptor, "w", newline="", encoding="utf-8"), part
+
+
+def _publish(
+    part: Path, target: Path, previous: os.stat_result | None, beside: bool
+) -> None:
+    """Make the finished ``part`` the content of ``target``.
+
+    By renaming it into place where that changes nothing else. A file with other
+    names (hard links), another owner or another group keeps them by being
+    written in place instead, and so is one that cannot be replaced: a file
+    mounted into a container, or one in a directory that only lets its content
+    change.
+    """
+    if previous is None:
+        os.replace(part, target)
+        return
+    staged = os.stat(part)
+    unshared = previous.st_nlink == 1 and (previous.st_uid, previous.st_gid) == (
+        staged.st_uid,
+        staged.st_gid,
+    )
+    if beside and unshared:
+        try:
+            with contextlib.suppress(FileNotFoundError):  # removed during the run
+                shutil.copymode(target, part)
+            os.replace(part, target)
+        except OSError:
+            pass
+        else:
+            return
+    flags = os.O_WRONLY | os.O_TRUNC | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)  # the file found at the start, not a link
+    with part.open("rb") as rows, os.fdopen(os.open(target, flags), "wb") as out:
+        shutil.copyfileobj(rows, out)
+    with contextlib.suppress(OSError):
+        part.unlink()
 
 
 @contextlib.contextmanager
 def _replacing(output: Path) -> Iterator[IO[str]]:
-    """Open a text file whose content replaces ``output`` when the block succeeds.
+    """Open a text file whose content becomes ``output`` when the block succeeds.
 
-    The rows go to ``<output>.part`` beside it, which takes the output's place in
-    one step at the end. So a run that fails leaves an existing output as it was,
-    and input that is being piped from the output file is read to its end before
-    the file is replaced. What cannot be written is reported before the batch
-    runs, not after it: a missing directory, a read-only or locked output.
+    The rows are staged in a partial file that takes the output's place at the
+    end. So a run that stops early leaves an existing output as it was, and input
+    that is being piped from the output file is read to its end before the file
+    changes. What cannot be written is reported before the batch runs, not after
+    it: a missing directory, a read-only or locked output.
 
     After an error the partial file is removed. After Ctrl+C it is kept: the rows
     finished so far may be hours of work.
+
+    A device, a pipe or an open descriptor (``-o /dev/stdout``) has nothing to
+    keep and is written directly: see :func:`_replaceable`.
     """
-    target = Path(os.path.realpath(output))  # write through a link, as open() does
-    if target.exists() and not target.is_file():
-        # A device or a pipe (`-o /dev/null`): nothing to protect, and replacing
-        # it would put a regular file in its place.
-        with target.open("w", newline="", encoding="utf-8") as fh:
-            yield fh
+    plan = _replaceable(output)
+    if plan is None:
+        with output.open("w", newline="", encoding="utf-8") as direct:
+            yield direct
         return
-    part = target.with_name(target.name + ".part")
+    target, previous = plan
     try:
-        if target.exists():
+        if previous is not None:
             with target.open("a", encoding="utf-8"):
                 pass  # writable and not locked; its content is untouched
-        # The name is predictable, so in a directory others can write to (/tmp)
-        # it may already be there as a link to some other file. Remove what is
-        # there (a leftover of an interrupted run, usually) and create the file
-        # exclusively, which never follows a link.
-        part.unlink(missing_ok=True)
-        fh = part.open("x", newline="", encoding="utf-8")
-    except (FileNotFoundError, NotADirectoryError, PermissionError) as exc:
-        # Name the file the user asked for, not the temporary one beside it.
-        raise type(exc)(exc.errno, exc.strerror, str(output)) from exc
+        try:
+            fh, part = _stage_beside(target, previous)
+            beside = True
+        except OSError:
+            if previous is None:
+                raise  # the output could not be created there either
+            # A file that can be written in a directory where nothing can be
+            # created: its rows wait in the system's temporary directory.
+            descriptor, name = tempfile.mkstemp(
+                prefix=f"{target.name[:_PART_STEM]}.", suffix=".part"
+            )
+            fh = os.fdopen(descriptor, "w", newline="", encoding="utf-8")
+            part, beside = Path(name), False
+    except OSError as exc:
+        if exc.errno is None or exc.strerror is None:
+            raise
+        # Name the file that was asked for, not a partial file or a link's target.
+        raise OSError(exc.errno, exc.strerror, str(output)) from exc
     try:
         with fh:
             yield fh
     except KeyboardInterrupt:
         typer.echo(f"interrupted: the rows finished so far are in {part}", err=True)
         raise
-    except Exception:
-        part.unlink(missing_ok=True)
+    except BaseException:
+        with contextlib.suppress(OSError):  # the error that stopped the run counts
+            part.unlink()
         raise
     try:
-        if target.exists():
-            shutil.copymode(target, part)
-        os.replace(part, target)
+        _publish(part, target, previous, beside)
     except OSError as exc:
         raise OSError(
-            f"could not replace {output} ({exc.strerror or exc}); "
+            f"could not write {output} ({exc.strerror or exc}); "
             f"the results are in {part}"
         ) from exc
 

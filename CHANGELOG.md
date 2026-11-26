@@ -70,11 +70,16 @@ All notable changes to this project are documented here. The format follows
   (#195). `props -i - -o lib.smi < lib.smi` kept 179 of 5,000 rows and
   `cat lib.smi | props -i - -o lib.smi` 3,478, both with exit status 0. Input redirected
   from the output file is now refused, as `-i lib.smi -o lib.smi` already was, also when
-  it is spelled `-i /dev/stdin`. The rows are written to `FILE.part` beside the output and
-  take its place in one step when the run ends: piped input is read to its end first, a
-  run that fails leaves an existing output file untouched, and Ctrl+C keeps the rows
-  finished so far in the `.part` file. An output that cannot be written (a missing
-  directory, a read-only file) is reported before the first row is processed.
+  it is spelled `-i /dev/stdin`. The rows are written to a partial file beside the output
+  (`FILE.<random>.part`) that takes its place when the run ends: piped input is read to
+  its end first, a run that stops early leaves an existing output file untouched, and
+  Ctrl+C keeps the rows finished so far in the partial file and says where it is. An
+  output that cannot be written (a missing directory, a read-only file) is reported
+  before the first row is processed. An output that can be written but not replaced (a
+  file in a read-only directory or mounted into a container, one with hard links or
+  another owner) gets the finished rows written into it instead, and a device, a pipe
+  or a name for an open descriptor (`-o /dev/stdout`, `-o >(gzip > out.csv.gz)`) is
+  written directly, as before.
 
 - Local index searches report invalid `PUBCHEM_FINDER_INDEX_MODE` values instead of silently choosing `auto` (#228).
 - `compound_properties`, `medchem_profile`, and the JSON output of `props` and `triage` serialize molecular weight, LogP, and TPSA to three decimal places. Batch CSV uses the same precision for these descriptors (#162).
