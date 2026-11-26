@@ -130,6 +130,75 @@ def test_read_smi_keeps_a_cxsmiles_extension_with_its_smiles(tmp_path):
     assert lines[7]["canonical_smiles"] == "C[C@H](N)C(=O)O"
 
 
+@pytest.mark.parametrize(
+    "extension",
+    [
+        "|(0,0,;1.5,0,;2.25,1.3,)|",  # coordinates, which RDKit writes with every conformer
+        "|(-0.75,1.299,0.5;0,0,0;1.5e-05,0,0)|",
+        "|$;;R1$|",
+        "|$_AV:;note;$|",
+        "|^1:1|",
+        "|a:1|",
+        "|o1:1|",
+        "|&2:1|",
+        "|r|",
+        "|r,wU:1.0|",
+        "|c:5|",
+        "|t:5|",
+        "|ctu:5|",
+        "|w:1.0|",
+        "|wU:1.0|",
+        "|wD:1.0|",
+        "|m:2:3.5.4|",
+        "|f:0.1|",
+        "|s:1:*|",
+        "|u:1|",
+        "|C:0.0|",
+        "|H:2.1|",
+        "|Z:0|",
+        "|Sg:n:1::ht|",
+        "|SgD:1:note:x|",
+        "|SgH:0:1|",
+        "|LN:1:1.3|",
+        "|RG:_R1={C*}|",
+        "|LO:1:2|",
+        "|lp:0:2|",
+        "|rb:1:*|",
+        "|atomProp:0.p.v|",
+    ],
+)
+def test_read_smi_knows_each_kind_of_cxsmiles_extension(extension):
+    # One row for each way an extension begins: a kind the reader does not know
+    # would be the id again, and its row answered without the extension.
+    (row,) = batch._read_smi(io.StringIO(f"CCO {extension} the name\n"))
+    assert (row.smiles, row.id) == (f"CCO {extension}", "the name")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "|(S)-ibuprofen|",  # a third of the demo set's IUPAC names begin like this
+        "|(2S)-2-aminopropanoic acid|L-alanine",
+        "|(1,1-dimethylethyl)benzene",
+        "|(-)-nicotine|54-11-5",
+        "|(+)-tartaric acid",
+        "|$12.50|per litre",
+        "|racemate|",
+        "|t|",
+        "|c|",
+        "|Sgarbossa|",
+        "|atomProperties|",
+        "| c:5 | x",  # a table's cell, with the space psql puts after the bar
+        "ethanol |c:5|",  # the id came first: what follows it is the id's
+    ],
+)
+def test_read_smi_takes_a_name_in_bars_for_the_id(name):
+    # Coordinates are numbers and labels are closed: a name that begins with a
+    # parenthesis or a letter of the format is no extension.
+    (row,) = batch._read_smi(io.StringIO(f"CCO {name}\n"))
+    assert (row.smiles, row.id) == ("CCO", name)
+
+
 def test_read_smi_leaves_bars_that_are_no_extension_to_the_id(tmp_path):
     # A table printed with bars between its columns (psql), an id in bars: not
     # everything that begins with a bar after the SMILES is CXSMILES. Told by

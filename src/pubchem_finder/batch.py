@@ -26,12 +26,16 @@ from .core.exceptions import InvalidInput, PubChemFinderError
 SMILES_COLUMNS = ("smiles", "canonical_smiles", "isomeric_smiles", "smi")
 # How a CXSMILES extension begins, straight after its opening bar: coordinates,
 # atom labels or values, or one of the format's named features. A cell of a table
-# printed with bars (`| 702 | ethanol`) begins with none of them. Told by its
-# shape and not by whether RDKit can read it: RDKit reads a number between bars
-# as an extension that says nothing, and not every extension that others write.
+# printed with bars (`| 702 | ethanol`) begins with none of them, and neither does
+# a name written in bars (`|(S)-ibuprofen|`): coordinates are numbers, and labels
+# are closed by a second dollar sign. Told by its shape and not by whether RDKit
+# can read it: RDKit reads a number between bars as an extension that says
+# nothing, and not every extension that others write.
+_NUMBER = r"-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
 _CX_EXTENSION = re.compile(
-    r"\|(?:[($]|\^[1-7]:|[ao&]\d*\s*:|r(?:[,|]|$)|ctu:|[ct]:|w[UD]?:|[mfsu]:|[CHZ]:"
-    r"|Sg|LN:|RG:|LO:|lp:|rb:|atomProp)"
+    rf"\|(?:\(\s*(?:(?:{_NUMBER})?\s*[,;]\s*)+(?:{_NUMBER})?\s*\)|\$[^|]*\$"
+    r"|\^[1-7]:|[ao&]\d*\s*:|r(?:[,|]|$)|ctu:|[ct]:|w[UD]?:|[mfsu]:|[CHZ]:"
+    r"|Sg[DH]?:|LN:|RG:|LO:|lp:|rb:|atomProp:)"
 )
 ID_COLUMNS = ("id", "name", "cid", "compound_id", "title")
 

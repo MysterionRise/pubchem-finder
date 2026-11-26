@@ -450,10 +450,14 @@ def build_chunks(
     if todo:
         # Before any download or rebuild: FPSim2 can't merge new chunks with ones
         # another version wrote. Chunks about to be replaced don't count.
-        # In full, to run from any directory, but not resolved: a file given
-        # through a link is taken for its chunk by the link's name.
+        # In full, to run from any directory: the folder as the system resolves
+        # it (`..` after a linked folder is the parent of the folder it links to),
+        # and the file under the name it was given by, since a file given through
+        # a link is taken for its chunk by the link's name.
         given = {
-            src.name: os.path.abspath(src.local_path)
+            src.name: os.path.join(
+                os.path.realpath(src.local_path.parent), src.local_path.name
+            )
             for src in sources
             if src.local_path is not None
         }

@@ -726,10 +726,15 @@ def test_version_refusal_for_downloaded_chunks_depends_on_their_sdf_files(
     assert "index build --home NEW_DIR" in message
     assert "--sdf FILE" not in message
 
+    import gzip
+
     paths.downloads.mkdir()
-    kept = [paths.downloads / sdf.name for sdf in sample_sdfs[:2]]
-    for sdf, copy in zip(sample_sdfs[:2], kept, strict=True):
-        copy.write_bytes(sdf.read_bytes())
+    kept = [
+        paths.downloads / sample_sdfs[0].name,  # as it was downloaded
+        paths.downloads / f"{CHUNK_NAMES[1]}.sdf",  # and unpacked
+    ]
+    kept[0].write_bytes(sample_sdfs[0].read_bytes())
+    kept[1].write_bytes(gzip.decompress(sample_sdfs[1].read_bytes()))
     with pytest.raises(IndexBuildError, match="still searchable") as err:
         build_chunks(paths, sources([new]), workers=1)
     message = str(err.value)
@@ -793,6 +798,7 @@ def test_version_refusal_names_every_chunk_that_needs_its_file(
     assert "(b.sdf or b.sdf.gz for b)" in message
     recorded = " and ".join(str(lib.resolve()) for lib in libs[1:])
     assert f"The index recorded {recorded}, not there now" in message
+    assert "under another name" not in message  # said of files that are there
 
 
 def test_version_refusal_names_each_version_the_chunks_were_built_with(
@@ -813,6 +819,32 @@ def test_version_refusal_names_each_version_the_chunks_were_built_with(
         f"2 chunk(s) in {paths.chunks} were fingerprinted with RDKit {OLD_RDKIT} / "
         f"FPSim2 {runtime_versions()[1]} and RDKit 1999.09.1 / FPSim2 "
     ) in str(err.value)
+
+
+def test_version_refusal_names_the_file_of_a_chunk_named_by_an_older_release(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """Releases before 2.2.2 kept an upper-case suffix in the chunk's name
+    (`Library.SDF` for Library.SDF.gz). Such a chunk's file is still its file."""
+    import rdkit
+
+    sdf = tmp_path / "Library.SDF.GZ"
+    sdf.write_bytes(sample_sdfs[0].read_bytes())
+    paths = IndexPaths(tmp_path / "home")
+    with monkeypatch.context() as m:
+        m.setattr(rdkit, "__version__", OLD_RDKIT)
+        build_chunks(
+            paths, [SdfSource(name="Library.SDF.GZ", local_path=sdf)], workers=1
+        )
+        finalize(paths)
+    assert [c.name for c in paths.completed_chunks()] == ["Library.SDF.GZ"]
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    message = str(err.value)
+    assert f"index build {_sdf_options([sdf])}" in message
+    assert "--sdf FILE" not in message
+    build_chunks(paths, sources([sdf]), workers=1)
+    assert {c.rdkit_version for c in paths.completed_chunks()} == {rdkit.__version__}
 
 
 def test_version_refusal_names_a_file_only_under_its_chunks_name(
@@ -843,6 +875,7 @@ def test_version_refusal_names_a_file_only_under_its_chunks_name(
     assert "vendor_2026_11.sdf.gz --home" not in message
     assert "with the file of current in place of FILE" in message
     assert f"The index recorded {target.resolve()}, under another name" in message
+    assert "not there now" not in message  # it is there
 
     # Given: it is rebuilt, and with another stale chunk beside it the build
     # that is named has the link in it, in full.
@@ -854,8 +887,29 @@ def test_version_refusal_names_a_file_only_under_its_chunks_name(
         build_chunks(paths, sources([Path(link.name)]), workers=1)
     quoted = " ".join(f"--sdf {hints._quote(str(p))}" for p in (link, other))
     assert f"index build {quoted}" in str(err.value)
-    report = build_chunks(paths, sources([link, other]), workers=1)
-    assert sorted(report.rebuilt) == ["current", "libb"]
+
+    # A folder that is a link: `..` after it is the parent of the folder it
+    # links to, which is where the system finds the file, not what is left when
+    # the two names are struck from the path.
+    third = data / "libc.sdf.gz"
+    third.write_bytes(sample_sdfs[1].read_bytes())
+    _build_old_chunk(paths, third, monkeypatch)
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "sub").mkdir(parents=True)
+    (tmp_path / "proj").mkdir()
+    (tmp_path / "proj" / "sub").symlink_to(elsewhere / "sub")
+    moved = elsewhere / other.name
+    other.rename(moved)
+    monkeypatch.chdir(tmp_path / "proj")
+    through = Path("sub") / ".." / other.name
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([link, through]), workers=1)
+    named = (link, moved, third)
+    quoted = " ".join(f"--sdf {hints._quote(str(p))}" for p in named)
+    assert f"index build {quoted}" in str(err.value)
+    assert "--sdf FILE" not in str(err.value)
+    report = build_chunks(paths, sources(named), workers=1)
+    assert sorted(report.rebuilt) == ["current", "libb", "libc"]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX directory modes")
@@ -1046,6 +1100,29 @@ def test_a_failed_query_that_mentions_interruption_is_not_ctrl_c(built_home):
     failed = duckdb.IOException(
         'Cannot open file "/data/interrupted-screens/home/chunks/lib1.parquet"'
     )
+    for words in (
+        'Cannot open file "/data/Query interrupted/x.parquet"',
+        "Query interrupted by a damaged footer",
+    ):
+        index = LocalIndex(built_home)
+
+        class Wordy:
+            def cursor(self):
+                return self
+
+            def execute(self, sql, words=words):
+                raise RuntimeError(words)
+
+        index._db = Wordy()
+        index._db_files = index.paths.metadata_files(list(index.merged.manifest.chunks))
+        caught: BaseException | None = None
+        try:
+            index._metadata([2244], list(index.merged.manifest.chunks))
+        except KeyboardInterrupt:
+            pytest.fail(f"taken for Ctrl+C: {words}")
+        except RuntimeError as exc:
+            caught = exc
+        assert str(caught) == words
     calls = []
 
     class Failing:
