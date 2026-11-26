@@ -332,8 +332,11 @@ service.substructure_search("[NX3][SX4](=O)(=O)c", query_type="smarts")
 To give your own agent the tools instead, talk to the MCP server:
 [examples/mcp_client.py](https://github.com/MysterionRise/pubchem-finder/blob/master/examples/mcp_client.py)
 does it with the plain MCP client in under 50 lines (`uv run examples/mcp_client.py`, no
-API key). Examples for agent frameworks are welcome, see
-[#34](https://github.com/MysterionRise/pubchem-finder/issues/34).
+API key). For a LangGraph agent, see
+[examples/langgraph_client.py](https://github.com/MysterionRise/pubchem-finder/blob/master/examples/langgraph_client.py)
+(`OPENAI_API_KEY=... uv run examples/langgraph_client.py`). It uses
+`langchain-mcp-adapters` to connect the agent to the same MCP tools. Both examples
+start the server with `uvx --python 3.14 pubchem-finder mcp`.
 
 ## What leaves your machine
 

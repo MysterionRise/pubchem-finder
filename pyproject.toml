@@ -116,6 +116,12 @@ ignore_missing_imports = true
 module = ["pyarrow.*", "tables.*", "FPSim2.*"]
 ignore_missing_imports = true
 
+# Agent-framework dependencies are installed by the standalone example,
+# not in the main project environment.
+[[tool.mypy.overrides]]
+module = ["langchain_mcp_adapters.*", "langchain_openai.*", "langgraph.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--strict-markers"]
