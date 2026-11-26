@@ -45,11 +45,13 @@ All notable changes to this project are documented here. The format follows
   `CCO[2H]` had one rotatable bond. Molecular weight still includes the labels.
 - `index build` can extend an index after an RDKit or FPSim2 upgrade (#214). A chunk
   another version fingerprinted is built again when its `--sdf` file is given and has
-  not changed, instead of blocking the build; such a file is now fingerprinted again
-  even when nothing is being added. When the file is not given, the refusal names the
-  build that brings the chunks up to date (`index build --sdf` with their files) where
-  it used to offer only a new data directory. PubChem chunks and chunks whose file is
-  gone are still refused, and the message now says which ones they are.
+  not changed, also when the file has moved, instead of blocking the build; such a file
+  is now fingerprinted again even when nothing is being added. A build that leaves
+  such a chunk as it is is still refused, and the refusal now names the one build that
+  brings every such chunk up to date (`index build --sdf` with all of their files,
+  `--sdf FILE` standing for a file the index cannot name) where it used to offer only a
+  new data directory. A chunk from PubChem's download is not fingerprinted again in
+  place, and the message says so.
 - `pubchem_synonyms` and `pubchem synonyms` return an empty list for an existing
   compound with no synonyms, instead of reporting it as not found (#223).
 - Demo similarity and substructure results keep their caveat in a short `note`

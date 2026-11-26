@@ -18,7 +18,7 @@ import re
 import shutil
 import time
 import uuid
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from concurrent.futures import (
     FIRST_COMPLETED,
     Future,
@@ -427,9 +427,10 @@ def build_chunks(
             todo.append(src)
             continue
         action, note = _plan(src, stats)
-        if action == "skip" and src.local_path is not None:
-            # The file is unchanged, so rebuilding it from its SDF is safe, and
-            # without it the chunk blocks every extension after an RDKit upgrade.
+        if action in ("skip", "adopt") and src.local_path is not None:
+            # The file is unchanged (where it was, or moved), so rebuilding it
+            # from its SDF is safe, and without it the chunk blocks every
+            # extension after an RDKit upgrade.
             built_with = _chunk_versions(paths, stats)
             now = runtime_versions()
             if built_with is not None and built_with != now:
@@ -449,7 +450,12 @@ def build_chunks(
     if todo:
         # Before any download or rebuild: FPSim2 can't merge new chunks with ones
         # another version wrote. Chunks about to be replaced don't count.
-        _check_versions(paths, [c for c in completed if c.name not in reasons])
+        given = {
+            src.name: str(src.local_path)
+            for src in sources
+            if src.local_path is not None
+        }
+        _check_versions(paths, completed, replaced=set(reasons), given=given)
     paths.chunks.mkdir(parents=True, exist_ok=True)
     for stats, current, note in adopt:
         emit(note)
@@ -677,65 +683,94 @@ def _pattern_stale(paths: IndexPaths, stats: PatternChunkStats) -> bool:
     return built_with != fpsim2_now
 
 
-def _version_help(paths: IndexPaths) -> str:
+_UNMERGEABLE = (
+    "FPSim2 can't merge fingerprints written by different versions. The current "
+    "index is unchanged and still searchable."
+)
+
+
+def _new_directory(paths: IndexPaths) -> str:
     return (
-        "FPSim2 can't merge fingerprints written by different versions. The current "
-        "index is unchanged and still searchable. To grow it, build the larger index "
-        f"in a new data directory (`{hints.command('index build --home NEW_DIR')}` "
-        "with `--limit N`, `--all` or your `--sdf` files) and point "
-        f"PUBCHEM_FINDER_HOME at it once it's ready, or delete {paths.home} and build "
-        "again."
+        "build the larger index in a new data directory "
+        f"(`{hints.command('index build --home NEW_DIR')}` with `--limit N`, `--all` "
+        "or your `--sdf` files) and point PUBCHEM_FINDER_HOME at it once it's ready, "
+        f"or delete {paths.home} and build again."
     )
 
 
-def _check_versions(paths: IndexPaths, chunks: Sequence[ChunkStats]) -> None:
+def _version_help(paths: IndexPaths) -> str:
+    return f"{_UNMERGEABLE} To grow it, {_new_directory(paths)}"
+
+
+def _check_versions(
+    paths: IndexPaths,
+    completed: Sequence[ChunkStats],
+    replaced: Collection[str] = (),
+    given: Mapping[str, str] | None = None,
+) -> None:
     """Refuse to add chunks next to ones fingerprinted by another RDKit/FPSim2.
 
-    ``chunks`` are the ones this build leaves as they are; the caller rebuilds an
-    unchanged local file whose chunk is stale when it is given that file.
+    ``replaced`` names the chunks this build fingerprints again, which do not
+    stand in its way: the caller rebuilds a local file whose chunk is stale when
+    it is given that file. ``given`` maps the chunks named in this build to their
+    files, which is where a file that moved is now.
     """
     now = runtime_versions()
-    old: dict[tuple[str, str], list[ChunkStats]] = {}
-    for stats in chunks:
+    stale: list[tuple[ChunkStats, tuple[str, str]]] = []
+    for stats in completed:
         built_with = _chunk_versions(paths, stats)
         if built_with is not None and built_with != now:
-            old.setdefault(built_with, []).append(stats)
-    if old:
-        rdkit_then, fpsim2_then = next(iter(old))
-        stale = [stats for group in old.values() for stats in group]
+            stale.append((stats, built_with))
+    blocking = [versions for stats, versions in stale if stats.name not in replaced]
+    if blocking:
+        rdkit_then, fpsim2_then = blocking[0]
+        # Every stale chunk, also the ones this build would replace: the build
+        # that is named has to work by itself, and one that fingerprints only
+        # some of them again is refused like this one.
+        chunks = [stats for stats, _ in stale]
         raise IndexBuildError(
-            f"{len(stale)} chunk(s) in {paths.chunks} were fingerprinted with "
+            f"{len(chunks)} chunk(s) in {paths.chunks} were fingerprinted with "
             f"RDKit {rdkit_then} / FPSim2 {fpsim2_then}; this pubchem-finder runs RDKit "
-            f"{now[0]} / FPSim2 {now[1]}. {_stale_help(paths, stale)}"
+            f"{now[0]} / FPSim2 {now[1]}. {_stale_help(paths, chunks, given or {})}"
         )
 
 
-def _stale_help(paths: IndexPaths, stale: Sequence[ChunkStats]) -> str:
-    """The way out of a version refusal: building from the chunks' own files
-    again where every one of them still has its file, otherwise a new directory."""
-    files = [
-        stats.source.path
-        for stats in stale
-        if stats.source is not None and Path(stats.source.path).is_file()
-    ]
-    if len(files) == len(stale):
+def _stale_help(
+    paths: IndexPaths, stale: Sequence[ChunkStats], given: Mapping[str, str]
+) -> str:
+    """The way out of a version refusal: one build that fingerprints every stale
+    chunk again from its file, where they all came from local files; otherwise a
+    new directory."""
+    files: list[str] = []
+    unknown: list[str] = []  # local chunks whose file this index cannot name
+    downloaded: list[str] = []
+    for stats in stale:
+        recorded = stats.source.path if stats.source is not None else None
+        path = given.get(stats.name) or recorded
+        if path is not None and Path(path).is_file():
+            files.append(path)
+        elif recorded is None and PUBCHEM_CHUNK.fullmatch(stats.name):
+            downloaded.append(stats.name)
+        else:
+            unknown.append(stats.name)
+    if downloaded:
         return (
-            "FPSim2 can't merge fingerprints written by different versions. The "
-            "current index is unchanged and still searchable. To grow it, first "
-            "fingerprint those chunks again with this version, from their files: "
-            f"{hints.rebuild_from_files(files, paths.home)}. Then run this build again."
+            f"{_some(downloaded)} came from PubChem's download, and such a chunk is "
+            f"not fingerprinted again in place. {_version_help(paths)}"
         )
-    stuck = [
-        stats.name
-        for stats in stale
-        if stats.source is None or not Path(stats.source.path).is_file()
-    ]
-    names = ", ".join(stuck[:3]) + (
-        f" and {len(stuck) - 3} more" if len(stuck) > 3 else ""
+    again = (
+        f"{_UNMERGEABLE} To grow it, first fingerprint those chunks again with this "
+        "version, all of them in one build from their files: "
+        f"{hints.rebuild_from_files(files, paths.home, placeholders=len(unknown))}"
     )
+    if not unknown:
+        return f"{again}. Then run this build again."
+    one = len(unknown) == 1
     return (
-        f"{names} cannot be fingerprinted again from a local file (a PubChem chunk, "
-        f"or its file is gone). {_version_help(paths)}"
+        f"{again}, with the {'file' if one else 'files'} of {_some(unknown)} in "
+        f"place of {'FILE' if one else 'each FILE'} (the index does not know where "
+        f"{'it is' if one else 'they are'} now). Then run this build again. "
+        f"Without such a file, {_new_directory(paths)}"
     )
 
 

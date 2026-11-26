@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from pubchem_finder import __version__, service
+from pubchem_finder import __version__, hints, service
 from pubchem_finder.cli import app
 from pubchem_finder.models import RemoteHit, RemoteSearchResults
 
@@ -947,7 +947,9 @@ def test_rebuilt_chunk_is_not_read_with_the_fingerprints_it_replaced(
     hits = json.loads(_search(home, ASPIRIN, "--json").output)
     assert [(h["cid"], h["smiles"]) for h in hits["hits"]] == [(1, None)]
     assert "library was indexed again after the last merge" in hits["warning"]
-    assert f"index build --sdf {library.resolve()}" in hits["warning"]
+    # Quoted as the message quotes it: a temporary directory may have a space.
+    quoted = hints._quote(str(library.resolve()))
+    assert f"index build --sdf {quoted}" in hits["warning"]
     text = _search(home, ASPIRIN)
     assert "warning: The index is behind its files" in text.output
     assert CAFFEINE not in text.output

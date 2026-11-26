@@ -2,6 +2,7 @@
 
 import json
 import os
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -568,10 +569,12 @@ def test_chunk_whose_file_is_gone_from_another_rdkit_is_still_refused(
         build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
     assert not paths.chunk_stats(CHUNK_NAMES[1]).exists()
     assert paths.load_manifest() == before
-    # Nothing to build it from again: the message names the chunk and keeps the
-    # advice that still works.
-    assert f"{CHUNK_NAMES[0]} cannot be fingerprinted again" in str(err.value)
-    assert "index build --home NEW_DIR" in str(err.value)
+    # The message names the chunk, says its file is what is needed, and keeps the
+    # advice that works without the file.
+    message = str(err.value)
+    assert "index build --sdf FILE" in message
+    assert f"with the file of {CHUNK_NAMES[0]} in place of FILE" in message
+    assert "index build --home NEW_DIR" in message
 
 
 def test_version_refusal_names_the_build_that_brings_the_chunks_up_to_date(
@@ -584,7 +587,7 @@ def test_version_refusal_names_the_build_that_brings_the_chunks_up_to_date(
     with pytest.raises(IndexBuildError, match="still searchable") as err:
         build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
     message = str(err.value)
-    assert f"index build --sdf {sample_sdfs[0].resolve()}" in message
+    assert f"index build {_sdf_options(sample_sdfs[:1])}" in message
     assert "Then run this build again" in message
     assert "NEW_DIR" not in message
 
@@ -593,6 +596,116 @@ def test_version_refusal_names_the_build_that_brings_the_chunks_up_to_date(
     finalize(paths)
     build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
     assert finalize(paths).n_compounds == N_GOOD
+
+
+def _sdf_options(files):
+    """The --sdf options a message names, quoted as the message quotes them."""
+    from pubchem_finder import hints
+
+    return " ".join(f"--sdf {hints._quote(str(Path(f).resolve()))}" for f in files)
+
+
+def test_version_refusal_names_every_stale_chunk_also_those_being_rebuilt(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """The build that is named has to work by itself. Naming only the chunks the
+    refused build left alone gave a build that was refused in turn, for the
+    chunks it left alone, and the two refusals pointed at each other."""
+    import rdkit
+
+    paths = IndexPaths(tmp_path / "home")
+    libs = []
+    for name, source in (("liba", sample_sdfs[0]), ("libb", sample_sdfs[1])):
+        lib = tmp_path / f"{name}.sdf.gz"
+        lib.write_bytes(source.read_bytes())
+        libs.append(lib)
+    with monkeypatch.context() as m:
+        m.setattr(rdkit, "__version__", OLD_RDKIT)
+        build_chunks(paths, sources(libs), workers=1)
+        finalize(paths)
+    new = tmp_path / "libc.sdf.gz"
+    new.write_bytes(sample_sdfs[1].read_bytes())
+
+    # Any build that names some of the stale files, but not all, gets the same
+    # answer: both of them.
+    for asked in ([libs[0]], [libs[1]], [libs[0], new], [new]):
+        with pytest.raises(IndexBuildError, match=r"^2 chunk\(s\)") as err:
+            build_chunks(paths, sources(asked), workers=1)
+        assert f"index build {_sdf_options(libs)}" in str(err.value)
+    assert {c.rdkit_version for c in paths.completed_chunks()} == {OLD_RDKIT}
+
+    report = build_chunks(paths, sources(libs), workers=1)
+    assert sorted(report.rebuilt) == ["liba", "libb"]
+    assert {c.rdkit_version for c in paths.completed_chunks()} == {rdkit.__version__}
+    build_chunks(paths, sources([libs[0], new]), workers=1)
+    assert sorted(finalize(paths).chunks) == ["liba", "libb", "libc"]
+
+
+def test_stale_chunk_whose_file_moved_is_rebuilt_from_where_it_is_now(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """A file that moved was taken for the chunk's own (same size and time), yet
+    its stale chunk blocked the build that named it."""
+    import rdkit
+
+    first = tmp_path / "data" / "lib.sdf.gz"
+    first.parent.mkdir()
+    first.write_bytes(sample_sdfs[0].read_bytes())
+    paths = IndexPaths(tmp_path / "home")
+    _build_old_chunk(paths, first, monkeypatch)
+    moved = tmp_path / "data2" / "lib.sdf.gz"
+    moved.parent.mkdir()
+    first.rename(moved)
+
+    report = build_chunks(paths, sources([moved, sample_sdfs[1]]), workers=1)
+    assert report.rebuilt == ["lib"]
+    chunks = {c.name: c for c in paths.completed_chunks()}
+    assert chunks["lib"].rdkit_version == rdkit.__version__
+    assert chunks["lib"].source is not None
+    assert chunks["lib"].source.path == str(moved.resolve())
+    assert finalize(paths).n_compounds == N_GOOD
+
+
+def test_version_refusal_asks_for_the_file_of_a_chunk_that_records_none(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """A chunk built by 2.2.0 or earlier records no file. It was called a PubChem
+    chunk, or one whose file is gone, while giving its file rebuilds it."""
+    lib = tmp_path / "mylib.sdf.gz"
+    lib.write_bytes(sample_sdfs[0].read_bytes())
+    paths = IndexPaths(tmp_path / "home")
+    _build_old_chunk(paths, lib, monkeypatch)
+    stats_file = paths.chunk_stats("mylib")
+    stats = json.loads(stats_file.read_text())
+    del stats["source"]
+    stats_file.write_text(json.dumps(stats))
+
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    message = str(err.value)
+    assert "index build --sdf FILE" in message
+    assert "with the file of mylib in place of FILE" in message
+    assert "PubChem's download" not in message
+    build_chunks(paths, sources([lib]), workers=1)
+    build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    assert finalize(paths).n_compounds == N_GOOD
+
+
+def test_version_refusal_for_a_downloaded_chunk_advises_a_new_directory(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    paths = IndexPaths(tmp_path)
+    _build_old_chunk(paths, sample_sdfs[0], monkeypatch)
+    stats_file = paths.chunk_stats(CHUNK_NAMES[0])
+    stats = json.loads(stats_file.read_text())
+    del stats["source"]  # a chunk PubChem's download built records no file
+    stats_file.write_text(json.dumps(stats))
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    message = str(err.value)
+    assert f"{CHUNK_NAMES[0]} came from PubChem's download" in message
+    assert "index build --home NEW_DIR" in message
+    assert "--sdf FILE" not in message
 
 
 def test_chunks_from_2_1_0_are_checked_through_their_h5(

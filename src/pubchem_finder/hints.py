@@ -79,13 +79,17 @@ def merge_rebuilt(files: list[str | None], home: Path | None = None) -> str:
     return f"`{command(f'index build {sdf}', home)}`"
 
 
-def rebuild_from_files(files: list[str], home: Path | None = None) -> str:
+def rebuild_from_files(
+    files: list[str], home: Path | None = None, placeholders: int = 0
+) -> str:
     """The build that fingerprints existing chunks again, from the files they
-    were built from; names the first five."""
-    sdf = " ".join(f"--sdf {_quote(f)}" for f in files[:5])
-    more = len(files) - 5
-    rest = f" (with the other {more} file(s) of this index)" if more > 0 else ""
-    return f"`{command(f'index build {sdf}', home)}`{rest}"
+    were built from. Every file is named: a build given only some of them is
+    refused. ``placeholders`` adds a ``--sdf FILE`` for each file that is not
+    known."""
+    sdf = " ".join(
+        [f"--sdf {_quote(f)}" for f in files] + ["--sdf FILE"] * placeholders
+    )
+    return f"`{command(f'index build {sdf}', home)}`"
 
 
 def _quote(text: str) -> str:
