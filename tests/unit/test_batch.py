@@ -138,6 +138,7 @@ def test_read_smi_keeps_a_cxsmiles_extension_with_its_smiles(tmp_path):
         "|(0,0,;1.5,0,;2.25,1.3,)|",  # coordinates, which RDKit writes with every conformer
         "|(-0.75,1.299,0.5;0,0,0;1.5e-05,0,0)|",
         "|(.5,-.25,;1.,0,;1E+02,2e3,)|",  # every way a number is written
+        "|(12.5,-120,;340.25,1e+10,)|",  # and with more digits than one
         "|( 0 , 0 , ; 1.5 ,0, ;2.25, 1.3 , )|",
         "|(nan,0,;inf,-inf,;2.25,1.3,)|",  # what RDKit writes where there is no number
         "|(NaN,0,;-Infinity,0,)|",  # and what Java does
@@ -231,15 +232,17 @@ def test_read_smi_says_no_to_what_only_begins_like_coordinates_at_once():
     # name, coordinates that were cut off with the file, a list that ends in a
     # word. A pattern that can share out a number's digits in several ways tries
     # every way for every number before it says no: 22 s for a name with 28
-    # locants and twice that for each one more, where these rows have 48. Read
-    # in a child, so that such a pattern fails this test and does not hold the
-    # run.
+    # locants and twice that for each one more, where these rows have 48. One
+    # row for each place where digits or blanks could be shared out: before the
+    # point, after it, in the exponent, and around the separators. Read in a
+    # child, so that such a pattern fails this test and does not hold the run.
     locants = ",".join(str(n) for n in range(2, 144, 3))
     rows = [
         f"CCO |({locants}-octatetracontaoxapentatetracontahectan-145-yl)phosphonic acid|",
         "CCO |(" + "".join(f"{120 + 15 * n},340,;" for n in range(48)),
         "CCO |(" + ", ".join(str(2244 + 37 * n) for n in range(48)) + " and others)|",
         "CCO |(" + "".join(f"{n}.5 , {n} , ; " for n in range(48)) + "and a name",
+        "CCO |(" + "".join(f"{n}.25e-05,.75e+10,;" for n in range(48)),
     ]
     script = (
         "import io, sys\n"
@@ -256,7 +259,7 @@ def test_read_smi_says_no_to_what_only_begins_like_coordinates_at_once():
             timeout=60,
         )
     except subprocess.TimeoutExpired:
-        pytest.fail("the reader did not answer four rows in a minute")
+        pytest.fail(f"the reader did not answer {len(rows)} rows in a minute")
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == rows  # each of them a name: the id
 

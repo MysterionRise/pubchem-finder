@@ -2351,6 +2351,7 @@ def test_batch_does_not_write_through_a_link_planted_as_its_partial_file(tmp_pat
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
 @pytest.mark.parametrize("mode", [0o600, 0o640, 0o664])
+@pytest.mark.usefixtures("umask_027")  # under 077 every new file is this user's alone
 def test_batch_keeps_the_rows_of_an_output_as_private_as_it_is(tmp_path, mode):
     # Who may read an output is said by its mode, its group and its access
     # list. The partial file has only the mode in common with it (0640 let the
@@ -2641,6 +2642,7 @@ def test_batch_gives_the_output_what_it_has_when_the_run_ends(
 
 
 @pytest.mark.parametrize("change", ["left alone", "removed", "moved away"])
+@pytest.mark.usefixtures("umask_027")
 def test_batch_writes_its_output_where_no_mode_can_be_set(
     tmp_path, monkeypatch, change
 ):
@@ -2648,10 +2650,15 @@ def test_batch_writes_its_output_where_no_mode_can_be_set(
     # rename and remove files, and set no mode. That costs the rename into place,
     # which needs the mode set first, and is no reason to fail: an output that was
     # removed or moved away meanwhile was made anew, left empty, and the run
-    # ended with "could not write" over a mode it had no need to set.
+    # ended with "could not write" over a mode it had no need to set. The new
+    # file is made with the mode the output had, which is then all that keeps a
+    # private output private.
+    import stat
+
     from pubchem_finder import cli
 
     src, out = _write_inputs(tmp_path)
+    out.chmod(0o600)  # stricter than what a new file gets under the umask set here
     aside = tmp_path / "old-results.csv"
     monkeypatch.setattr(cli.os, "chmod", _refuse)
 
@@ -2669,6 +2676,8 @@ def test_batch_writes_its_output_where_no_mode_can_be_set(
     assert _partial_files(tmp_path) == []
     if change == "moved away":
         assert aside.read_text() == "previous results\n"
+    if os.name != "nt":
+        assert stat.S_IMODE(out.stat().st_mode) == 0o600
 
 
 def test_batch_says_when_the_copied_rows_could_not_be_removed(tmp_path, monkeypatch):
