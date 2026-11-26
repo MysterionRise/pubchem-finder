@@ -1524,6 +1524,8 @@ def pubchem_annotations(
     for a in result.annotations:
         label = f"{a.name}: " if a.name else ""
         typer.echo(f"- [{a.section}] {label}{a.text}  ({a.source or 'unknown source'})")
+        for reference in a.references:
+            typer.echo(f"  reference: {reference}")
     if result.truncated:
         typer.echo(
             f"... {result.n_total - len(result.annotations)} more; raise --max-chars"

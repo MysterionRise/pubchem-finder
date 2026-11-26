@@ -378,6 +378,11 @@ class Annotation(BaseModel):
     source: str | None = None
     url: str | None = None
     license: str | None = None
+    references: list[str] = Field(
+        default_factory=list,
+        description="Primary references for this value, as PubChem gives them "
+        "(e.g. a citation or 'PMID:...'). Empty when PubChem gives none",
+    )
 
 
 class AnnotationSection(BaseModel):
