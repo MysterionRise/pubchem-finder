@@ -811,10 +811,19 @@ def test_overlapping_chunks_give_each_cid_once(overlap_home):
     cids = [h.cid for h in found.hits]
     assert cids[0] == 2244
     assert len(cids) == len(set(cids)) == 5
+    assert found.truncated is False
     top3 = service.similarity_search(
         ASPIRIN, threshold=0.01, top_k=3, home=overlap_home
     )
     assert len({h.cid for h in top3.hits}) == 3
+    assert top3.truncated is True
+    # Eight rows reach the threshold, for five compounds: a list of five is whole.
+    top5 = service.similarity_search(
+        ASPIRIN, threshold=0.01, top_k=5, home=overlap_home
+    )
+    assert len({h.cid for h in top5.hits}) == 5
+    assert top5.truncated is False
+    assert top5.note is None
 
 
 def test_overlapping_chunks_give_each_substructure_hit_once(overlap_home):

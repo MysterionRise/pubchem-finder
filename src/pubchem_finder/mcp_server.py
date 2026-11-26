@@ -276,8 +276,9 @@ async def similarity_search(
     analogues; lower it to widen the search) and top_k (1-1000) the most hits
     returned: both apply. truncated=true means more compounds reach the threshold
     than were returned, so the hits and scaffold groups are the best top_k and
-    their counts are not totals; raise top_k for the rest. A query that is in
-    the index is itself a hit, with similarity 1. Searches the index built with
+    their counts are not totals; raise top_k for the rest. The query is not left
+    out of the hits: one that is in the index is normally the first hit, with
+    similarity 1. Searches the index built with
     `pubchem-finder index build` (the first search loads it, which takes a while
     for a full PubChem index); until one is built, a demo set of about 1,900
     FDA-approved drugs, with search_scope="demo", a short note to pass on to the
@@ -483,8 +484,8 @@ async def medchem_profile(smiles: str) -> MedchemProfile:
     PAINS/Brenk/NIH structural alerts with matched atom indices (pass them to
     draw_molecules with the alert as SMARTS, or just describe them), and the
     Bemis-Murcko scaffold. QED, synthetic accessibility and rotatable bonds are
-    those of the unlabelled structure: isotope labels such as deuterium change
-    only the molecular weight."""
+    those of the structure without its isotope labels (deuterium, 13C); the
+    molecular weight includes the labels."""
     return await _run(service.medchem_profile, smiles)
 
 
@@ -585,6 +586,12 @@ def compound_dossier(compound: str) -> str:
     )
 
 
+# The hits find_analogues asks for: past the default 20, which cut most families
+# short (issue #191), and few enough that a result of peptide-sized hits with
+# their scaffolds, about 1,600 characters each, stays under LARGE_RESULTS.
+ANALOGUES = 50
+
+
 @mcp.prompt(title="Find analogues")
 def find_analogues(compound: str, threshold: str = "0.6") -> str:
     """Close structural analogues of a compound, grouped into series and drawn with
@@ -602,10 +609,10 @@ def find_analogues(compound: str, threshold: str = "0.6") -> str:
     return (
         f"Find close analogues of {compound}.\n"
         "1. Get its SMILES with pubchem_lookup unless it is one already.\n"
-        f"2. Run similarity_search with threshold={value:g}, top_k=100 and "
+        f"2. Run similarity_search with threshold={value:g}, top_k={ANALOGUES} and "
         "group_by_scaffold=true. If the result says truncated=true, more compounds "
         "reach the threshold than were returned: say that your counts of hits and "
-        "series are of the best 100, not totals. "
+        f"series are of the best {ANALOGUES}, not totals. "
         'If the result\'s search_scope is "demo", tell me that only the built-in demo '
         "set of FDA-approved drugs was searched, and offer to run "
         "pubchem_similarity_search to cover all of PubChem (it sends the structure to "

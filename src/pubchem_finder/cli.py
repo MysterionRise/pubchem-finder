@@ -174,6 +174,11 @@ def _warn_once(warning: str | None, seen: list[str]) -> None:
         typer.echo(f"warning: {warning}", err=True)
 
 
+def _some(names: list[str]) -> str:
+    more = f" and {len(names) - 3} more" if len(names) > 3 else ""
+    return ", ".join(names[:3]) + more
+
+
 def _fail(exc: Exception) -> None:
     # For a file error, show "<reason>: <path>" rather than str(exc): it drops the
     # "[Errno N]" noise and, unlike repr, keeps the path readable on Windows (an
@@ -322,6 +327,7 @@ def search(
     """
     if _batch_requested(smiles, input_file):
         warned: list[str] = []
+        cut: list[str] = []
 
         def one(row: batch.InputRow) -> list[dict[str, Any]]:
             found = service.similarity_search(
@@ -332,12 +338,28 @@ def search(
                 home=home,
             )
             _warn_once(found.warning, warned)
+            if found.truncated:
+                cut.append(row.id)
             return [
                 {"rank": rank, **hit.model_dump()}
                 for rank, hit in enumerate(found.hits, start=1)
             ]
 
         _run_batch(input_file, output, SEARCH_COLUMNS, one)
+        if cut:
+            # The CSV has no place for it, and a count of an input's rows would
+            # be read as its number of hits at the threshold.
+            more = (
+                f"raise --top (up to {service.MAX_TOP_K}) or --threshold"
+                if top < service.MAX_TOP_K
+                else "raise --threshold"
+            )
+            typer.echo(
+                f"note: {len(cut)} input(s) have more hits than --top {top} "
+                f"({_some(cut)}): their rows are the best {top}, not all; {more} "
+                "for complete lists",
+                err=True,
+            )
         return
     try:
         result = service.similarity_search(

@@ -131,7 +131,8 @@ class SimilarityResults(BaseModel):
         default=False,
         description="True when more compounds reach the threshold than top_k: hits "
         "and scaffolds then hold only the best top_k, so their counts are not "
-        "totals. Raise top_k (up to 1000) to see more",
+        "totals. Raise top_k (up to 1000) to see more, or the threshold for a "
+        "list that is complete",
     )
     note: str | None = Field(
         default=None,

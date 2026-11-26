@@ -225,10 +225,15 @@ DEMO_HINT = (
 
 # Counts read off a cut list were reported as totals ("17 hits in 4 series" where
 # 44 compounds in 17 series reach the threshold, issue #191).
+MAX_TOP_K = 1000
 CUT_NOTE = (
     "More compounds reach the threshold than the {n} returned: the hits, and any "
-    "scaffold groups, are the best {n} and their counts are not totals. Ask for more "
-    "(up to 1000) to see the rest."
+    "scaffold groups, are the best {n} and their counts are not totals. {more}"
+)
+CUT_MORE = f"Ask for more (up to {MAX_TOP_K}) to see the rest."
+CUT_MOST = (
+    f"{MAX_TOP_K} is the most one search returns: raise the threshold for a list "
+    "that is complete."
 )
 
 
@@ -314,8 +319,8 @@ def similarity_search(
     """Most similar compounds in the local index."""
     if not 0.0 < threshold <= 1.0:
         raise PubChemFinderError("threshold must be in (0, 1]")
-    if not 1 <= top_k <= 1000:
-        raise PubChemFinderError("top_k must be between 1 and 1000")
+    if not 1 <= top_k <= MAX_TOP_K:
+        raise PubChemFinderError(f"top_k must be between 1 and {MAX_TOP_K}")
     if metric not in ("tanimoto", "dice", "cosine"):
         raise PubChemFinderError(f"Unknown metric {metric!r}")
     mol = parse_smiles(smiles)
@@ -334,7 +339,8 @@ def similarity_search(
     ]
     notes = [note] if note else []
     if found.truncated:
-        notes.append(CUT_NOTE.format(n=len(hits)))
+        more = CUT_MORE if top_k < MAX_TOP_K else CUT_MOST
+        notes.append(CUT_NOTE.format(n=len(hits), more=more))
     return SimilarityResults(
         query_smiles=smiles,
         threshold=threshold,

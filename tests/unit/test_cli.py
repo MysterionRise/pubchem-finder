@@ -2297,11 +2297,30 @@ def test_search_batch_and_scaffolds(tmp_path, built_home):
         ],
     )
     assert result.exit_code == 0, result.output
+    assert "note:" not in result.stderr
     rows = list(csv.DictReader(out.open()))
     aspirin = [r for r in rows if r["id"] == "aspirin"]
     assert aspirin[0]["rank"] == "1"
     assert aspirin[0]["cid"] == "2244"
     assert any(r["id"] == "ethanol" for r in rows)
+
+    # Issue #191 for a file of queries: the rows of an input are its best --top
+    # hits, and nothing said so when more reach the threshold. Six compounds
+    # reach 0.2 for aspirin here and one for ethanol.
+    def cut_at(top):
+        args = ["search", "-i", str(src), "-o", str(out), "--home", str(built_home)]
+        return runner.invoke(app, [*args, "--threshold", "0.2", "--top", top])
+
+    cut = cut_at("2")
+    assert cut.exit_code == 0, cut.output
+    assert (
+        "note: 1 input(s) have more hits than --top 2 (aspirin): their rows are "
+        "the best 2, not all; raise --top (up to 1000) or --threshold"
+    ) in cut.stderr
+    assert len([r for r in csv.DictReader(out.open()) if r["id"] == "aspirin"]) == 2
+    longest = cut_at("1000")
+    assert longest.exit_code == 0, longest.output
+    assert "note:" not in longest.stderr
     grouped = runner.invoke(
         app,
         [

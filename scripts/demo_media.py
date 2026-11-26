@@ -206,7 +206,7 @@ def similarity_scene(
     query_img = draw_mol(query, (360, 300))
     n_indexed = f"{search['n_indexed']:,}"
     n = len(search["hits"])
-    capped = "top " if n == search.get("top_k") else ""
+    capped = "top " if search.get("truncated") else ""
     found = f"{capped}{n} hits ≥ {search['threshold']} Tanimoto"
     timing = f" in {ms:g} ms" if ms is not None else ""
     start, gap, duration = 1.6, 0.6, 1.6 + 0.6 * len(cards) + 1.6

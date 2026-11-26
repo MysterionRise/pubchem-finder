@@ -282,6 +282,17 @@ def test_similarity_search_says_when_more_compounds_reach_the_threshold(
         ASPIRIN, threshold=0.2999, top_k=expected - 1, home=demo_built
     )
     assert one_short.truncated is True
+    assert "Ask for more (up to 1000)" in one_short.note
+
+    # At the longest list there is no more to ask for: the note says what helps.
+    assert sum(score >= 0.05 for score in scores.values()) > 1000
+    longest = service.similarity_search(
+        ASPIRIN, threshold=0.05, top_k=1000, home=demo_built
+    )
+    assert longest.truncated is True
+    assert "than the 1000 returned" in longest.note
+    assert "Ask for more" not in longest.note
+    assert "raise the threshold" in longest.note
 
 
 def test_substructure_search_without_an_index_searches_the_demo_set(
@@ -365,6 +376,43 @@ async def test_mcp_search_reports_the_demo_scope(demo_built, demo_on, monkeypatc
     assert len(result.structured_content["note"]) <= 120
     assert result.structured_content["truncated"] is False
     assert "index build" in result.structured_content["hint"]
+
+
+@pytest.mark.anyio
+async def test_find_analogues_asks_for_a_result_that_fits_what_the_tool_declares(
+    demo_built, demo_on, monkeypatch
+):
+    """Peptide-sized hits take about 1,600 characters each with their names and
+    scaffolds. At top_k=100 the prompt's own call returned 137,000 characters for
+    oxytocin at 0.2, past the 100,000 similarity_search declares."""
+    import csv
+    import io
+
+    from mcp.client.client import Client
+
+    from pubchem_finder import mcp_server
+
+    rows = {
+        int(row["cid"]): row["smiles"]
+        for row in csv.DictReader(io.StringIO(demo.data().decode()), delimiter="\t")
+    }
+    oxytocin = rows[439302]
+    limit = mcp_server.LARGE_RESULTS["anthropic/maxResultSizeChars"]
+    monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(demo_built))
+    asked = {"smiles": oxytocin, "threshold": 0.2, "group_by_scaffold": True}
+    async with Client(mcp_server.mcp) as client:
+        result = await client.call_tool(
+            "similarity_search", {**asked, "top_k": mcp_server.ANALOGUES}
+        )
+        twice = await client.call_tool(
+            "similarity_search", {**asked, "top_k": 2 * mcp_server.ANALOGUES}
+        )
+    assert result.is_error is False
+    assert len(result.structured_content["hits"]) == mcp_server.ANALOGUES
+    assert result.structured_content["truncated"] is True
+    assert sum(len(block.text) for block in result.content) < limit
+    # The query is a fair test: twice as many of its hits do not fit.
+    assert sum(len(block.text) for block in twice.content) > limit
 
 
 def test_cli_search_prints_the_demo_note(demo_built, demo_on):
