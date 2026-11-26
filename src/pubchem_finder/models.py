@@ -88,7 +88,11 @@ class Comparison(BaseModel):
 
     smiles_a: str
     smiles_b: str
-    ecfp4_tanimoto: float = Field(description="Tanimoto on Morgan r=2, 2048 bits")
+    ecfp4_tanimoto: float = Field(
+        description="Tanimoto on Morgan r=2, 2048 bits. Search scores use 1024 bits "
+        "by default and can differ for the same pair; local search uses the "
+        "index's fingerprint settings"
+    )
     maccs_tanimoto: float = Field(description="Tanimoto on MACCS keys")
 
 
