@@ -52,10 +52,11 @@ All notable changes to this project are documented here. The format follows
   not changed, also when the file has moved, instead of blocking the build; such a file
   is now fingerprinted again even when nothing is being added. A build that leaves
   such a chunk as it is is still refused, and the refusal now names the one build that
-  brings every such chunk up to date (`index build --sdf` with all of their files,
-  `--sdf FILE` standing for a file the index cannot name) where it used to offer only a
-  new data directory. A chunk from PubChem's download is not fingerprinted again in
-  place, and the message says so.
+  brings every such chunk up to date (`index build --sdf` with all of their files)
+  where it used to offer only a new data directory. Where the index cannot name a
+  chunk's file (it was moved or removed, or the chunk records none, as one from
+  PubChem's download does), the command has `--sdf FILE` in its place and the message
+  says which file that has to be.
 - `pubchem_synonyms` and `pubchem synonyms` return an empty list for an existing
   compound with no synonyms, instead of reporting it as not found (#223).
 - Demo similarity and substructure results keep their caveat in a short `note`

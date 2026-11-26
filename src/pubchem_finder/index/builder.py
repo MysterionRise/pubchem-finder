@@ -451,7 +451,7 @@ def build_chunks(
         # Before any download or rebuild: FPSim2 can't merge new chunks with ones
         # another version wrote. Chunks about to be replaced don't count.
         given = {
-            src.name: str(src.local_path)
+            src.name: str(src.local_path.resolve())  # as chunks record their files
             for src in sources
             if src.local_path is not None
         }
@@ -721,17 +721,19 @@ def _check_versions(
         built_with = _chunk_versions(paths, stats)
         if built_with is not None and built_with != now:
             stale.append((stats, built_with))
-    blocking = [versions for stats, versions in stale if stats.name not in replaced]
-    if blocking:
-        rdkit_then, fpsim2_then = blocking[0]
+    if any(stats.name not in replaced for stats, _ in stale):
         # Every stale chunk, also the ones this build would replace: the build
         # that is named has to work by itself, and one that fingerprints only
         # some of them again is refused like this one.
         chunks = [stats for stats, _ in stale]
+        versions = list(dict.fromkeys(built_with for _, built_with in stale))
+        then = " and ".join(
+            f"RDKit {rdkit} / FPSim2 {fpsim2}" for rdkit, fpsim2 in versions
+        )
         raise IndexBuildError(
             f"{len(chunks)} chunk(s) in {paths.chunks} were fingerprinted with "
-            f"RDKit {rdkit_then} / FPSim2 {fpsim2_then}; this pubchem-finder runs RDKit "
-            f"{now[0]} / FPSim2 {now[1]}. {_stale_help(paths, chunks, given or {})}"
+            f"{then}; this pubchem-finder runs RDKit {now[0]} / FPSim2 {now[1]}. "
+            f"{_stale_help(paths, chunks, given or {})}"
         )
 
 
@@ -739,25 +741,19 @@ def _stale_help(
     paths: IndexPaths, stale: Sequence[ChunkStats], given: Mapping[str, str]
 ) -> str:
     """The way out of a version refusal: one build that fingerprints every stale
-    chunk again from its file, where they all came from local files; otherwise a
-    new directory."""
+    chunk again from its file. Where the index cannot name a chunk's file, the
+    command has a FILE to fill in, and the new directory is the other way out."""
     files: list[str] = []
-    unknown: list[str] = []  # local chunks whose file this index cannot name
-    downloaded: list[str] = []
+    unknown: list[ChunkStats] = []  # chunks whose file this index cannot name
     for stats in stale:
         recorded = stats.source.path if stats.source is not None else None
         path = given.get(stats.name) or recorded
-        if path is not None and Path(path).is_file():
+        # os.path.isfile: a file in a directory that may not be entered is one
+        # that is not there, not an error (which Path.is_file raised before 3.14).
+        if path is not None and os.path.isfile(path):
             files.append(path)
-        elif recorded is None and PUBCHEM_CHUNK.fullmatch(stats.name):
-            downloaded.append(stats.name)
         else:
-            unknown.append(stats.name)
-    if downloaded:
-        return (
-            f"{_some(downloaded)} came from PubChem's download, and such a chunk is "
-            f"not fingerprinted again in place. {_version_help(paths)}"
-        )
+            unknown.append(stats)
     again = (
         f"{_UNMERGEABLE} To grow it, first fingerprint those chunks again with this "
         "version, all of them in one build from their files: "
@@ -765,13 +761,31 @@ def _stale_help(
     )
     if not unknown:
         return f"{again}. Then run this build again."
+    # Every one is named: a build that leaves one out is refused again.
+    names = ", ".join(stats.name for stats in unknown)
     one = len(unknown) == 1
-    return (
-        f"{again}, with the {'file' if one else 'files'} of {_some(unknown)} in "
-        f"place of {'FILE' if one else 'each FILE'} (the index does not know where "
-        f"{'it is' if one else 'they are'} now). Then run this build again. "
-        f"Without such a file, {_new_directory(paths)}"
+    first = unknown[0].name
+    what = [
+        f"{again}, with the {'file' if one else 'files'} of {names} in place of "
+        f"{'FILE' if one else 'each FILE'}. A file is taken for its chunk by its "
+        f"name ({first}.sdf or {first}.sdf.gz for {first})."
+    ]
+    gone = [stats.source.path for stats in unknown if stats.source is not None]
+    if gone:
+        it = "that file where it is" if len(gone) == 1 else "those files where they are"
+        what.append(
+            f"The index recorded {' and '.join(gone)}, not there now: give {it} "
+            f"now, or put {'it' if len(gone) == 1 else 'them'} back."
+        )
+    if any(s.source is None and PUBCHEM_CHUNK.fullmatch(s.name) for s in unknown):
+        what.append(
+            "A chunk from PubChem's download needs its SDF file, which `--keep-sdf` "
+            f"leaves in {paths.downloads}; a build does not download it again."
+        )
+    what.append(
+        f"Then run this build again. Without such a file, {_new_directory(paths)}"
     )
+    return " ".join(what)
 
 
 def finalize(

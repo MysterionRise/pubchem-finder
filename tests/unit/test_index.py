@@ -17,6 +17,7 @@ from pubchem_finder.core.exceptions import (
     MoleculeValidationError,
     PubChemFinderError,
 )
+from pubchem_finder.index import builder as builder_mod
 from pubchem_finder.index import engine as engine_mod
 from pubchem_finder.index.builder import (
     SdfSource,
@@ -569,11 +570,13 @@ def test_chunk_whose_file_is_gone_from_another_rdkit_is_still_refused(
         build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
     assert not paths.chunk_stats(CHUNK_NAMES[1]).exists()
     assert paths.load_manifest() == before
-    # The message names the chunk, says its file is what is needed, and keeps the
+    # The message names the chunk, says which file is needed, and keeps the
     # advice that works without the file.
     message = str(err.value)
     assert "index build --sdf FILE" in message
     assert f"with the file of {CHUNK_NAMES[0]} in place of FILE" in message
+    assert f"The index recorded {gone.resolve()}, not there now" in message
+    assert "PubChem's download" not in message  # it records a file of the user's
     assert "index build --home NEW_DIR" in message
 
 
@@ -691,9 +694,14 @@ def test_version_refusal_asks_for_the_file_of_a_chunk_that_records_none(
     assert finalize(paths).n_compounds == N_GOOD
 
 
-def test_version_refusal_for_a_downloaded_chunk_advises_a_new_directory(
+def test_version_refusal_for_a_downloaded_chunk_asks_for_its_sdf(
     tmp_path, sample_sdfs, monkeypatch
 ):
+    """A chunk from PubChem's download records no file and is not downloaded
+    again, but its SDF fingerprints it again like any other file. Saying that it
+    cannot be done sent someone who kept the SDFs to a new directory."""
+    import rdkit
+
     paths = IndexPaths(tmp_path)
     _build_old_chunk(paths, sample_sdfs[0], monkeypatch)
     stats_file = paths.chunk_stats(CHUNK_NAMES[0])
@@ -703,9 +711,111 @@ def test_version_refusal_for_a_downloaded_chunk_advises_a_new_directory(
     with pytest.raises(IndexBuildError, match="still searchable") as err:
         build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
     message = str(err.value)
-    assert f"{CHUNK_NAMES[0]} came from PubChem's download" in message
+    assert "index build --sdf FILE" in message
+    assert f"with the file of {CHUNK_NAMES[0]} in place of FILE" in message
+    assert f"`--keep-sdf` leaves in {paths.downloads}" in message
     assert "index build --home NEW_DIR" in message
+    build_chunks(paths, sources(sample_sdfs[:2]), workers=1)
+    assert {c.rdkit_version for c in paths.completed_chunks()} == {rdkit.__version__}
+
+
+def _stale_libraries(tmp_path, sample_sdfs, monkeypatch, names):
+    """A home whose chunks ``names`` another RDKit fingerprinted, and their files."""
+    import rdkit
+
+    data = tmp_path / "data"
+    data.mkdir()
+    libs = []
+    for n, name in enumerate(names):
+        lib = data / f"{name}.sdf.gz"
+        lib.write_bytes(sample_sdfs[n % 2].read_bytes())
+        libs.append(lib)
+    paths = IndexPaths(tmp_path / "home")
+    with monkeypatch.context() as m:
+        m.setattr(rdkit, "__version__", OLD_RDKIT)
+        build_chunks(paths, sources(libs), workers=1)
+        finalize(paths)
+    return paths, libs
+
+
+def test_version_refusal_names_a_given_file_where_it_is_given(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """The files of the refused build count: one that moved is named where it is
+    now, not asked for, and one given by a relative path is named in full, so
+    that the build runs from any directory."""
+    paths, (liba, libb) = _stale_libraries(tmp_path, sample_sdfs, monkeypatch, "ab")
+    moved = tmp_path / "data2" / liba.name
+    moved.parent.mkdir()
+    liba.rename(moved)
+    monkeypatch.chdir(moved.parent)
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([Path(moved.name)]), workers=1)
+    message = str(err.value)
+    assert f"index build {_sdf_options([moved, libb])}" in message
     assert "--sdf FILE" not in message
+    assert "Then run this build again." in message
+
+
+def test_version_refusal_names_every_chunk_that_needs_its_file(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """A build that leaves one out is refused again: no name is cut from the list."""
+    paths, libs = _stale_libraries(tmp_path, sample_sdfs, monkeypatch, "abcde")
+    for lib in libs[1:]:
+        lib.unlink()
+    with pytest.raises(IndexBuildError, match=r"^5 chunk\(s\)") as err:
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    message = str(err.value)
+    assert f"index build {_sdf_options(libs[:1])} --sdf FILE --sdf FILE" in message
+    assert message.count("--sdf FILE") == 4
+    assert "with the files of b, c, d, e in place of each FILE" in message
+    assert "(b.sdf or b.sdf.gz for b)" in message
+    recorded = " and ".join(str(lib.resolve()) for lib in libs[1:])
+    assert f"The index recorded {recorded}, not there now" in message
+
+
+def test_version_refusal_names_each_version_the_chunks_were_built_with(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    import rdkit
+
+    paths, _ = _stale_libraries(tmp_path, sample_sdfs, monkeypatch, "a")
+    older = tmp_path / "data" / "b.sdf.gz"
+    older.write_bytes(sample_sdfs[1].read_bytes())
+    with monkeypatch.context() as m:
+        m.setattr(rdkit, "__version__", "1999.09.1")
+        m.setattr(builder_mod, "_check_versions", lambda *args, **kwargs: None)
+        build_chunks(paths, sources([older]), workers=1)
+    with pytest.raises(IndexBuildError) as err:
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    assert (
+        f"2 chunk(s) in {paths.chunks} were fingerprinted with RDKit {OLD_RDKIT} / "
+        f"FPSim2 {runtime_versions()[1]} and RDKit 1999.09.1 / FPSim2 "
+    ) in str(err.value)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX directory modes")
+def test_version_refusal_survives_a_recorded_file_that_cannot_be_reached(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """Before Python 3.14 pathlib raises for a file in a directory that may not
+    be entered, and the refusal came out as a bare "Permission denied"."""
+    paths, (liba,) = _stale_libraries(tmp_path, sample_sdfs, monkeypatch, "a")
+    probe = tmp_path / "probe"
+    probe.mkdir()
+    probe.chmod(0)
+    held_to_modes = not os.access(probe, os.R_OK | os.X_OK)
+    probe.chmod(0o755)
+    if not held_to_modes:
+        pytest.skip("this user is not held to file modes")
+    liba.parent.chmod(0)
+    try:
+        with pytest.raises(IndexBuildError, match="still searchable") as err:
+            build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    finally:
+        liba.parent.chmod(0o755)
+    assert "with the file of a in place of FILE" in str(err.value)
 
 
 def test_chunks_from_2_1_0_are_checked_through_their_h5(
