@@ -482,6 +482,33 @@ SUBSTRUCTURE_NOTE = (
     "Every hit contains the query as a substructure. PubChem returns at most max_records "
     "hits; they are sorted by ecfp4_similarity to the query, so close analogues come first."
 )
+SUBSTRUCTURE_LABELS_NOTE = (
+    "Every hit contains the query as a substructure, with the stereo and isotope labels "
+    "in the query matched as drawn. PubChem returns at most max_records "
+    "hits; they are sorted by ecfp4_similarity to the query, so close analogues come first."
+)
+
+
+def _label_options(mol: Chem.Mol) -> dict[str, str]:
+    """PubChem substructure options for the stereo and isotope labels ``mol`` carries.
+
+    PubChem ignores both unless asked, so only the labels present are sent.
+    """
+    options: dict[str, str] = {}
+    chiral = any(
+        atom.GetChiralTag() != Chem.ChiralType.CHI_UNSPECIFIED
+        for atom in mol.GetAtoms()
+    )
+    double_bond = any(
+        bond.GetStereo() != Chem.BondStereo.STEREONONE for bond in mol.GetBonds()
+    )
+    if chiral or double_bond:
+        options["Stereo"] = "exact"
+    if any(atom.GetIsotope() for atom in mol.GetAtoms()):
+        options["MatchIsotopes"] = "true"
+    return options
+
+
 IDENTITY_NOTE = (
     "Compounds PubChem considers identical to the query under identity_type={identity_type}. "
     "Isotope-labelled hits can score below 1 in the ECFP4 column: the fingerprint tells "
@@ -546,14 +573,17 @@ def pubchem_substructure_search(
 ) -> RemoteSearchResults:
     """Compounds across all of PubChem that contain ``smiles``."""
     mol = parse_smiles(smiles)
-    records = get_client(home).substructure_search(smiles, max_records=max_records)
+    options = _label_options(mol)
+    records = get_client(home).substructure_search(
+        smiles, max_records=max_records, **options
+    )
     return RemoteSearchResults(
         query_smiles=smiles,
         search="substructure",
         max_records=max_records,
         truncated=len(records) >= max_records,
         hits=_rank(mol, records),
-        note=SUBSTRUCTURE_NOTE,
+        note=SUBSTRUCTURE_LABELS_NOTE if options else SUBSTRUCTURE_NOTE,
     )
 
 
