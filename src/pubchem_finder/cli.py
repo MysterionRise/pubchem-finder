@@ -99,7 +99,8 @@ HomeOpt = Annotated[
         "--home",
         parser=_home_path,
         envvar="PUBCHEM_FINDER_HOME",
-        help="Data directory (default: platform user data dir).",
+        help="Data directory (default: platform user data dir). "
+        "Relative paths use the process working directory; prefer an absolute path.",
         show_default=False,
     ),
 ]

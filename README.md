@@ -312,6 +312,9 @@ otherwise. `PUBCHEM_FINDER_INDEX_MODE` accepts `auto` (the default), `memory`, o
 Data lives in the platform data directory (`~/.local/share/pubchem-finder` on Linux,
 `~/Library/Application Support/pubchem-finder` on macOS, `%LOCALAPPDATA%\pubchem-finder`
 on Windows). Override it with `--home DIR` or `PUBCHEM_FINDER_HOME`.
+Relative paths resolve against the process working directory and emit a warning.
+Use an absolute path (or a path starting with `~`) in an MCP client configuration:
+the client may start the server from a different working directory than your terminal.
 
 ## Use it from Python
 

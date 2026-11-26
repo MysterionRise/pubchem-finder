@@ -14,6 +14,7 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 
 - The `compare` tool description and `ecfp4_tanimoto` field explain that its 2048-bit fingerprint can give a different score from the 1024-bit search default for the same pair. The scores and fingerprint settings are unchanged (#220).
+- Relative `--home` and `PUBCHEM_FINDER_HOME` values warn with the resolved data directory. They still resolve against the process working directory; use an absolute path in MCP client configurations (#231).
 - SMILES and SMARTS inputs with a space, tab, line break, or non-ASCII character are refused with an error instead of being cut at that point. Previously `CCO CCN` or `CCO😀` was silently answered as ethanol. Clients that sent a `SMILES name` line or several structures in one string now get an error and should send one structure per call, joining the parts of a mixture with `.` (#212).
 - `index build` fingerprints the structure it stores and shows (#187). Read from
   PubChem's mol block, a compound with an imine or amidine N-H kept that hydrogen as an

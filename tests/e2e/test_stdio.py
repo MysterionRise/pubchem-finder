@@ -111,3 +111,35 @@ async def test_first_search_builds_the_demo_index_over_stdio(tmp_path):
     assert similar.structured_content["hits"][0]["cid"] == 2244
     assert len(fragment.structured_content["hits"]) == 5
     assert (tmp_path / "home" / "demo").is_dir()
+
+
+@pytest.mark.parametrize("source", ["option", "environment", "module"])
+async def test_relative_home_warns_without_corrupting_stdio(tmp_path, source):
+    args = ["-m", "pubchem_finder", "mcp"]
+    env = {**os.environ, "PUBCHEM_FINDER_HOME": "relative-data"}
+    if source == "option":
+        args += ["--home", "relative-data"]
+        env["PUBCHEM_FINDER_HOME"] = str(tmp_path / "ignored")
+    elif source == "module":
+        args = ["-m", "pubchem_finder.mcp_server"]
+    params = StdioServerParameters(
+        command=sys.executable, args=args, env=env, cwd=tmp_path
+    )
+    log = tmp_path / "server-stderr.log"
+    with log.open("w", encoding="utf-8") as errlog:
+        async with (
+            stdio_client(params, errlog=errlog) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            for _ in range(2):
+                status = await session.call_tool("index_status", {})
+                assert status.is_error is False
+                assert status.structured_content["home"] == str(
+                    tmp_path / "relative-data"
+                )
+    stderr = log.read_text()
+    assert "relative data directory" in stderr
+    assert str(tmp_path / "relative-data") in stderr
+    assert stderr.count("UserWarning:") == 1
+    assert not (tmp_path / "relative-data").exists()

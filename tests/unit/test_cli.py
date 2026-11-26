@@ -4,6 +4,8 @@ import contextlib
 import csv
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -3324,3 +3326,20 @@ def test_extending_an_index_keeps_its_fingerprint_settings(
     assert mismatched.exit_code == 1, mismatched.output
     assert "Existing chunks" in mismatched.output
     assert paths.load_manifest() == after
+
+
+@pytest.mark.parametrize("source", ["option", "environment"])
+def test_relative_home_cli_warning_is_on_stderr(tmp_path, source):
+    args = [sys.executable, "-m", "pubchem_finder", "index", "status", "--json"]
+    env = {**os.environ, "PUBCHEM_FINDER_HOME": "relative-data"}
+    if source == "option":
+        args += ["--home", "relative-data"]
+        env["PUBCHEM_FINDER_HOME"] = str(tmp_path / "ignored")
+    result = subprocess.run(
+        args, env=env, cwd=tmp_path, capture_output=True, text=True, check=True
+    )
+    data = json.loads(result.stdout)
+    assert data["home"] == str(tmp_path / "relative-data")
+    assert "relative data directory" in result.stderr
+    assert str(tmp_path / "relative-data") in result.stderr
+    assert not (tmp_path / "relative-data").exists()
