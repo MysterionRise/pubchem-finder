@@ -582,3 +582,18 @@ async def test_pubchem_limiter_is_not_shared_across_event_loops():
     there = await anyio.to_thread.run_sync(lambda: asyncio.run(limiter_in_new_loop()))
     assert there is not here
     assert _pubchem_limiter() is here
+
+
+async def test_compare_explains_why_search_scores_can_differ():
+    async with Client(mcp) as client:
+        listed = await client.list_tools()
+        tools = {tool.name: tool for tool in listed.tools}
+    compare = tools["compare"]
+    for description in (
+        compare.description,
+        compare.output_schema["properties"]["ecfp4_tanimoto"]["description"],
+    ):
+        assert "2048 bits" in description
+        assert "1024 bits" in description
+        assert "search" in description
+        assert "differ" in description

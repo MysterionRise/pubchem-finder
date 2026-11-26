@@ -255,7 +255,9 @@ async def compare(smiles_a: str, smiles_b: str) -> Comparison:
 
     Returns Tanimoto similarity on ECFP4 (Morgan radius 2, 2048 bits) and on
     MACCS keys. 1.0 means identical fingerprints; above ~0.7 on ECFP4 is a close
-    analogue.
+    analogue. Search scores use 1024 bits by default and can differ for the same
+    pair: similarity_search uses the index's fingerprint settings, while PubChem
+    search tools always score on 1024 bits.
     """
     return await _run(service.compare, smiles_a, smiles_b)
 

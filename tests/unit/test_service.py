@@ -196,3 +196,11 @@ def test_get_client_keeps_one_client_per_data_directory(tmp_path, monkeypatch):
     assert client.cache.path == home.resolve() / "cache" / "pubchem-http.sqlite"
     assert service.get_client(home) is client
     assert service.get_client(tmp_path / "other") is not client
+
+
+def test_compare_keeps_2048_bits_when_search_uses_1024(built_home, aspirin_smiles):
+    comparison = service.compare(aspirin_smiles, "O=C(O)c1ccccc1O")
+    results = service.similarity_search(aspirin_smiles, threshold=0.05, home=built_home)
+    salicylic_acid = next(hit for hit in results.hits if hit.cid == 338)
+    assert comparison.ecfp4_tanimoto == pytest.approx(0.4482758620689655)
+    assert salicylic_acid.similarity == pytest.approx(0.4643)
