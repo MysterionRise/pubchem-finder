@@ -2,6 +2,8 @@
 
 import csv
 import io
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -135,6 +137,11 @@ def test_read_smi_keeps_a_cxsmiles_extension_with_its_smiles(tmp_path):
     [
         "|(0,0,;1.5,0,;2.25,1.3,)|",  # coordinates, which RDKit writes with every conformer
         "|(-0.75,1.299,0.5;0,0,0;1.5e-05,0,0)|",
+        "|(.5,-.25,;1.,0,;1E+02,2e3,)|",  # every way a number is written
+        "|( 0 , 0 , ; 1.5 ,0, ;2.25, 1.3 , )|",
+        "|(nan,0,;inf,-inf,;2.25,1.3,)|",  # what RDKit writes where there is no number
+        "|(NaN,0,;-Infinity,0,)|",  # and what Java does
+        "|(0,0,;1.5,0,;2.25,1.3,),wD:1.0,&1:1|",  # with the next feature behind them
         "|$;;R1$|",
         "|$_AV:;note;$|",
         "|^1:1|",
@@ -175,11 +182,31 @@ def test_read_smi_knows_each_kind_of_cxsmiles_extension(extension):
 
 
 @pytest.mark.parametrize(
+    "extension",
+    ["|&1:1", "|r", "|$;;R1$", "|(0,0,;1.5,0,;2.25,1.3,)", "|(0,0,;1.5,0,),wD:1.0"],
+)
+def test_read_smi_takes_an_extension_that_ends_with_the_row(extension):
+    # The closing bar is the one thing an extension may lack: a row that was cut
+    # off there still says what the bar would have closed.
+    (row,) = batch._read_smi(io.StringIO(f"CCO {extension}\n"))
+    assert (row.smiles, row.id) == (f"CCO {extension}", "1")
+
+
+@pytest.mark.parametrize(
     "name",
     [
         "|(S)-ibuprofen|",  # a third of the demo set's IUPAC names begin like this
         "|(2S)-2-aminopropanoic acid|L-alanine",
         "|(1,1-dimethylethyl)benzene",
+        # Numbers in parentheses that close, as coordinates do, and a name behind
+        # them where coordinates have the next feature or the closing bar.
+        "|(6,6)-phenyl-C61-butyric acid methyl ester|PCBM",
+        "|(1,2,4)triazolo(4,3-a)pyridin-3(2H)-one|",
+        "|(1,2) and (3,4)|",
+        "|(2,5,8,11-tetraoxatridecan-13-yl)phosphonic acid|",
+        "|(inflow,nanopure)|",  # words, for all that they begin like `inf` and `nan`
+        "|(702)|",  # one number is an id in parentheses: coordinates have a separator
+        "|()|",
         "|(-)-nicotine|54-11-5",
         "|(+)-tartaric acid",
         "|$12.50|per litre",
@@ -197,6 +224,41 @@ def test_read_smi_takes_a_name_in_bars_for_the_id(name):
     # parenthesis or a letter of the format is no extension.
     (row,) = batch._read_smi(io.StringIO(f"CCO {name}\n"))
     assert (row.smiles, row.id) == ("CCO", name)
+
+
+def test_read_smi_says_no_to_what_only_begins_like_coordinates_at_once():
+    # Numbers after `|(` that do not end as coordinates do: the locants of a long
+    # name, coordinates that were cut off with the file, a list that ends in a
+    # word. A pattern that can share out a number's digits in several ways tries
+    # every way for every number before it says no: 22 s for a name with 28
+    # locants and twice that for each one more, where these rows have 48. Read
+    # in a child, so that such a pattern fails this test and does not hold the
+    # run.
+    locants = ",".join(str(n) for n in range(2, 144, 3))
+    rows = [
+        f"CCO |({locants}-octatetracontaoxapentatetracontahectan-145-yl)phosphonic acid|",
+        "CCO |(" + "".join(f"{120 + 15 * n},340,;" for n in range(48)),
+        "CCO |(" + ", ".join(str(2244 + 37 * n) for n in range(48)) + " and others)|",
+        "CCO |(" + "".join(f"{n}.5 , {n} , ; " for n in range(48)) + "and a name",
+    ]
+    script = (
+        "import io, sys\n"
+        "from pubchem_finder import batch\n"
+        "for row in batch._read_smi(io.StringIO(sys.stdin.read())):\n"
+        "    print(row.smiles, row.id)\n"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            input="\n".join(rows) + "\n",
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("the reader did not answer four rows in a minute")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == rows  # each of them a name: the id
 
 
 def test_read_smi_leaves_bars_that_are_no_extension_to_the_id(tmp_path):

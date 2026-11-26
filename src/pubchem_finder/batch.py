@@ -27,13 +27,23 @@ SMILES_COLUMNS = ("smiles", "canonical_smiles", "isomeric_smiles", "smi")
 # How a CXSMILES extension begins, straight after its opening bar: coordinates,
 # atom labels or values, or one of the format's named features. A cell of a table
 # printed with bars (`| 702 | ethanol`) begins with none of them, and neither does
-# a name written in bars (`|(S)-ibuprofen|`): coordinates are numbers, and labels
-# are closed by a second dollar sign. Told by its shape and not by whether RDKit
-# can read it: RDKit reads a number between bars as an extension that says
-# nothing, and not every extension that others write.
-_NUMBER = r"-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
+# a name written in bars (`|(S)-ibuprofen|`, `|(6,6)-phenyl-C61-butyric acid|`):
+# coordinates are numbers between parentheses with the next feature, the closing
+# bar or the end of the row behind them, and labels are closed by a second dollar
+# sign. Told by its shape and not by whether RDKit can read it: RDKit reads a
+# number between bars as an extension that says nothing, and not every extension
+# that others write.
+#
+# The coordinates can be read in one way only: a number has its digits, then at
+# most one point and more digits, and a blank belongs to what stands before it.
+# Written so that the same digits or blanks can be shared out in several ways
+# (`\d+\.?\d*`, or `\s*` on both sides of a number), the pattern tries every way
+# for every number before it says no: 22 s for a name in bars that begins with
+# 28 locants (`|(2,5,8,...,83-octacosaoxa...`), and twice that for each one more.
+_NUMBER = r"-?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?|(?i:nan|inf(?:inity)?))"
+_COORDINATES = rf"\(\s*(?:(?:{_NUMBER}\s*)?[,;]\s*)+(?:{_NUMBER}\s*)?\)\s*(?:[,|]|$)"
 _CX_EXTENSION = re.compile(
-    rf"\|(?:\(\s*(?:(?:{_NUMBER})?\s*[,;]\s*)+(?:{_NUMBER})?\s*\)|\$[^|]*\$"
+    rf"\|(?:{_COORDINATES}|\$[^|]*\$"
     r"|\^[1-7]:|[ao&]\d*\s*:|r(?:[,|]|$)|ctu:|[ct]:|w[UD]?:|[mfsu]:|[CHZ]:"
     r"|Sg[DH]?:|LN:|RG:|LO:|lp:|rb:|atomProp:)"
 )
