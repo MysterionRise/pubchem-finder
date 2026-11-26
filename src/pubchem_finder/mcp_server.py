@@ -108,20 +108,23 @@ def _tool(
     title: str,
     *,
     calls_pubchem: bool,
-    read_only: bool = True,
     large_results: bool = False,
 ) -> Callable[[F], F]:
     """Register a tool with a title and annotations, as directory policies require.
 
-    ``read_only`` indicates whether the tool avoids modifying local or external
-    state. ``calls_pubchem`` marks tools that reach an external service;
-    ``large_results`` marks tools whose results can exceed the default size limit.
+    Every tool only reads: its arguments, the local index or PubChem. The PubChem
+    tools write responses to the cache in the data directory. The local similarity
+    and substructure searches build the demo index in the data directory on the
+    first search when no index exists. Both are internal state, not the tool's
+    environment. ``calls_pubchem`` marks the tools that reach an external service
+    (the open world); ``large_results`` the ones whose results can pass Claude
+    Code's default size limit.
     """
     return mcp.tool(
         title=title,
         annotations=ToolAnnotations(
             title=title,
-            read_only_hint=read_only,
+            read_only_hint=True,
             destructive_hint=False,
             idempotent_hint=True,
             open_world_hint=calls_pubchem,
@@ -180,7 +183,7 @@ async def _run(fn: Callable[..., T], *args: object, **kwargs: object) -> T:
         ) from exc
 
 
-@_tool("Look up a PubChem compound", calls_pubchem=True, read_only=False)
+@_tool("Look up a PubChem compound", calls_pubchem=True)
 async def pubchem_lookup(
     query: str,
     by: Literal["name", "cid", "smiles", "inchikey"] = "name",
@@ -232,12 +235,7 @@ async def compare(smiles_a: str, smiles_b: str) -> Comparison:
     return await _run(service.compare, smiles_a, smiles_b)
 
 
-@_tool(
-    "Similarity search (local index)",
-    calls_pubchem=False,
-    read_only=False,
-    large_results=True,
-)
+@_tool("Similarity search (local index)", calls_pubchem=False, large_results=True)
 async def similarity_search(
     smiles: str,
     threshold: float = 0.7,
@@ -267,12 +265,7 @@ async def similarity_search(
     )
 
 
-@_tool(
-    "Substructure search (local index)",
-    calls_pubchem=False,
-    read_only=False,
-    large_results=True,
-)
+@_tool("Substructure search (local index)", calls_pubchem=False, large_results=True)
 async def substructure_search(
     query: str,
     query_type: Literal["smiles", "smarts"] = "smiles",
@@ -305,7 +298,7 @@ async def index_status() -> IndexStatus:
     return await _run(service.index_status)
 
 
-@_tool("PubChem similarity search", calls_pubchem=True, read_only=False)
+@_tool("PubChem similarity search", calls_pubchem=True)
 async def pubchem_similarity_search(
     smiles: str, threshold: int = 90, max_records: int = 25
 ) -> RemoteSearchResults:
@@ -325,7 +318,7 @@ async def pubchem_similarity_search(
     )
 
 
-@_tool("PubChem substructure search", calls_pubchem=True, read_only=False)
+@_tool("PubChem substructure search", calls_pubchem=True)
 async def pubchem_substructure_search(
     smiles: str, max_records: int = 25
 ) -> RemoteSearchResults:
@@ -340,7 +333,7 @@ async def pubchem_substructure_search(
     )
 
 
-@_tool("PubChem exact structure match", calls_pubchem=True, read_only=False)
+@_tool("PubChem exact structure match", calls_pubchem=True)
 async def pubchem_exact_match(
     smiles: str,
     identity_type: IdentityType = "same_stereo_isotope",
@@ -361,14 +354,14 @@ async def pubchem_exact_match(
     )
 
 
-@_tool("PubChem synonyms and CAS numbers", calls_pubchem=True, read_only=False)
+@_tool("PubChem synonyms and CAS numbers", calls_pubchem=True)
 async def pubchem_synonyms(cid: int, limit: int = 25) -> Synonyms:
     """Names a compound is known by (common, brand, systematic), most common
     first, plus its CAS Registry Numbers. Get the CID from pubchem_lookup."""
     return await _run(service.pubchem_synonyms, cid, limit=limit)
 
 
-@_tool("PubChem cross-references", calls_pubchem=True, read_only=False)
+@_tool("PubChem cross-references", calls_pubchem=True)
 async def pubchem_xrefs(cid: int) -> CrossRefs:
     """Counts and examples of external identifiers linked to a compound:
     registry IDs (e.g. CAS, ChEMBL, DrugBank), PubMed articles (with links) and
@@ -376,14 +369,14 @@ async def pubchem_xrefs(cid: int) -> CrossRefs:
     return await _run(service.pubchem_xrefs, cid)
 
 
-@_tool("PubChem compound description", calls_pubchem=True, read_only=False)
+@_tool("PubChem compound description", calls_pubchem=True)
 async def pubchem_description(cid: int) -> Description:
     """Short curated descriptions of a compound (what it is, what it is used
     for), each with its source."""
     return await _run(service.pubchem_description, cid)
 
 
-@_tool("PubChem page section", calls_pubchem=True, read_only=False, large_results=True)
+@_tool("PubChem page section", calls_pubchem=True, large_results=True)
 async def pubchem_annotations(
     cid: int, heading: AnnotationHeading, max_chars: int = 6000
 ) -> AnnotationSection:
@@ -400,7 +393,7 @@ async def pubchem_annotations(
     return await _run(service.pubchem_annotations, cid, heading, max_chars=max_chars)
 
 
-@_tool("PubChem bioactivity summary", calls_pubchem=True, read_only=False)
+@_tool("PubChem bioactivity summary", calls_pubchem=True)
 async def pubchem_bioactivity(cid: int) -> BioactivitySummary:
     """Summary of PubChem BioAssay results for a compound: how many assays,
     outcome counts, the targets with the most active assays (one per gene, with
