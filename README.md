@@ -335,6 +335,9 @@ does it with the plain MCP client in under 50 lines (`uv run examples/mcp_client
 API key). Examples for agent frameworks are welcome, see
 [#34](https://github.com/MysterionRise/pubchem-finder/issues/34).
 
+[examples/openai_agents.py](https://github.com/MysterionRise/pubchem-finder/blob/master/examples/openai_agents.py)
+does the same with the OpenAI Agents SDK (`uv run examples/openai_agents.py`, needs `OPENAI_API_KEY`).
+
 ## What leaves your machine
 
 pubchem-finder has no telemetry, no account and no API key. What it sends depends on the
