@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from .core.exceptions import InvalidInput, PubChemFinderError
+from .core.limits import is_cxsmiles
 
 SMILES_COLUMNS = ("smiles", "canonical_smiles", "isomeric_smiles", "smi")
 ID_COLUMNS = ("id", "name", "cid", "compound_id", "title")
@@ -105,13 +106,14 @@ def _read_smi(fh: IO[str]) -> Iterator[InputRow]:
         parts = line.split(maxsplit=1)
         smiles = parts[0]
         rest = parts[1].strip() if len(parts) > 1 else ""
-        if rest.startswith("|"):
+        end = rest.find("|", 1) if rest.startswith("|") else -1
+        if end > 1 and is_cxsmiles(f"{smiles} {rest[: end + 1]}"):
             # `SMILES |&1:1| name`: a CXSMILES extension is part of the structure,
             # not the id. Kept with the SMILES, the row is refused by name instead
-            # of a racemate being answered as one enantiomer.
-            end = rest.find("|", 1)
-            extension = rest if end == -1 else rest[: end + 1]
-            smiles, rest = f"{smiles} {extension}", rest[len(extension) :].strip()
+            # of a racemate being answered as one enantiomer. Bars that are not
+            # an extension (`CCO | ethanol`, as psql prints a table) begin the
+            # id, as they always did.
+            smiles, rest = f"{smiles} {rest[: end + 1]}", rest[end + 1 :].strip()
         yield InputRow(line=n, id=rest or str(n), smiles=smiles)
 
 

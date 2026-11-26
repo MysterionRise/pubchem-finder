@@ -378,41 +378,73 @@ async def test_mcp_search_reports_the_demo_scope(demo_built, demo_on, monkeypatc
     assert "index build" in result.structured_content["hint"]
 
 
+def _demo_smiles(cid):
+    import csv
+    import io
+
+    rows = csv.DictReader(io.StringIO(demo.data().decode()), delimiter="\t")
+    return next(row["smiles"] for row in rows if int(row["cid"]) == cid)
+
+
 @pytest.mark.anyio
 async def test_find_analogues_asks_for_a_result_that_fits_what_the_tool_declares(
     demo_built, demo_on, monkeypatch
 ):
-    """Peptide-sized hits take about 1,600 characters each with their names and
+    """Peptide-sized hits take about 2,000 characters each with their names and
     scaffolds. At top_k=100 the prompt's own call returned 137,000 characters for
-    oxytocin at 0.2, past the 100,000 similarity_search declares."""
-    import csv
-    import io
-
+    oxytocin at 0.2, past the 100,000 similarity_search declares, and at 50 the
+    largest peptides of the demo set still passed it."""
     from mcp.client.client import Client
 
     from pubchem_finder import mcp_server
 
-    rows = {
-        int(row["cid"]): row["smiles"]
-        for row in csv.DictReader(io.StringIO(demo.data().decode()), delimiter="\t")
-    }
-    oxytocin = rows[439302]
+    largest = _demo_smiles(156588324)  # C225H348N48O68, the worst of 1,932 queries
     limit = mcp_server.LARGE_RESULTS["anthropic/maxResultSizeChars"]
     monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(demo_built))
-    asked = {"smiles": oxytocin, "threshold": 0.2, "group_by_scaffold": True}
+    asked = {"smiles": largest, "threshold": 0.2, "group_by_scaffold": True}
     async with Client(mcp_server.mcp) as client:
         result = await client.call_tool(
             "similarity_search", {**asked, "top_k": mcp_server.ANALOGUES}
         )
-        twice = await client.call_tool(
-            "similarity_search", {**asked, "top_k": 2 * mcp_server.ANALOGUES}
+        more = await client.call_tool(
+            "similarity_search", {**asked, "top_k": mcp_server.ANALOGUES + 10}
         )
     assert result.is_error is False
     assert len(result.structured_content["hits"]) == mcp_server.ANALOGUES
     assert result.structured_content["truncated"] is True
     assert sum(len(block.text) for block in result.content) < limit
-    # The query is a fair test: twice as many of its hits do not fit.
-    assert sum(len(block.text) for block in twice.content) > limit
+    # The query is a fair test: ten more of its hits do not fit.
+    assert sum(len(block.text) for block in more.content) > limit
+
+
+def test_batch_search_says_which_lists_were_cut_and_what_helps(
+    tmp_path, demo_built, demo_on
+):
+    """Issue #191 for a file of queries. The note names the inputs, and at the
+    longest list it does not say to ask for more."""
+    queries = tmp_path / "queries.smi"
+    queries.write_text(
+        f"{ASPIRIN} aspirin\nCC(C)Cc1ccc(cc1)C(C)C(=O)O ibuprofen\n"
+        "Cn1cnc2c1c(=O)n(C)c(=O)n2C caffeine\nCC(=O)Nc1ccc(O)cc1 paracetamol\n"
+    )
+    out = tmp_path / "hits.csv"
+
+    def search(*options):
+        args = ["search", "-i", str(queries), "-o", str(out), "--home", str(demo_built)]
+        result = runner.invoke(app, [*args, *options])
+        assert result.exit_code == 0, result.output
+        return result.stderr.replace("\n", " ")
+
+    cut = search("--threshold", "0.1", "--top", "2")
+    assert (
+        "note: 4 input(s) have more hits than --top 2 (aspirin, ibuprofen, caffeine "
+        "and 1 more): their rows are the best 2, not all; raise --top (up to 1000) "
+        "or --threshold for complete lists"
+    ) in cut
+    longest = search("--threshold", "0.05", "--top", "1000")
+    assert "have more hits than --top 1000 (" in longest
+    assert "raise --threshold for complete lists" in longest
+    assert "raise --top" not in longest
 
 
 def test_cli_search_prints_the_demo_note(demo_built, demo_on):

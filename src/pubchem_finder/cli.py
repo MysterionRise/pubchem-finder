@@ -909,12 +909,14 @@ def _publish(
                 os.fdopen(_reopen(target, previous, os.O_WRONLY), "wb")
             )
             # The old content goes before the new is in: while it is still there,
-            # make sure the new will fit.
+            # make sure the new will fit. (No room at all is not believed: a
+            # filesystem that cannot tell reports that, and a full one would
+            # not have held the partial file.)
             needed = mine.st_size - os.fstat(out.fileno()).st_size
-            free = None
+            free = 0
             with contextlib.suppress(OSError):
                 free = shutil.disk_usage(target.parent).free
-            if free is not None and needed > free:
+            if 0 < free < needed:
                 raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
             out.truncate(0)
         shutil.copyfileobj(rows, out)

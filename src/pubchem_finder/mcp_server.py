@@ -587,9 +587,11 @@ def compound_dossier(compound: str) -> str:
 
 
 # The hits find_analogues asks for: past the default 20, which cut most families
-# short (issue #191), and few enough that a result of peptide-sized hits with
-# their scaffolds, about 1,600 characters each, stays under LARGE_RESULTS.
-ANALOGUES = 50
+# short (issue #191), and few enough that the result stays under LARGE_RESULTS
+# whatever the compound and the threshold. The largest in the demo set, 40 hits
+# of a 4,800 Da peptide with their scaffolds, takes 95,000 characters; 44 pass
+# the limit.
+ANALOGUES = 40
 
 
 @mcp.prompt(title="Find analogues")

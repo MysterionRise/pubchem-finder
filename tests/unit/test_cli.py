@@ -2520,6 +2520,40 @@ def test_batch_keeps_the_other_names_of_its_output(tmp_path):
     assert _partial_files(tmp_path) == []
 
 
+def test_batch_keeps_an_output_that_the_new_rows_would_not_fit_in(
+    tmp_path, monkeypatch
+):
+    # An output written in place loses its old content before the new is in.
+    # When the disk has room, but not for that, it is said while the old
+    # content is still there.
+    from collections import namedtuple
+
+    from pubchem_finder import cli
+
+    src, _ = _write_inputs(tmp_path)
+    out = tmp_path / "out.csv"
+    out.write_text("old\n")
+    monkeypatch.setattr(cli.os, "replace", _refuse)  # the other in-place case
+    usage = namedtuple("usage", "total used free")
+    monkeypatch.setattr(cli.shutil, "disk_usage", lambda path: usage(10**6, 10**6, 20))
+    result = runner.invoke(app, ["props", "-i", str(src), "-o", str(out)])
+    assert result.exit_code == 1, result.output
+    (name,) = _partial_files(tmp_path)
+    assert (
+        f"error: could not write {out} (No space left on device); "
+        f"the results are in {tmp_path / name}"
+    ) in result.stderr.replace("\n", "")
+    assert out.read_text() == "old\n"
+    assert len((tmp_path / name).read_text().splitlines()) == 4
+    (tmp_path / name).unlink()
+
+    # A filesystem that cannot tell its free space reports none: not believed.
+    monkeypatch.setattr(cli.shutil, "disk_usage", lambda path: usage(0, 0, 0))
+    result = runner.invoke(app, ["props", "-i", str(src), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    assert len(out.read_text().splitlines()) == 4
+
+
 @pytest.mark.skipif(
     not hasattr(os, "setxattr"), reason="no extended attributes from Python here"
 )

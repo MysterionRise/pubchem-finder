@@ -55,6 +55,16 @@ def check_one_structure(text: str, what: str = "SMILES") -> None:
         )
 
 
+def is_cxsmiles(text: str) -> bool:
+    """Whether ``text`` is a SMILES followed by a CXSMILES extension, as RDKit's
+    strict parser reads one. ``CCO | ethanol |`` is not: its bars are a table's,
+    and so is not a row of a listing that separates its columns with them."""
+    params = Chem.SmilesParserParams()
+    # RDKit's generated stubs type this flag as the parameters object itself.
+    params.strictCXSMILES = True  # type: ignore[assignment]
+    return Chem.MolFromSmiles(text, params) is not None
+
+
 def check_smiles_atoms(text: str, what: str = "SMILES") -> None:
     """Refuse SMARTS atoms in text that is about to be read as SMILES.
 

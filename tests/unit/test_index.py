@@ -936,6 +936,42 @@ def test_overlapping_chunks_give_each_cid_once(overlap_home):
     assert top5.note is None
 
 
+@pytest.mark.parametrize(
+    "raised",
+    ["RuntimeError: Query interrupted", "duckdb.InterruptException", "another error"],
+)
+def test_ctrl_c_during_the_metadata_query_is_ctrl_c(built_home, raised):
+    """DuckDB turns a Ctrl+C that arrives while it runs a query into an error of
+    its own, or a bare RuntimeError. Taken for a failed query, it made a batch
+    search throw away the rows it keeps on Ctrl+C, about one time in three."""
+    import duckdb
+
+    index = LocalIndex(built_home)
+    chunks = list(index.merged.manifest.chunks)
+    errors = {
+        "RuntimeError: Query interrupted": RuntimeError("Query interrupted"),
+        "duckdb.InterruptException": duckdb.InterruptException("Interrupted!"),
+        "another error": RuntimeError("out of memory"),
+    }
+
+    class Interrupted:
+        def cursor(self):
+            return self
+
+        def execute(self, sql):
+            raise errors[raised]
+
+    index._db = Interrupted()
+    index._db_files = index.paths.metadata_files(chunks)
+    expected = RuntimeError if raised == "another error" else KeyboardInterrupt
+    with pytest.raises(expected):
+        index._metadata([2244], chunks)
+    if raised != "another error":
+        # And through the search, which tries a failed query again: not this one.
+        with pytest.raises(KeyboardInterrupt):
+            index.metadata([2244])
+
+
 def test_overlapping_chunks_give_each_substructure_hit_once(overlap_home):
     found = service.substructure_search("c1ccccc1C(=O)O", home=overlap_home)
     assert [h.cid for h in found.hits] == [243, 338, 2244, 4133]

@@ -446,10 +446,19 @@ class LocalIndex:
             cursor = self._db.cursor()
         ids = ", ".join(str(int(c)) for c in cids)
         # Integers only; a literal IN list lets DuckDB push the filter into the scan.
-        rows = cursor.execute(
-            f"SELECT {', '.join(METADATA_COLUMNS)}, filename FROM meta "  # noqa: S608
-            f"WHERE cid IN ({ids})"
-        ).fetchall()
+        try:
+            rows = cursor.execute(
+                f"SELECT {', '.join(METADATA_COLUMNS)}, filename FROM meta "  # noqa: S608
+                f"WHERE cid IN ({ids})"
+            ).fetchall()
+        except (RuntimeError, duckdb.Error) as exc:
+            # Ctrl+C during a query comes out of DuckDB as an error of its own,
+            # or as RuntimeError("Query interrupted"). It is no fault of the
+            # query: taken for one, it is retried above, and a batch throws away
+            # the rows it would keep on Ctrl+C.
+            if "interrupt" in str(exc).lower():
+                raise KeyboardInterrupt from exc
+            raise
         return [
             (chunk_of(r[-1]), dict(zip(METADATA_COLUMNS, r[:-1], strict=True)))
             for r in rows

@@ -95,7 +95,7 @@ def test_read_smi_keeps_a_cxsmiles_extension_with_its_smiles(tmp_path):
         "C[C@H](N)C(=O)O |&1:1| rac-alanine\n"
         "C[C@H](N)C(=O)O\t|o1:1|\n"
         "*CC(*)c1ccccc1 |$star_e;;;star_e;;;;;;$,Sg:n:1,2,4,5,6,7,8,9::ht| poly styrene\n"
-        "C[C@H](N)C(=O)O |unfinished\n"
+        "CC |$_AV:first atom;second atom$| with a space inside\n"
         "C[C@H](N)C(=O)O L-alanine\n",
     )
     rows = list(batch.read_inputs(path))
@@ -106,7 +106,7 @@ def test_read_smi_keeps_a_cxsmiles_extension_with_its_smiles(tmp_path):
             "poly styrene",
             "*CC(*)c1ccccc1 |$star_e;;;star_e;;;;;;$,Sg:n:1,2,4,5,6,7,8,9::ht|",
         ),
-        ("4", "C[C@H](N)C(=O)O |unfinished"),
+        ("with a space inside", "CC |$_AV:first atom;second atom$|"),
         ("L-alanine", "C[C@H](N)C(=O)O"),
     ]
 
@@ -123,9 +123,33 @@ def test_read_smi_keeps_a_cxsmiles_extension_with_its_smiles(tmp_path):
         "rac-alanine",
         "2",
         "poly styrene",
-        "4",
+        "with a space inside",
     ]
     assert lines[4]["canonical_smiles"] == "C[C@H](N)C(=O)O"
+
+
+def test_read_smi_leaves_bars_that_are_no_extension_to_the_id(tmp_path):
+    # A table printed with bars between its columns (psql), an id in bars: not
+    # everything that begins with a bar after the SMILES is CXSMILES.
+    path = write(
+        tmp_path,
+        "bars.smi",
+        " CCO                   | ethanol\n"
+        "CCO | ethanol | 64-17-5\n"
+        "CCO |ethanol|\n"
+        "CCO || empty\n"
+        "CCO |unfinished\n"
+        "CCO |\n",
+    )
+    rows = list(batch.read_inputs(path))
+    assert [(r.id, r.smiles) for r in rows] == [
+        ("| ethanol", "CCO"),
+        ("| ethanol | 64-17-5", "CCO"),
+        ("|ethanol|", "CCO"),
+        ("|| empty", "CCO"),
+        ("|unfinished", "CCO"),
+        ("|", "CCO"),
+    ]
 
 
 def test_read_csv_and_tsv(tmp_path):

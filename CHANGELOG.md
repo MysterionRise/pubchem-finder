@@ -36,9 +36,9 @@ All notable changes to this project are documented here. The format follows
   44 compounds in 17 series reach the threshold. `similarity_search` returns
   `truncated: true` and a sentence in `note` when more compounds reach the threshold
   than were returned, the `search` command prints "top 20 of more than 20 hit(s)"
-  instead of "20 hit(s)", and the `find_analogues` prompt asks for 50 hits and tells
+  instead of "20 hit(s)", and the `find_analogues` prompt asks for 40 hits and tells
   the model to say when its counts are partial. `search -i` writes the same CSV as
-  before and says on standard error how many inputs had more hits than `--top`.
+  before and says on standard error which inputs had more hits than `--top`.
 - At most eight MCP tool calls to PubChem run at once, so lookups waiting for the rate limit no longer hold every worker thread and delay local tools (#200).
 - PubChem's gateway answers 502 and 504 are retried like 429 and 503, with the same
   backoff; they used to fail on the first request. PubChem's own timeout fault is still

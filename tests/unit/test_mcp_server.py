@@ -379,10 +379,10 @@ async def test_find_analogues_prompt():
         "find_analogues", {"compound": "ibuprofen", "threshold": "0.70"}
     )
     assert (
-        "similarity_search with threshold=0.7, top_k=50 and group_by_scaffold=true"
+        "similarity_search with threshold=0.7, top_k=40 and group_by_scaffold=true"
         in text
     )
-    assert "of the best 50, not totals" in text
+    assert "of the best 40, not totals" in text
     # Issue #191: with the default top_k the list was cut at 20 and its counts
     # reported as totals; ask for more and say when the result is still cut.
     assert "truncated=true" in text
