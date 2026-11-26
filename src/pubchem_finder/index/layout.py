@@ -89,6 +89,13 @@ class ChunkStats(BaseModel):
         description="Unique to each build of the chunk; the manifest records which "
         "builds its merged files hold (None: built by 2.2.1 or earlier)",
     )
+    fingerprint_of: str | None = Field(
+        default=None,
+        description="What was fingerprinted: 'smiles', the structure the chunk "
+        "stores and shows (None: built by 2.2.3 or earlier from the SDF's mol "
+        "block, where a compound with an imine or amidine N-H, 0.8% of PubChem, "
+        "does not score 1 against its own SMILES)",
+    )
 
 
 def fpsim2_memory_bytes(n_compounds: int, fp_bits: int) -> int:

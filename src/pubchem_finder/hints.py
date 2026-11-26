@@ -79,6 +79,19 @@ def merge_rebuilt(files: list[str | None], home: Path | None = None) -> str:
     return f"`{command(f'index build {sdf}', home)}`"
 
 
+def rebuild_from_files(
+    files: list[str], home: Path | None = None, placeholders: int = 0
+) -> str:
+    """The build that fingerprints existing chunks again, from the files they
+    were built from. Every file is named: a build given only some of them is
+    refused. ``placeholders`` adds a ``--sdf FILE`` for each file that is not
+    known."""
+    sdf = " ".join(
+        [f"--sdf {_quote(f)}" for f in files] + ["--sdf FILE"] * placeholders
+    )
+    return f"`{command(f'index build {sdf}', home)}`"
+
+
 def _quote(text: str) -> str:
     if sys.platform == "win32":
         # shlex.quote's single quotes mean nothing to cmd.exe; double quotes work in

@@ -261,10 +261,16 @@ def test_rows_that_hold_only_a_cid_are_not_compounds(fast_client):
     assert [record.cid for record in both] == [2244]
 
 
-def test_no_cookies_are_kept_or_sent_back():
+def test_no_cookies_are_kept_or_sent_back(monkeypatch):
     """NCBI sets a session cookie; one client serves a whole server run, so sending
     it back tied every later request, of every user, to one session ID."""
     import httpx
+
+    # With a proxy in the environment httpx routes https:// through it, ahead of
+    # the transport swapped in below, and this test would call the real PubChem.
+    for name in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name.lower(), raising=False)
 
     from pubchem_finder.data.pug_rest import PubChemClient
 

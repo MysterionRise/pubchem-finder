@@ -5,9 +5,11 @@ Run with ``pubchem-finder mcp`` (stdio, the default) or
 stdout: over stdio, stdout is the MCP transport.
 """
 
+import asyncio
 import functools
 import logging
 import sys
+import weakref
 from collections.abc import Callable
 from typing import Any, Literal, TypeVar
 
@@ -67,7 +69,7 @@ similarity_search finds the most similar compounds in the local index, and
 substructure_search the indexed compounds containing a SMILES or SMARTS fragment.
 Until the user builds a local PubChem index, both search a built-in demo set of about
 1,900 FDA-approved drugs and say so in note: tell the user, and offer the pubchem_*
-searches (all of PubChem, live) or the build command index_status gives.
+searches (all of PubChem, live) or the build command in the result's hint.
 The pubchem_* tools query PubChem live: structure searches over all of PubChem
 (similarity, substructure, exact match), synonyms and CAS numbers, cross-references
 (PubMed, patents, registry IDs), descriptions, curated page sections such as GHS
@@ -149,10 +151,37 @@ _NARROWABLE_SEARCHES = frozenset(
 )
 
 
-async def _run(fn: Callable[..., T], *args: object, **kwargs: object) -> T:
+# A PubChem call that is waiting for the rate limit holds its worker thread. Capping
+# those calls keeps them from taking every thread of the default pool, which the
+# local tools share, so a local tool does not queue behind a burst of lookups.
+_PUBCHEM_THREADS = 8
+# One limiter per event loop: an anyio CapacityLimiter keeps asyncio objects bound to
+# the loop it was first used in, so a limiter reused by a later asyncio.run() would fail.
+_pubchem_threads: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Any] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _pubchem_limiter() -> anyio.CapacityLimiter:
+    loop = asyncio.get_running_loop()
+    limiter = _pubchem_threads.get(loop)
+    if limiter is None:
+        limiter = anyio.CapacityLimiter(_PUBCHEM_THREADS)
+        _pubchem_threads[loop] = limiter
+    return limiter
+
+
+async def _run(
+    fn: Callable[..., T],
+    *args: object,
+    limiter: anyio.CapacityLimiter | None = None,
+    **kwargs: object,
+) -> T:
     """Run blocking RDKit/HTTP work off the event loop, mapping errors to ToolError."""
     try:
-        return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
+        return await anyio.to_thread.run_sync(
+            functools.partial(fn, *args, **kwargs), limiter=limiter
+        )
     except CompoundNotFound as exc:
         raise ToolError(
             f"{exc}. Check the spelling or try another identifier."
@@ -189,7 +218,9 @@ async def pubchem_lookup(
     formula, molecular weight, XLogP, H-bond counts, TPSA and the PubChem URL.
     Names resolve to the best matches; use limit to get more than the top 5.
     """
-    return await _run(service.lookup, query, by=by, limit=limit)
+    return await _run(
+        service.lookup, query, by=by, limit=limit, limiter=_pubchem_limiter()
+    )
 
 
 @_tool("Compute molecular properties", calls_pubchem=False)
@@ -242,11 +273,16 @@ async def similarity_search(
     Exact fingerprint similarity (ECFP4/Morgan by default) over every indexed
     compound, best first, with CID, SMILES, InChIKey, IUPAC name, formula, MW
     and PubChem link. threshold is the minimum similarity (0-1, 0.7 finds close
-    analogues; lower it to widen the search). Searches the index built with
+    analogues; lower it to widen the search) and top_k (1-1000) the most hits
+    returned: both apply. truncated=true means more compounds reach the threshold
+    than were returned, so the hits and scaffold groups are the best top_k and
+    their counts are not totals; raise top_k for the rest. The query is not left
+    out of the hits: one that is in the index is normally the first hit, with
+    similarity 1. Searches the index built with
     `pubchem-finder index build` (the first search loads it, which takes a while
     for a full PubChem index); until one is built, a demo set of about 1,900
-    FDA-approved drugs, with search_scope="demo" and a note to pass on to the
-    user. group_by_scaffold adds the hits grouped by
+    FDA-approved drugs, with search_scope="demo", a short note to pass on to the
+    user, and a hint with the build command and live-search alternatives. group_by_scaffold adds the hits grouped by
     Bemis-Murcko scaffold, to see how many chemical series the hits span.
     """
     return await _run(
@@ -309,6 +345,7 @@ async def pubchem_similarity_search(
         smiles,
         threshold=threshold,
         max_records=max_records,
+        limiter=_pubchem_limiter(),
     )
 
 
@@ -323,7 +360,10 @@ async def pubchem_substructure_search(
     sorted by ECFP4 similarity to the query, closest first. max_records: 1-200.
     """
     return await _run(
-        service.pubchem_substructure_search, smiles, max_records=max_records
+        service.pubchem_substructure_search,
+        smiles,
+        max_records=max_records,
+        limiter=_pubchem_limiter(),
     )
 
 
@@ -345,6 +385,7 @@ async def pubchem_exact_match(
         smiles,
         identity_type=identity_type,
         max_records=max_records,
+        limiter=_pubchem_limiter(),
     )
 
 
@@ -352,7 +393,9 @@ async def pubchem_exact_match(
 async def pubchem_synonyms(cid: int, limit: int = 25) -> Synonyms:
     """Names a compound is known by (common, brand, systematic), most common
     first, plus its CAS Registry Numbers. Get the CID from pubchem_lookup."""
-    return await _run(service.pubchem_synonyms, cid, limit=limit)
+    return await _run(
+        service.pubchem_synonyms, cid, limit=limit, limiter=_pubchem_limiter()
+    )
 
 
 @_tool("PubChem cross-references", calls_pubchem=True)
@@ -360,14 +403,14 @@ async def pubchem_xrefs(cid: int) -> CrossRefs:
     """Counts and examples of external identifiers linked to a compound:
     registry IDs (e.g. CAS, ChEMBL, DrugBank), PubMed articles (with links) and
     patents."""
-    return await _run(service.pubchem_xrefs, cid)
+    return await _run(service.pubchem_xrefs, cid, limiter=_pubchem_limiter())
 
 
 @_tool("PubChem compound description", calls_pubchem=True)
 async def pubchem_description(cid: int) -> Description:
     """Short curated descriptions of a compound (what it is, what it is used
     for), each with its source."""
-    return await _run(service.pubchem_description, cid)
+    return await _run(service.pubchem_description, cid, limiter=_pubchem_limiter())
 
 
 @_tool("PubChem page section", calls_pubchem=True, large_results=True)
@@ -384,7 +427,13 @@ async def pubchem_annotations(
     trimmed to max_chars (500-30000); truncated says when that happened. If the
     page lacks the section, the error lists the sections it has.
     """
-    return await _run(service.pubchem_annotations, cid, heading, max_chars=max_chars)
+    return await _run(
+        service.pubchem_annotations,
+        cid,
+        heading,
+        max_chars=max_chars,
+        limiter=_pubchem_limiter(),
+    )
 
 
 @_tool("PubChem bioactivity summary", calls_pubchem=True)
@@ -394,7 +443,7 @@ async def pubchem_bioactivity(cid: int) -> BioactivitySummary:
     its NCBI gene ID and a protein accession) and the lowest potency-type values
     among active results (IC50, EC50, AC50, Ki, Kd and similar, in µM). The lowest
     value is not always the most meaningful one: name the assay when you quote it."""
-    return await _run(service.pubchem_bioactivity, cid)
+    return await _run(service.pubchem_bioactivity, cid, limiter=_pubchem_limiter())
 
 
 @_tool("Draw molecules", calls_pubchem=False)
@@ -434,7 +483,9 @@ async def medchem_profile(smiles: str) -> MedchemProfile:
     synthetic accessibility (1 easy - 10 hard), Lipinski violations, Veber rules,
     PAINS/Brenk/NIH structural alerts with matched atom indices (pass them to
     draw_molecules with the alert as SMARTS, or just describe them), and the
-    Bemis-Murcko scaffold."""
+    Bemis-Murcko scaffold. QED, synthetic accessibility and rotatable bonds are
+    those of the structure without its isotope labels (deuterium, 13C); the
+    molecular weight includes the labels."""
     return await _run(service.medchem_profile, smiles)
 
 
@@ -444,11 +495,17 @@ async def medchem_profile(smiles: str) -> MedchemProfile:
 # --------------------------------------------------------------------------- #
 
 
-async def _read(fn: Callable[..., BaseModel], *args: object) -> str:
+async def _read(
+    fn: Callable[..., BaseModel],
+    *args: object,
+    limiter: anyio.CapacityLimiter | None = None,
+) -> str:
     """Run a service call off the event loop and return its result as JSON; every
     failure becomes a ResourceError with the reason (the SDK's default hides it)."""
     try:
-        result = await anyio.to_thread.run_sync(functools.partial(fn, *args))
+        result = await anyio.to_thread.run_sync(
+            functools.partial(fn, *args), limiter=limiter
+        )
     except CompoundNotFound as exc:
         raise ResourceNotFoundError(str(exc)) from exc
     except PubChemFinderError as exc:
@@ -472,7 +529,7 @@ async def compound_resource(cid: str) -> str:
     number = parse_id(cid)  # ASCII digits, leading zeros allowed, at most 32 bits
     if number is None:
         raise ResourceNotFoundError(f"Not a PubChem CID: {cid[:20]!r}")
-    return await _read(_compound, number)
+    return await _read(_compound, number, limiter=_pubchem_limiter())
 
 
 def _compound(cid: int) -> CompoundRecord:
@@ -529,6 +586,14 @@ def compound_dossier(compound: str) -> str:
     )
 
 
+# The hits find_analogues asks for: past the default 20, which cut most families
+# short (issue #191), and few enough that the result stays under LARGE_RESULTS
+# whatever the compound and the threshold. The largest in the demo set, 40 hits
+# of a 4,800 Da peptide with their scaffolds, takes 95,000 characters; 44 pass
+# the limit.
+ANALOGUES = 40
+
+
 @mcp.prompt(title="Find analogues")
 def find_analogues(compound: str, threshold: str = "0.6") -> str:
     """Close structural analogues of a compound, grouped into series and drawn with
@@ -546,7 +611,10 @@ def find_analogues(compound: str, threshold: str = "0.6") -> str:
     return (
         f"Find close analogues of {compound}.\n"
         "1. Get its SMILES with pubchem_lookup unless it is one already.\n"
-        f"2. Run similarity_search with threshold={value:g} and group_by_scaffold=true. "
+        f"2. Run similarity_search with threshold={value:g}, top_k={ANALOGUES} and "
+        "group_by_scaffold=true. If the result says truncated=true, more compounds "
+        "reach the threshold than were returned: say that your counts of hits and "
+        f"series are of the best {ANALOGUES}, not totals. "
         'If the result\'s search_scope is "demo", tell me that only the built-in demo '
         "set of FDA-approved drugs was searched, and offer to run "
         "pubchem_similarity_search to cover all of PubChem (it sends the structure to "

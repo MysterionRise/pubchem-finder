@@ -2,12 +2,13 @@
 
 import json
 import os
+from pathlib import Path
 
 import numpy as np
 import pytest
 import tables as tb
 
-from pubchem_finder import service
+from pubchem_finder import hints, service
 from pubchem_finder.core.exceptions import (
     IndexBuildError,
     IndexIncompatible,
@@ -16,6 +17,7 @@ from pubchem_finder.core.exceptions import (
     MoleculeValidationError,
     PubChemFinderError,
 )
+from pubchem_finder.index import builder as builder_mod
 from pubchem_finder.index import engine as engine_mod
 from pubchem_finder.index.builder import (
     SdfSource,
@@ -26,7 +28,14 @@ from pubchem_finder.index.builder import (
 )
 from pubchem_finder.index.engine import LocalIndex, choose_in_memory
 from pubchem_finder.index.layout import IndexPaths, chunk_name
-from tests.conftest import CHUNK_A, CHUNK_NAMES, N_GOOD, write_sdf
+from tests.conftest import (
+    CHUNK_A,
+    CHUNK_NAMES,
+    IMINES,
+    N_GOOD,
+    pubchem_block,
+    write_sdf,
+)
 
 ASPIRIN = "CC(=O)Oc1ccccc1C(=O)O"
 
@@ -176,6 +185,54 @@ def test_search_finds_aspirin_first(built_home):
     assert 2519 not in cids  # caffeine is not similar
     sims = [h.similarity for h in result.hits]
     assert sims == sorted(sims, reverse=True)
+
+
+def test_search_merged_says_whether_more_reach_the_threshold(built_home):
+    from rdkit import Chem
+
+    index = LocalIndex(built_home)
+    query = Chem.MolFromSmiles(ASPIRIN)
+    everything = index.search_merged(query, 0.1, 1000)
+    n = len(everything.pairs)
+    assert n > 2
+    assert everything.truncated is False
+    assert index.search_merged(query, 0.1, n).truncated is False
+    cut = index.search_merged(query, 0.1, n - 1)
+    assert cut.truncated is True
+    assert cut.pairs == everything.pairs[: n - 1]
+    assert index.search_merged(query, 0.1, 1).truncated is True
+    assert index.search_merged(query, 0.99, 1).truncated is False  # aspirin alone
+
+
+@pytest.mark.parametrize("tag", [True, False])
+def test_a_compound_scores_one_against_the_smiles_stored_for_it(tmp_path, tag):
+    """Issue #187: 0.8% of PubChem (compounds with an imine or amidine N-H) were
+    fingerprinted with an extra hydrogen atom and did not match themselves:
+    metformin 0.68, benzamidine 0.67, guanidine 0.5."""
+    library = tmp_path / "imines.sdf"
+    library.write_text(
+        "".join(pubchem_block(cid, smiles, tag) for cid, smiles in IMINES)
+    )
+    paths = IndexPaths(tmp_path / "home")
+    report = build_chunks(paths, sources([library]), workers=1)
+    finalize(paths)
+    assert report.built[0].fingerprint_of == "smiles"
+    stored = service.get_index(paths.home).metadata([cid for cid, _ in IMINES])
+    for cid, smiles in IMINES:
+        for query in (stored[cid]["smiles"], smiles):
+            found = service.similarity_search(query, threshold=1.0, home=paths.home)
+            assert [(hit.cid, hit.similarity) for hit in found.hits] == [(cid, 1.0)]
+
+
+def test_every_indexed_compound_finds_itself(built_home):
+    from tests.conftest import CHUNK_B
+
+    cids = [cid for cid, *_ in CHUNK_A + CHUNK_B]
+    stored = service.get_index(built_home).metadata(cids)
+    assert len(stored) == N_GOOD
+    for cid, row in stored.items():
+        found = service.similarity_search(row["smiles"], threshold=1.0, home=built_home)
+        assert cid in [hit.cid for hit in found.hits], row["smiles"]
 
 
 def test_threshold_and_top_k(built_home):
@@ -509,10 +566,383 @@ def test_chunk_whose_file_is_gone_from_another_rdkit_is_still_refused(
     paths = IndexPaths(tmp_path / "home")
     before = _build_old_chunk(paths, gone, monkeypatch)
     gone.unlink()
-    with pytest.raises(IndexBuildError, match=f"RDKit {OLD_RDKIT}"):
+    with pytest.raises(IndexBuildError, match=f"RDKit {OLD_RDKIT}") as err:
         build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
     assert not paths.chunk_stats(CHUNK_NAMES[1]).exists()
     assert paths.load_manifest() == before
+    # The message names the chunk, says which file is needed, and keeps the
+    # advice that works without the file.
+    message = str(err.value)
+    assert "index build --sdf FILE" in message
+    assert f"with the file of {CHUNK_NAMES[0]} in place of FILE" in message
+    assert f"The index recorded {gone.resolve()}, not there now" in message
+    assert "PubChem's download" not in message  # it records a file of the user's
+    assert "index build --home NEW_DIR" in message
+
+
+def test_version_refusal_names_the_build_that_brings_the_chunks_up_to_date(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """Issue #214: the refusal offered only a new data directory or deleting the
+    index, although building from the chunks' own files again is enough."""
+    paths = IndexPaths(tmp_path)
+    _build_old_chunk(paths, sample_sdfs[0], monkeypatch)
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    message = str(err.value)
+    assert f"index build {_sdf_options(sample_sdfs[:1])}" in message
+    assert "Then run this build again" in message
+    assert "NEW_DIR" not in message
+
+    # The advice works: that build, then the one that was refused.
+    build_chunks(paths, sources([sample_sdfs[0]]), workers=1)
+    finalize(paths)
+    build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    assert finalize(paths).n_compounds == N_GOOD
+
+
+def _sdf_options(files):
+    """The --sdf options a message names, quoted as the message quotes them."""
+    from pubchem_finder import hints
+
+    return " ".join(f"--sdf {hints._quote(str(Path(f).resolve()))}" for f in files)
+
+
+def test_version_refusal_names_every_stale_chunk_also_those_being_rebuilt(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """The build that is named has to work by itself. Naming only the chunks the
+    refused build left alone gave a build that was refused in turn, for the
+    chunks it left alone, and the two refusals pointed at each other."""
+    import rdkit
+
+    paths = IndexPaths(tmp_path / "home")
+    libs = []
+    for name, source in (("liba", sample_sdfs[0]), ("libb", sample_sdfs[1])):
+        lib = tmp_path / f"{name}.sdf.gz"
+        lib.write_bytes(source.read_bytes())
+        libs.append(lib)
+    with monkeypatch.context() as m:
+        m.setattr(rdkit, "__version__", OLD_RDKIT)
+        build_chunks(paths, sources(libs), workers=1)
+        finalize(paths)
+    new = tmp_path / "libc.sdf.gz"
+    new.write_bytes(sample_sdfs[1].read_bytes())
+
+    # Any build that names some of the stale files, but not all, gets the same
+    # answer: both of them.
+    for asked in ([libs[0]], [libs[1]], [libs[0], new], [new]):
+        with pytest.raises(IndexBuildError, match=r"^2 chunk\(s\)") as err:
+            build_chunks(paths, sources(asked), workers=1)
+        assert f"index build {_sdf_options(libs)}" in str(err.value)
+    assert {c.rdkit_version for c in paths.completed_chunks()} == {OLD_RDKIT}
+
+    report = build_chunks(paths, sources(libs), workers=1)
+    assert sorted(report.rebuilt) == ["liba", "libb"]
+    assert {c.rdkit_version for c in paths.completed_chunks()} == {rdkit.__version__}
+    build_chunks(paths, sources([libs[0], new]), workers=1)
+    assert sorted(finalize(paths).chunks) == ["liba", "libb", "libc"]
+
+
+def test_stale_chunk_whose_file_moved_is_rebuilt_from_where_it_is_now(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """A file that moved was taken for the chunk's own (same size and time), yet
+    its stale chunk blocked the build that named it."""
+    import rdkit
+
+    first = tmp_path / "data" / "lib.sdf.gz"
+    first.parent.mkdir()
+    first.write_bytes(sample_sdfs[0].read_bytes())
+    paths = IndexPaths(tmp_path / "home")
+    _build_old_chunk(paths, first, monkeypatch)
+    moved = tmp_path / "data2" / "lib.sdf.gz"
+    moved.parent.mkdir()
+    first.rename(moved)
+
+    report = build_chunks(paths, sources([moved, sample_sdfs[1]]), workers=1)
+    assert report.rebuilt == ["lib"]
+    chunks = {c.name: c for c in paths.completed_chunks()}
+    assert chunks["lib"].rdkit_version == rdkit.__version__
+    assert chunks["lib"].source is not None
+    assert chunks["lib"].source.path == str(moved.resolve())
+    assert finalize(paths).n_compounds == N_GOOD
+
+
+def test_version_refusal_asks_for_the_file_of_a_chunk_that_records_none(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """A chunk built by 2.2.0 or earlier records no file. It was called a PubChem
+    chunk, or one whose file is gone, while giving its file rebuilds it."""
+    lib = tmp_path / "mylib.sdf.gz"
+    lib.write_bytes(sample_sdfs[0].read_bytes())
+    paths = IndexPaths(tmp_path / "home")
+    _build_old_chunk(paths, lib, monkeypatch)
+    stats_file = paths.chunk_stats("mylib")
+    stats = json.loads(stats_file.read_text())
+    del stats["source"]
+    stats_file.write_text(json.dumps(stats))
+
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    message = str(err.value)
+    assert "index build --sdf FILE" in message
+    assert "with the file of mylib in place of FILE" in message
+    assert "PubChem's download" not in message
+    build_chunks(paths, sources([lib]), workers=1)
+    build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    assert finalize(paths).n_compounds == N_GOOD
+
+
+def test_version_refusal_for_downloaded_chunks_depends_on_their_sdf_files(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """A chunk from PubChem's download records no file and is not downloaded
+    again. Without its SDF the new directory is the way, said once however many
+    such chunks there are (359 for all of PubChem). With the SDF that --keep-sdf
+    left, it is fingerprinted again like any other file."""
+    import rdkit
+
+    paths = IndexPaths(tmp_path)
+    with monkeypatch.context() as m:
+        m.setattr(rdkit, "__version__", OLD_RDKIT)
+        build_chunks(paths, sources(sample_sdfs[:2]), workers=1)
+        finalize(paths)
+    for name in CHUNK_NAMES[:2]:
+        stats_file = paths.chunk_stats(name)
+        stats = json.loads(stats_file.read_text())
+        del stats["source"]  # a chunk PubChem's download built records no file
+        stats_file.write_text(json.dumps(stats))
+    new = tmp_path / "mylib.sdf.gz"
+    new.write_bytes(sample_sdfs[1].read_bytes())
+
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([new]), workers=1)
+    message = str(err.value)
+    assert (
+        f"2 of them came from PubChem's download ({CHUNK_NAMES[0]} to "
+        f"{CHUNK_NAMES[1]}) and have no SDF file in {paths.downloads}"
+    ) in message
+    assert "index build --home NEW_DIR" in message
+    assert "--sdf FILE" not in message
+
+    import gzip
+
+    paths.downloads.mkdir()
+    kept = [
+        paths.downloads / sample_sdfs[0].name,  # as it was downloaded
+        paths.downloads / f"{CHUNK_NAMES[1]}.sdf",  # and unpacked
+    ]
+    kept[0].write_bytes(sample_sdfs[0].read_bytes())
+    kept[1].write_bytes(gzip.decompress(sample_sdfs[1].read_bytes()))
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([new]), workers=1)
+    message = str(err.value)
+    assert f"index build {_sdf_options(kept)}" in message
+    assert "PubChem's download" not in message
+    build_chunks(paths, sources(kept), workers=1)
+    assert {c.rdkit_version for c in paths.completed_chunks()} == {rdkit.__version__}
+
+
+def _stale_libraries(tmp_path, sample_sdfs, monkeypatch, names):
+    """A home whose chunks ``names`` another RDKit fingerprinted, and their files."""
+    import rdkit
+
+    data = tmp_path / "data"
+    data.mkdir()
+    libs = []
+    for n, name in enumerate(names):
+        lib = data / f"{name}.sdf.gz"
+        lib.write_bytes(sample_sdfs[n % 2].read_bytes())
+        libs.append(lib)
+    paths = IndexPaths(tmp_path / "home")
+    with monkeypatch.context() as m:
+        m.setattr(rdkit, "__version__", OLD_RDKIT)
+        build_chunks(paths, sources(libs), workers=1)
+        finalize(paths)
+    return paths, libs
+
+
+def test_version_refusal_names_a_given_file_where_it_is_given(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """The files of the refused build count: one that moved is named where it is
+    now, not asked for, and one given by a relative path is named in full, so
+    that the build runs from any directory."""
+    paths, (liba, libb) = _stale_libraries(tmp_path, sample_sdfs, monkeypatch, "ab")
+    moved = tmp_path / "data2" / liba.name
+    moved.parent.mkdir()
+    liba.rename(moved)
+    monkeypatch.chdir(moved.parent)
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([Path(moved.name)]), workers=1)
+    message = str(err.value)
+    assert f"index build {_sdf_options([moved, libb])}" in message
+    assert "--sdf FILE" not in message
+    assert "Then run this build again." in message
+
+
+def test_version_refusal_names_every_chunk_that_needs_its_file(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """A build that leaves one out is refused again: no name is cut from the list."""
+    paths, libs = _stale_libraries(tmp_path, sample_sdfs, monkeypatch, "abcde")
+    for lib in libs[1:]:
+        lib.unlink()
+    with pytest.raises(IndexBuildError, match=r"^5 chunk\(s\)") as err:
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    message = str(err.value)
+    assert f"index build {_sdf_options(libs[:1])} --sdf FILE --sdf FILE" in message
+    assert message.count("--sdf FILE") == 4
+    assert "with the files of b, c, d, e in place of each FILE" in message
+    assert "(b.sdf or b.sdf.gz for b)" in message
+    recorded = " and ".join(str(lib.resolve()) for lib in libs[1:])
+    assert f"The index recorded {recorded}, not there now" in message
+    assert "under another name" not in message  # said of files that are there
+
+
+def test_version_refusal_names_each_version_the_chunks_were_built_with(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    import rdkit
+
+    paths, _ = _stale_libraries(tmp_path, sample_sdfs, monkeypatch, "a")
+    older = tmp_path / "data" / "b.sdf.gz"
+    older.write_bytes(sample_sdfs[1].read_bytes())
+    with monkeypatch.context() as m:
+        m.setattr(rdkit, "__version__", "1999.09.1")
+        m.setattr(builder_mod, "_check_versions", lambda *args, **kwargs: None)
+        build_chunks(paths, sources([older]), workers=1)
+    with pytest.raises(IndexBuildError) as err:
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    assert (
+        f"2 chunk(s) in {paths.chunks} were fingerprinted with RDKit {OLD_RDKIT} / "
+        f"FPSim2 {runtime_versions()[1]} and RDKit 1999.09.1 / FPSim2 "
+    ) in str(err.value)
+
+
+def test_version_refusal_names_the_file_of_a_chunk_named_by_an_older_release(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """Releases before 2.2.2 kept an upper-case suffix in the chunk's name
+    (`Library.SDF` for Library.SDF.gz). Such a chunk's file is still its file."""
+    import rdkit
+
+    sdf = tmp_path / "Library.SDF.GZ"
+    sdf.write_bytes(sample_sdfs[0].read_bytes())
+    paths = IndexPaths(tmp_path / "home")
+    with monkeypatch.context() as m:
+        m.setattr(rdkit, "__version__", OLD_RDKIT)
+        build_chunks(
+            paths, [SdfSource(name="Library.SDF.GZ", local_path=sdf)], workers=1
+        )
+        finalize(paths)
+    assert [c.name for c in paths.completed_chunks()] == ["Library.SDF.GZ"]
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    message = str(err.value)
+    assert f"index build {_sdf_options([sdf])}" in message
+    assert "--sdf FILE" not in message
+    build_chunks(paths, sources([sdf]), workers=1)
+    assert {c.rdkit_version for c in paths.completed_chunks()} == {rdkit.__version__}
+
+
+def test_version_refusal_names_a_file_only_under_its_chunks_name(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """A file is taken for its chunk by its name. One given through a link of
+    another name (a `latest` link, a checkout that names files by their hash) is
+    recorded under the name it resolves to: named in the build, it would become
+    a chunk of its own and the refusal would come again, word for word."""
+    data = tmp_path / "data"
+    data.mkdir()
+    target = data / "vendor_2026_11.sdf.gz"
+    target.write_bytes(sample_sdfs[0].read_bytes())
+    link = data / "current.sdf.gz"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("no permission to create links here")
+    paths = IndexPaths(tmp_path / "home")
+    _build_old_chunk(paths, link, monkeypatch)
+    assert [c.name for c in paths.completed_chunks()] == ["current"]
+
+    # Not given: its recorded file is not named in the build, but asked for.
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    message = str(err.value)
+    assert "index build --sdf FILE" in message
+    assert "vendor_2026_11.sdf.gz --home" not in message
+    assert "with the file of current in place of FILE" in message
+    assert f"The index recorded {target.resolve()}, under another name" in message
+    assert "not there now" not in message  # it is there
+
+    # Given: it is rebuilt, and with another stale chunk beside it the build
+    # that is named has the link in it, in full.
+    other = data / "libb.sdf.gz"
+    other.write_bytes(sample_sdfs[1].read_bytes())
+    _build_old_chunk(paths, other, monkeypatch)
+    monkeypatch.chdir(data)
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([Path(link.name)]), workers=1)
+    quoted = " ".join(f"--sdf {hints._quote(str(p))}" for p in (link, other))
+    assert f"index build {quoted}" in str(err.value)
+
+    report = build_chunks(paths, sources([link, other]), workers=1)
+    assert sorted(report.rebuilt) == ["current", "libb"]
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="Windows takes `..` off a path before it follows links"
+)
+def test_version_refusal_names_a_file_given_through_a_linked_folder(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """`..` after a folder that is a link is the parent of the folder it links
+    to. That is where the system finds the file, not what is left when the two
+    names are struck from the path, which the refusal named."""
+    paths, (liba, libb) = _stale_libraries(tmp_path, sample_sdfs, monkeypatch, "ab")
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "sub").mkdir(parents=True)
+    (tmp_path / "proj").mkdir()
+    (tmp_path / "proj" / "sub").symlink_to(elsewhere / "sub")
+    moved = elsewhere / libb.name
+    libb.rename(moved)
+    monkeypatch.chdir(tmp_path / "proj")
+    through = Path("sub") / ".." / libb.name
+    new = tmp_path / "new.sdf.gz"
+    new.write_bytes(sample_sdfs[1].read_bytes())
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([through, new]), workers=1)
+    named = (liba, moved)
+    quoted = " ".join(f"--sdf {hints._quote(str(p))}" for p in named)
+    assert f"index build {quoted}" in str(err.value)
+    assert "--sdf FILE" not in str(err.value)
+    report = build_chunks(paths, sources(named), workers=1)
+    assert sorted(report.rebuilt) == ["a", "b"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX directory modes")
+def test_version_refusal_survives_a_recorded_file_that_cannot_be_reached(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """Before Python 3.14 pathlib raises for a file in a directory that may not
+    be entered, and the refusal came out as a bare "Permission denied"."""
+    paths, (liba,) = _stale_libraries(tmp_path, sample_sdfs, monkeypatch, "a")
+    probe = tmp_path / "probe"
+    probe.mkdir()
+    probe.chmod(0)
+    held_to_modes = not os.access(probe, os.R_OK | os.X_OK)
+    probe.chmod(0o755)
+    if not held_to_modes:
+        pytest.skip("this user is not held to file modes")
+    liba.parent.chmod(0)
+    try:
+        with pytest.raises(IndexBuildError, match="still searchable") as err:
+            build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    finally:
+        liba.parent.chmod(0o755)
+    assert "with the file of a in place of FILE" in str(err.value)
 
 
 def test_chunks_from_2_1_0_are_checked_through_their_h5(
@@ -618,10 +1048,119 @@ def test_overlapping_chunks_give_each_cid_once(overlap_home):
     cids = [h.cid for h in found.hits]
     assert cids[0] == 2244
     assert len(cids) == len(set(cids)) == 5
+    assert found.truncated is False
     top3 = service.similarity_search(
         ASPIRIN, threshold=0.01, top_k=3, home=overlap_home
     )
     assert len({h.cid for h in top3.hits}) == 3
+    assert top3.truncated is True
+    # Eight rows reach the threshold, for five compounds: a list of five is whole.
+    top5 = service.similarity_search(
+        ASPIRIN, threshold=0.01, top_k=5, home=overlap_home
+    )
+    assert len({h.cid for h in top5.hits}) == 5
+    assert top5.truncated is False
+    assert top5.note is None
+
+
+@pytest.mark.parametrize(
+    "raised",
+    ["RuntimeError: Query interrupted", "duckdb.InterruptException", "another error"],
+)
+def test_ctrl_c_during_the_metadata_query_is_ctrl_c(built_home, raised):
+    """DuckDB turns a Ctrl+C that arrives while it runs a query into an error of
+    its own, or a bare RuntimeError. Taken for a failed query, it made a batch
+    search throw away the rows it keeps on Ctrl+C, about one time in three."""
+    import duckdb
+
+    index = LocalIndex(built_home)
+    chunks = list(index.merged.manifest.chunks)
+    errors = {
+        "RuntimeError: Query interrupted": RuntimeError("Query interrupted"),
+        "duckdb.InterruptException": duckdb.InterruptException("Interrupted!"),
+        "another error": RuntimeError("out of memory"),
+    }
+
+    class Interrupted:
+        def cursor(self):
+            return self
+
+        def execute(self, sql):
+            raise errors[raised]
+
+    index._db = Interrupted()
+    index._db_files = index.paths.metadata_files(chunks)
+    expected = RuntimeError if raised == "another error" else KeyboardInterrupt
+    with pytest.raises(expected):
+        index._metadata([2244], chunks)
+    if raised != "another error":
+        # And through the search, which tries a failed query again: not this one.
+        with pytest.raises(KeyboardInterrupt):
+            index.metadata([2244])
+
+
+def test_a_failed_query_that_mentions_interruption_is_not_ctrl_c(built_home):
+    """Told by what the error is, not by a word in it: DuckDB's errors quote
+    paths, and a data directory may be called anything. Such an error is an
+    error of the query, which is tried again; as Ctrl+C it ended an MCP server."""
+    import duckdb
+
+    index = LocalIndex(built_home)
+    chunks = list(index.merged.manifest.chunks)
+    failed = duckdb.IOException(
+        'Cannot open file "/data/interrupted-screens/home/chunks/lib1.parquet"'
+    )
+    for words in (
+        'Cannot open file "/data/Query interrupted/x.parquet"',
+        "Query interrupted by a damaged footer",
+    ):
+        index = LocalIndex(built_home)
+
+        class Wordy:
+            def cursor(self):
+                return self
+
+            def execute(self, sql, words=words):
+                raise RuntimeError(words)
+
+        index._db = Wordy()
+        index._db_files = index.paths.metadata_files(list(index.merged.manifest.chunks))
+        caught: BaseException | None = None
+        try:
+            index._metadata([2244], list(index.merged.manifest.chunks))
+        except KeyboardInterrupt:
+            pytest.fail(f"taken for Ctrl+C: {words}")
+        except RuntimeError as exc:
+            caught = exc
+        assert str(caught) == words
+    calls = []
+
+    class Failing:
+        def cursor(self):
+            return self
+
+        def execute(self, sql):
+            calls.append(sql)
+            raise failed
+
+    index._db = Failing()
+    index._db_files = index.paths.metadata_files(chunks)
+    raised: BaseException | None = None
+    try:
+        index._metadata([2244], chunks)
+    except KeyboardInterrupt:  # caught here: let go, it would end the test run
+        pytest.fail("a failed query was taken for Ctrl+C")
+    except duckdb.IOException as exc:
+        raised = exc
+    assert raised is failed
+    # The search tries again, with a connection of its own, and answers.
+    index._db = Failing()
+    try:
+        found = index.metadata([2244])
+    except KeyboardInterrupt:
+        pytest.fail("a failed query was taken for Ctrl+C")
+    assert 2244 in found
+    assert len(calls) == 2
 
 
 def test_overlapping_chunks_give_each_substructure_hit_once(overlap_home):

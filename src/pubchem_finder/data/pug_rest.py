@@ -1,7 +1,8 @@
 """Client for PubChem's PUG REST and PUG View web services.
 
 PubChem asks for no more than 5 requests per second and returns HTTP 503
-("ServerBusy") when it is overloaded; this client throttles and retries.
+("ServerBusy") when it is overloaded; its gateway answers 502 or 504 when the
+service behind it does not respond. This client throttles and retries those.
 Successful responses can be cached on disk (see :mod:`.cache`).
 """
 
@@ -145,7 +146,8 @@ class PubChemClient:
         timeout: Per-request timeout in seconds.
         client: Optional preconfigured ``httpx.Client`` (tests, custom proxies).
         min_interval: Minimum seconds between requests (PubChem allows 5/s).
-        max_retries: Attempts on 429/503 before raising ``PubChemUnavailable``.
+        max_retries: Attempts on 429, 502, 503 or a gateway 504 before raising
+            ``PubChemUnavailable`` (``PubChemTimeout`` for the 504).
         cache: Optional on-disk cache for successful responses.
         view_url: PUG View root.
     """
@@ -201,7 +203,7 @@ class PubChemClient:
         Raises:
             BadQuery: empty query or unknown namespace, or PubChem rejected it.
             CompoundNotFound: nothing matched.
-            PubChemUnavailable: PubChem kept answering 429/503.
+            PubChemUnavailable: PubChem kept answering 429, 502 or 503.
             PubChemError: any other failure.
         """
         query = query.strip()

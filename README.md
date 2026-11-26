@@ -122,7 +122,7 @@ before binding it to anything but `127.0.0.1`.
 | `compare(smiles_a, smiles_b)` | Tanimoto similarity on ECFP4 and MACCS fingerprints. Offline. |
 | `medchem_profile(smiles)` | QED, synthetic accessibility, Lipinski/Veber, PAINS/Brenk/NIH alerts with atoms, Murcko scaffold. Offline. |
 | `draw_molecules(smiles, legends, highlight, smarts, reference_smiles)` | Structures as an inline image, highlighting a SMARTS match, what changed relative to a reference, or a similarity map. Offline. |
-| `similarity_search(smiles, threshold, top_k, metric, group_by_scaffold)` | Most similar compounds in the local index (the demo set until one is built), optionally grouped by Murcko scaffold. |
+| `similarity_search(smiles, threshold, top_k, metric, group_by_scaffold)` | Most similar compounds in the local index (the demo set until one is built), optionally grouped by Murcko scaffold. `truncated` says when more compounds reach the threshold than `top_k`. |
 | `substructure_search(query, query_type, max_hits)` | Indexed compounds containing a SMILES or SMARTS fragment, lowest CID first. |
 | `index_status()` | Whether the local index is built, what it holds, what local searches cover now, and how to build what is missing. |
 | `pubchem_similarity_search(smiles, threshold, max_records)` | Similar compounds across all of PubChem, live, re-scored with ECFP4. |
@@ -191,6 +191,9 @@ fingerprints it, deletes the download and merges everything into one searchable 
 chunks are skipped, so an interrupted build resumes and a larger `--limit` extends an
 existing index. `--all` indexes all of PubChem. The default fingerprint is ECFP4 (Morgan
 radius 2, 1024 bits); `--radius` and `--fp-size` change it for a new index.
+Later builds reuse the index's settings unless those options are given explicitly.
+The options apply to chunk builds (`--sdf`, `--limit`, `--all`); combining them with
+`--demo` or only changing substructure search is refused.
 
 `--sdf FILE` (repeatable) indexes your own files, alongside PubChem's chunks or on their
 own. Each file becomes a chunk named after it, so two files with the same name (two
@@ -204,9 +207,9 @@ moved keeps its chunk. A record's ID is its `PUBCHEM_COMPOUND_CID` tag or, when 
 missing or not a number, its title line, and must be a whole number from 1 to
 4,294,967,295; records without atoms, with an invalid ID, or that RDKit cannot
 sanitize are skipped and counted.
-SMILES tags RDKit cannot parse are replaced with a SMILES generated from the
-structure. Existing chunks keep their stored values until the source file changes
-and is rebuilt. An ID has to mean one compound
+SMILES tags RDKit cannot parse, or that hold more than one word, are replaced with
+a SMILES generated from the structure. Existing chunks keep their stored values until
+the source file changes and is rebuilt. An ID has to mean one compound
 across the whole index, because a hit is reported by its ID: two files that both number
 their records from 1, or a library numbered from 1 next to PubChem's chunks (where an ID
 is a CID), are refused with the first ID that clashes. The same compound in two files is
@@ -257,7 +260,14 @@ pubchem-finder search -i queries.smi -o hits.csv --threshold 0.6 --top 50
 pubchem-finder substructure -i fragments.smi -o hits.csv
 ```
 
-Rows that fail in batch mode get an `error` column instead of stopping the run.
+Rows that fail in batch mode get an `error` column instead of stopping the run; the exit
+status is 1 only when every row failed. The rows are written to a partial file beside
+the output (`FILE.<random>.part`) and become the output when the run ends, so a run that
+stops early leaves an existing output as it was. Ctrl+C keeps the rows finished so far
+in the partial file and says where it is; partial files are yours to delete, and no
+later run removes them. An existing output with content is replaced by a new file. A
+pipe or `-o /dev/stdout` is written directly. `search -i` says on standard error when
+inputs had more hits than `--top`.
 
 ![Aspirin analogues, with the atoms each one adds to aspirin highlighted](https://raw.githubusercontent.com/MysterionRise/pubchem-finder/master/docs/images/analogues-diff.png)
 

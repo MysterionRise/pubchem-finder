@@ -6,13 +6,15 @@ Input formats:
   ``canonical_smiles``, ``isomeric_smiles`` or ``smi``) and optionally an id
   column (``id``, ``name``, ``cid``, ``compound_id`` or ``title``).
 - anything else (``.smi``, ``.txt``, ``-`` for stdin): one structure per line,
-  ``SMILES [id ...]``; blank lines and ``#`` comments are skipped.
+  ``SMILES [id ...]``; blank lines and ``#`` comments are skipped. A CXSMILES
+  extension after the SMILES (``|&1:1|``) is read with it, not as the id.
 
 Rows that fail (invalid SMILES, no index, ...) are written with an ``error``
 column instead of stopping the run.
 """
 
 import csv
+import re
 import sys
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
@@ -22,6 +24,29 @@ from typing import IO, Any
 from .core.exceptions import InvalidInput, PubChemFinderError
 
 SMILES_COLUMNS = ("smiles", "canonical_smiles", "isomeric_smiles", "smi")
+# How a CXSMILES extension begins, straight after its opening bar: coordinates,
+# atom labels or values, or one of the format's named features. A cell of a table
+# printed with bars (`| 702 | ethanol`) begins with none of them, and neither does
+# a name written in bars (`|(S)-ibuprofen|`, `|(6,6)-phenyl-C61-butyric acid|`):
+# coordinates are numbers between parentheses with the next feature, the closing
+# bar or the end of the row behind them, and labels are closed by a second dollar
+# sign. Told by its shape and not by whether RDKit can read it: RDKit reads a
+# number between bars as an extension that says nothing, and not every extension
+# that others write.
+#
+# The coordinates can be read in one way only: a number has its digits, then at
+# most one point and more digits, and a blank belongs to what stands before it.
+# Written so that the same digits or blanks can be shared out in several ways
+# (`\d+\.?\d*`, or `\s*` on both sides of a number), the pattern tries every way
+# for every number before it says no: 22 s for a name in bars that begins with
+# 28 locants (`|(2,5,8,...,83-octacosaoxa...`), and twice that for each one more.
+_NUMBER = r"-?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?|(?i:nan|inf(?:inity)?))"
+_COORDINATES = rf"\(\s*(?:(?:{_NUMBER}\s*)?[,;]\s*)+(?:{_NUMBER}\s*)?\)\s*(?:[,|]|$)"
+_CX_EXTENSION = re.compile(
+    rf"\|(?:{_COORDINATES}|\$[^|]*\$"
+    r"|\^[1-7]:|[ao&]\d*\s*:|r(?:[,|]|$)|ctu:|[ct]:|w[UD]?:|[mfsu]:|[CHZ]:"
+    r"|Sg[DH]?:|LN:|RG:|LO:|lp:|rb:|atomProp:)"
+)
 ID_COLUMNS = ("id", "name", "cid", "compound_id", "title")
 
 
@@ -51,7 +76,10 @@ def read_inputs(path: Path) -> Iterator[InputRow]:
     fh = _open_input(path)
     try:
         if suffix in (".csv", ".tsv"):
-            yield from _read_table(fh, "\t" if suffix == ".tsv" else ",")
+            try:
+                yield from _read_table(fh, "\t" if suffix == ".tsv" else ",")
+            except csv.Error as exc:
+                raise InvalidInput(f"Cannot read table {path}: {exc}") from exc
         else:
             yield from _read_smi(fh)
     except UnicodeDecodeError as exc:
@@ -76,18 +104,21 @@ def _strip_initial_bom(lines: Iterable[str]) -> Iterator[str]:
 
 def _read_table(fh: IO[str], delimiter: str) -> Iterator[InputRow]:
     reader = csv.DictReader(_strip_initial_bom(fh), delimiter=delimiter)
-    headers = reader.fieldnames or []
-    smiles_col = _pick(headers, SMILES_COLUMNS)
-    if smiles_col is None:
-        raise InvalidInput(
-            f"No SMILES column found; expected one of {', '.join(SMILES_COLUMNS)}, "
-            f"got {', '.join(headers) or 'no header'}"
-        )
-    id_col = _pick(headers, ID_COLUMNS)
-    for n, record in enumerate(reader, start=2):
-        smiles = (record.get(smiles_col) or "").strip()
-        ident = (record.get(id_col) or "").strip() if id_col else ""
-        yield InputRow(line=n, id=ident or str(n), smiles=smiles)
+    try:
+        headers = reader.fieldnames or []
+        smiles_col = _pick(headers, SMILES_COLUMNS)
+        if smiles_col is None:
+            raise InvalidInput(
+                f"No SMILES column found; expected one of {', '.join(SMILES_COLUMNS)}, "
+                f"got {', '.join(headers) or 'no header'}"
+            )
+        id_col = _pick(headers, ID_COLUMNS)
+        for n, record in enumerate(reader, start=2):
+            smiles = (record.get(smiles_col) or "").strip()
+            ident = (record.get(id_col) or "").strip() if id_col else ""
+            yield InputRow(line=n, id=ident or str(n), smiles=smiles)
+    except csv.Error as exc:
+        raise csv.Error(f"line {reader.line_num + 1}: {exc}") from exc
 
 
 def _read_smi(fh: IO[str]) -> Iterator[InputRow]:
@@ -96,8 +127,19 @@ def _read_smi(fh: IO[str]) -> Iterator[InputRow]:
         if not line or line.startswith("#"):
             continue
         parts = line.split(maxsplit=1)
-        ident = parts[1].strip() if len(parts) > 1 else str(n)
-        yield InputRow(line=n, id=ident, smiles=parts[0])
+        smiles = parts[0]
+        rest = parts[1].strip() if len(parts) > 1 else ""
+        if _CX_EXTENSION.match(rest):
+            # `SMILES |&1:1| name`: a CXSMILES extension is part of the structure,
+            # not the id. Kept with the SMILES, the row is refused by name instead
+            # of a racemate being answered as one enantiomer. It ends at the next
+            # bar (one inside a label is written &#124;), or with the line. Bars
+            # that begin no extension (`CCO | ethanol`, as psql prints a table)
+            # begin the id, as they always did.
+            end = rest.find("|", 1)
+            extension = rest if end == -1 else rest[: end + 1]
+            smiles, rest = f"{smiles} {extension}", rest[len(extension) :].strip()
+        yield InputRow(line=n, id=rest or str(n), smiles=smiles)
 
 
 def _cell(value: Any) -> Any:

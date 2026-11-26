@@ -20,7 +20,12 @@ from . import hints, medchem
 from .chemistry import MoleculeStandardizer, calculate_properties, is_druglike
 from .config import cache_enabled, cache_path, demo_enabled, resolve_home
 from .core.exceptions import MoleculeValidationError, PubChemFinderError
-from .core.limits import check_atoms, check_length, check_one_structure
+from .core.limits import (
+    check_atoms,
+    check_length,
+    check_one_structure,
+    check_smiles_atoms,
+)
 from .data import parsers
 from .data.cache import CacheStats, ResponseCache
 from .data.pug_rest import (
@@ -115,6 +120,7 @@ def parse_smiles(smiles: str) -> Chem.Mol:
     (see :mod:`pubchem_finder.core.limits`)."""
     check_length(smiles.strip())
     check_one_structure(smiles.strip())
+    check_smiles_atoms(smiles.strip())
     mol: Chem.Mol | None = (
         Chem.MolFromSmiles(smiles.strip()) if smiles.strip() else None
     )
@@ -210,17 +216,31 @@ def get_index(home: Path | str | None = None) -> LocalIndex:
         return _indexes[path]
 
 
-DEMO_NOTE = (
-    "Searched the built-in demo set of {n:,} FDA-approved drugs, not PubChem. "
+DEMO_NOTE = "Searched the built-in demo set of {n:,} FDA-approved drugs, not PubChem."
+DEMO_HINT = (
     "pubchem_similarity_search and pubchem_substructure_search (`{live}` in a "
     "terminal) search all of PubChem live. No local index is built yet. {build}"
 )
 
 
+# Counts read off a cut list were reported as totals ("17 hits in 4 series" where
+# 44 compounds in 17 series reach the threshold, issue #191).
+MAX_TOP_K = 1000
+CUT_NOTE = (
+    "More compounds reach the threshold than the {n} returned: the hits, and any "
+    "scaffold groups, are the best {n} and their counts are not totals. {more}"
+)
+CUT_MORE = f"Ask for more (up to {MAX_TOP_K}) to see the rest."
+CUT_MOST = (
+    f"{MAX_TOP_K} is the most one search returns: raise the threshold for a list "
+    "that is complete."
+)
+
+
 def _search_index(
     home: Path | str | None, live: str = "pubchem similarity SMILES"
-) -> tuple[LocalIndex, str, str | None]:
-    """The index a local search uses, its scope and the note for the results.
+) -> tuple[LocalIndex, str, str | None, str | None]:
+    """The index a local search uses, its scope, caveat and actionable hint.
     ``live`` is the command that runs the same search over all of PubChem.
 
     The local index once one is built. Until then the built-in demo index (built
@@ -229,14 +249,14 @@ def _search_index(
     """
     index = get_index(home)
     if not demo_enabled() or index.paths.load_manifest() is not None:
-        return index, "index", None
+        return index, "index", None, None
     demo_index = get_index(demo.ensure_built(index.paths.home))
-    note = DEMO_NOTE.format(
-        n=demo_index.manifest.n_compounds,
+    note = DEMO_NOTE.format(n=demo_index.manifest.n_compounds)
+    hint = DEMO_HINT.format(
         live=hints.command(live),
         build=hints.build_index(index.paths.home),
     )
-    return demo_index, "demo", note
+    return demo_index, "demo", note, hint
 
 
 _UNMERGED_EFFECT = {
@@ -299,25 +319,28 @@ def similarity_search(
     """Most similar compounds in the local index."""
     if not 0.0 < threshold <= 1.0:
         raise PubChemFinderError("threshold must be in (0, 1]")
-    if not 1 <= top_k <= 1000:
-        raise PubChemFinderError("top_k must be between 1 and 1000")
+    if not 1 <= top_k <= MAX_TOP_K:
+        raise PubChemFinderError(f"top_k must be between 1 and {MAX_TOP_K}")
     if metric not in ("tanimoto", "dice", "cosine"):
         raise PubChemFinderError(f"Unknown metric {metric!r}")
     mol = parse_smiles(smiles)
-    index, scope, note = _search_index(home)
+    index, scope, note, hint = _search_index(home)
     # The hits are looked up, and judged, against the merge that gave them: a
     # build can finish between the two steps.
-    pairs, merged = index.search_merged(
-        mol, threshold=threshold, top_k=top_k, metric=metric
-    )
+    found = index.search_merged(mol, threshold=threshold, top_k=top_k, metric=metric)
+    merged = found.merged
     manifest = merged.manifest
-    meta = index.metadata([cid for cid, _ in pairs], merged)
+    meta = index.metadata([cid for cid, _ in found.pairs], merged)
     hits = [
         SimilarityHit.model_validate(
             {**meta.get(cid, {}), "cid": cid, "similarity": sim}
         )
-        for cid, sim in pairs
+        for cid, sim in found.pairs
     ]
+    notes = [note] if note else []
+    if found.truncated:
+        more = CUT_MORE if top_k < MAX_TOP_K else CUT_MOST
+        notes.append(CUT_NOTE.format(n=len(hits), more=more))
     return SimilarityResults(
         query_smiles=smiles,
         threshold=threshold,
@@ -325,7 +348,9 @@ def similarity_search(
         fingerprint=manifest.fingerprint,
         n_indexed=manifest.n_compounds,
         search_scope=scope,
-        note=note,
+        truncated=found.truncated,
+        note=" ".join(notes) or None,
+        hint=hint,
         hits=hits,
         scaffolds=medchem.group_by_scaffold(hits) if group_by_scaffold else None,
         warning=_unmerged_warning(index, merged, "similarity"),
@@ -345,7 +370,7 @@ def substructure_search(
     if max_candidates < 1:
         raise PubChemFinderError("max_candidates must be at least 1")
     mol = parse_query(query, query_type)
-    index, scope, note = _search_index(home, live="pubchem substructure SMILES")
+    index, scope, note, hint = _search_index(home, live="pubchem substructure SMILES")
     found = index.substructure(mol, max_hits=max_hits, max_candidates=max_candidates)
     sub = found.merged.manifest.substructure
     warnings = [_unmerged_warning(index, found.merged, "substructure")]
@@ -363,6 +388,7 @@ def substructure_search(
         n_indexed=sub.n_compounds if sub is not None else 0,
         search_scope=scope,
         note=note,
+        hint=hint,
         n_candidates=found.n_candidates,
         n_checked=found.n_checked,
         exhaustive=found.exhaustive,
@@ -560,9 +586,12 @@ def pubchem_synonyms(
     """Names, CAS numbers and other identifiers PubChem lists for a CID."""
     if not 1 <= limit <= 500:
         raise BadQuery("limit must be between 1 and 500")
-    payload = get_client(home).compound_json(cid, "synonyms")
     try:
+        payload = get_client(home).compound_json(cid, "synonyms")
         names = parsers.parse_synonyms(payload)
+    except CompoundNotFound:
+        _require_compound(cid, home)
+        names = []
     except parsers.PayloadError as exc:
         raise PubChemError(f"Unexpected synonyms response: {exc}") from exc
     return Synonyms(

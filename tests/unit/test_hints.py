@@ -59,16 +59,29 @@ def test_messages_name_a_command_that_runs_from_any_terminal(monkeypatch, tmp_pa
 
     monkeypatch.setattr(hints, "__version__", "2.2.2")
     launch = "uvx --python 3.14 pubchem-finder==2.2.2"
-    note = service.DEMO_NOTE.format(
-        n=1932, live=hints.command("pubchem similarity SMILES"), build=""
+    hint = service.DEMO_HINT.format(
+        live=hints.command("pubchem similarity SMILES"), build=""
     )
-    assert f"`{launch} pubchem similarity SMILES`" in note
-    assert "`pubchem-finder " not in note
+    assert f"`{launch} pubchem similarity SMILES`" in hint
+    assert "`pubchem-finder " not in hint
 
     help_text = builder._version_help(IndexPaths(tmp_path))
     assert f"`{launch} index build --home NEW_DIR`" in help_text
     assert "--sdf" in help_text  # the advice also fits people indexing their own files
     assert "`pubchem-finder " not in help_text
+
+
+def test_rebuild_from_files_names_every_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(hints.sys, "platform", "linux")
+    two = hints.rebuild_from_files(["/data/a.sdf", "/data/my lib.sdf"], tmp_path)
+    assert "index build --sdf /data/a.sdf --sdf '/data/my lib.sdf' --home" in two
+    assert two.endswith("`")
+    # A build that names only some of them is refused, so none is left out.
+    files = [f"/data/{n}.sdf" for n in range(8)]
+    many = hints.rebuild_from_files(files, tmp_path)
+    assert all(f"--sdf {name}" in many for name in files)
+    asked = hints.rebuild_from_files(["/data/a.sdf"], tmp_path, placeholders=2)
+    assert "index build --sdf /data/a.sdf --sdf FILE --sdf FILE --home" in asked
 
 
 def test_quote_uses_shlex_off_windows(monkeypatch):

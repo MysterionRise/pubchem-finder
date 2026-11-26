@@ -18,7 +18,7 @@ import re
 import shutil
 import time
 import uuid
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from concurrent.futures import (
     FIRST_COMPLETED,
     Future,
@@ -209,6 +209,7 @@ def write_chunk(
         # Optional on a reader: only SdfReader meets IDs it cannot use.
         skipped_id=getattr(reader, "skipped_id", None),
         build_id=uuid.uuid4().hex,
+        fingerprint_of="smiles",
     )
     write_json_atomic(paths.chunk_stats(name), stats)
     return stats
@@ -426,9 +427,10 @@ def build_chunks(
             todo.append(src)
             continue
         action, note = _plan(src, stats)
-        if action == "skip" and src.local_path is not None:
-            # The file is unchanged, so rebuilding it from its SDF is safe, and
-            # without it the chunk blocks every extension after an RDKit upgrade.
+        if action in ("skip", "adopt") and src.local_path is not None:
+            # The file is unchanged (where it was, or moved), so rebuilding it
+            # from its SDF is safe, and without it the chunk blocks every
+            # extension after an RDKit upgrade.
             built_with = _chunk_versions(paths, stats)
             now = runtime_versions()
             if built_with is not None and built_with != now:
@@ -448,7 +450,18 @@ def build_chunks(
     if todo:
         # Before any download or rebuild: FPSim2 can't merge new chunks with ones
         # another version wrote. Chunks about to be replaced don't count.
-        _check_versions(paths, [c for c in completed if c.name not in reasons])
+        # In full, to run from any directory: the folder as the system resolves
+        # it (`..` after a linked folder is the parent of the folder it links to),
+        # and the file under the name it was given by, since a file given through
+        # a link is taken for its chunk by the link's name.
+        given = {
+            src.name: os.path.join(
+                os.path.realpath(src.local_path.parent), src.local_path.name
+            )
+            for src in sources
+            if src.local_path is not None
+        }
+        _check_versions(paths, completed, replaced=set(reasons), given=given)
     paths.chunks.mkdir(parents=True, exist_ok=True)
     for stats, current, note in adopt:
         emit(note)
@@ -641,7 +654,8 @@ def _check_params(
         if stats.fp_type != FP_TYPE or stats.fp_params != params:
             raise IndexBuildError(
                 f"Existing chunks in {paths.chunks} use {stats.fp_type} {stats.fp_params}, "
-                f"not {FP_TYPE} {params}. Use a different --home or delete the chunks."
+                f"not {FP_TYPE} {params}. Omit --radius / --fp-size to keep the current settings, "
+                "or use a different --home to change them."
             )
 
 
@@ -675,32 +689,147 @@ def _pattern_stale(paths: IndexPaths, stats: PatternChunkStats) -> bool:
     return built_with != fpsim2_now
 
 
-def _version_help(paths: IndexPaths) -> str:
+_UNMERGEABLE = (
+    "FPSim2 can't merge fingerprints written by different versions. The current "
+    "index is unchanged and still searchable."
+)
+
+
+def _new_directory(paths: IndexPaths) -> str:
     return (
-        "FPSim2 can't merge fingerprints written by different versions. The current "
-        "index is unchanged and still searchable. To grow it, build the larger index "
-        f"in a new data directory (`{hints.command('index build --home NEW_DIR')}` "
-        "with `--limit N`, `--all` or your `--sdf` files) and point "
-        f"PUBCHEM_FINDER_HOME at it once it's ready, or delete {paths.home} and build "
-        "again."
+        "build the larger index in a new data directory "
+        f"(`{hints.command('index build --home NEW_DIR')}` with `--limit N`, `--all` "
+        "or your `--sdf` files) and point PUBCHEM_FINDER_HOME at it once it's ready, "
+        f"or delete {paths.home} and build again."
     )
 
 
-def _check_versions(paths: IndexPaths, chunks: Sequence[ChunkStats]) -> None:
-    """Refuse to add chunks next to ones fingerprinted by another RDKit/FPSim2."""
+def _version_help(paths: IndexPaths) -> str:
+    return f"{_UNMERGEABLE} To grow it, {_new_directory(paths)}"
+
+
+def _check_versions(
+    paths: IndexPaths,
+    completed: Sequence[ChunkStats],
+    replaced: Collection[str] = (),
+    given: Mapping[str, str] | None = None,
+) -> None:
+    """Refuse to add chunks next to ones fingerprinted by another RDKit/FPSim2.
+
+    ``replaced`` names the chunks this build fingerprints again, which do not
+    stand in its way: the caller rebuilds a local file whose chunk is stale when
+    it is given that file. ``given`` maps the chunks named in this build to their
+    files, which is where a file that moved is now.
+    """
     now = runtime_versions()
-    old: dict[tuple[str, str], int] = {}
-    for stats in chunks:
+    stale: list[tuple[ChunkStats, tuple[str, str]]] = []
+    for stats in completed:
         built_with = _chunk_versions(paths, stats)
         if built_with is not None and built_with != now:
-            old[built_with] = old.get(built_with, 0) + 1
-    if old:
-        rdkit_then, fpsim2_then = next(iter(old))
-        raise IndexBuildError(
-            f"{sum(old.values())} chunk(s) in {paths.chunks} were fingerprinted with "
-            f"RDKit {rdkit_then} / FPSim2 {fpsim2_then}; this pubchem-finder runs RDKit "
-            f"{now[0]} / FPSim2 {now[1]}. {_version_help(paths)}"
+            stale.append((stats, built_with))
+    if any(stats.name not in replaced for stats, _ in stale):
+        # Every stale chunk, also the ones this build would replace: the build
+        # that is named has to work by itself, and one that fingerprints only
+        # some of them again is refused like this one.
+        chunks = [stats for stats, _ in stale]
+        versions = list(dict.fromkeys(built_with for _, built_with in stale))
+        then = " and ".join(
+            f"RDKit {rdkit} / FPSim2 {fpsim2}" for rdkit, fpsim2 in versions
         )
+        raise IndexBuildError(
+            f"{len(chunks)} chunk(s) in {paths.chunks} were fingerprinted with "
+            f"{then}; this pubchem-finder runs RDKit {now[0]} / FPSim2 {now[1]}. "
+            f"{_stale_help(paths, chunks, given or {})}"
+        )
+
+
+def _taken_for(path: str, chunk: str) -> bool:
+    """Whether a file given at ``path`` is taken for ``chunk``: by its name alone."""
+    try:
+        name = chunk_name(path)
+    except IndexBuildError:
+        return False
+    return chunk_key(name) == chunk_key(chunk) or (
+        legacy_chunk_name(Path(path), name) == chunk
+    )
+
+
+def _stale_help(
+    paths: IndexPaths, stale: Sequence[ChunkStats], given: Mapping[str, str]
+) -> str:
+    """The way out of a version refusal: one build that fingerprints every stale
+    chunk again from its file. Where the index cannot name a chunk's file, the
+    command has a FILE to fill in, and the new directory is the other way out."""
+    files: list[str] = []
+    unknown: list[ChunkStats] = []  # chunks whose file this index cannot name
+    downloaded: list[str] = []  # chunks of PubChem's download whose SDF is gone
+    for stats in stale:
+        recorded = stats.source.path if stats.source is not None else None
+        path = given.get(stats.name) or recorded
+        if path is None and PUBCHEM_CHUNK.fullmatch(stats.name):
+            # Kept by --keep-sdf, the SDF is the chunk's file like any other.
+            kept = [
+                paths.downloads / f"{stats.name}{end}" for end in (".sdf.gz", ".sdf")
+            ]
+            path = next((str(sdf) for sdf in kept if os.path.isfile(sdf)), None)
+            if path is None:
+                downloaded.append(stats.name)
+                continue
+        # os.path.isfile: a file in a directory that may not be entered is one
+        # that is not there, not an error (which Path.is_file raised before 3.14).
+        # And only a file whose name gives the chunk: one recorded through a link
+        # of another name would become a chunk of its own.
+        if path is not None and os.path.isfile(path) and _taken_for(path, stats.name):
+            files.append(path)
+        else:
+            unknown.append(stats)
+    if downloaded:
+        # Not one FILE and one name for each: an index of all of PubChem has 359
+        # of them, and without their SDF files the new directory is the way.
+        n = len(downloaded)
+        span = downloaded[0] if n == 1 else f"{downloaded[0]} to {downloaded[-1]}"
+        return (
+            f"{n} of them came from PubChem's download ({span}) and "
+            f"{'has' if n == 1 else 'have'} no SDF file in {paths.downloads}, where "
+            "`--keep-sdf` leaves it: a build does not download a chunk again, though "
+            "one given its SDF file with `--sdf` is fingerprinted again. "
+            f"{_version_help(paths)}"
+        )
+    again = (
+        f"{_UNMERGEABLE} To grow it, first fingerprint those chunks again with this "
+        "version, all of them in one build from their files: "
+        f"{hints.rebuild_from_files(files, paths.home, placeholders=len(unknown))}"
+    )
+    if not unknown:
+        return f"{again}. Then run this build again."
+    # Every one is named: a build that leaves one out is refused again.
+    names = ", ".join(stats.name for stats in unknown)
+    one = len(unknown) == 1
+    first = unknown[0].name
+    what = [
+        f"{again}, with the {'file' if one else 'files'} of {names} in place of "
+        f"{'FILE' if one else 'each FILE'}. A file is taken for its chunk by its "
+        f"name ({first}.sdf or {first}.sdf.gz for {first})."
+    ]
+    recorded_files = [s.source.path for s in unknown if s.source is not None]
+    gone = [path for path in recorded_files if not os.path.isfile(path)]
+    if gone:
+        it = "that file where it is" if len(gone) == 1 else "those files where they are"
+        what.append(
+            f"The index recorded {' and '.join(gone)}, not there now: give {it} "
+            f"now, or put {'it' if len(gone) == 1 else 'them'} back."
+        )
+    renamed = [path for path in recorded_files if os.path.isfile(path)]
+    if renamed:
+        what.append(
+            f"The index recorded {' and '.join(renamed)}, under another name than "
+            "the chunk's (it was given through a link, or renamed since): give it "
+            "under the chunk's name."
+        )
+    what.append(
+        f"Then run this build again. Without such a file, {_new_directory(paths)}"
+    )
+    return " ".join(what)
 
 
 def finalize(
