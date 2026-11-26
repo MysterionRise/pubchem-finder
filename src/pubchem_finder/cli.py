@@ -849,12 +849,25 @@ def _attributes(file: int | Path) -> dict[str, bytes] | None:
         return {} if exc.errno in (errno.ENOTSUP, errno.EOPNOTSUPP) else None
 
 
+def _room(descriptor: int, folder: Path) -> int | None:
+    """Free bytes on the filesystem an open file is on, or None where that cannot
+    be told (a filesystem that reports no size at all reports no room either)."""
+    try:
+        if hasattr(os, "fstatvfs"):
+            volume = os.fstatvfs(descriptor)
+            return volume.f_bavail * volume.f_frsize if volume.f_blocks else None
+        usage = shutil.disk_usage(folder)  # Windows: the folder's volume is the file's
+        return usage.free if usage.total else None
+    except OSError:
+        return None
+
+
 def _publish(
     partial: _Partial,
     mine: os.stat_result,
     target: Path,
     previous: os.stat_result | None,
-) -> None:
+) -> Path | None:
     """Make the finished partial file the content of ``target``.
 
     By renaming it into place where that changes nothing else: a new output, or
@@ -865,9 +878,29 @@ def _publish(
     replaced, such as a file mounted into a container or one in a directory
     that only lets its content change.
 
-    ``mine`` identifies the partial file: see :func:`_reopen`.
+    ``mine`` identifies the partial file: see :func:`_reopen`. Returns the
+    partial file if its rows were copied and it could then not be removed.
     """
     descriptor = partial.handle.fileno()
+    # What the output is by now. Its owner may have changed its mode or group
+    # while the batch ran, and the result is to have what the file has at the
+    # end. If it was removed or moved away there is nothing to write into: the
+    # rows become a new file of that name, with the mode the output had. What
+    # was found at the start stands only where another file has taken the name.
+    mode = None if previous is None else stat.S_IMODE(previous.st_mode)
+    try:
+        now = os.lstat(target)
+    except FileNotFoundError:
+        previous = None
+    except OSError:
+        pass
+    else:
+        same = previous is not None and (now.st_dev, now.st_ino) == (
+            previous.st_dev,
+            previous.st_ino,
+        )
+        if same:
+            previous, mode = now, stat.S_IMODE(now.st_mode)
     rename = partial.beside and _is(partial.path, mine)
     if previous is not None:
         attributes = _attributes(descriptor)
@@ -879,16 +912,15 @@ def _publish(
             and attributes is not None
             and attributes == _attributes(target)
         )
-        if rename:
-            # Through the descriptor where the system can: the name may no longer
-            # be this file's. (It cannot on Windows before Python 3.13, where an
-            # open file keeps its name.)
-            by_descriptor = os.chmod in os.supports_fd
-            mode = stat.S_IMODE(previous.st_mode)
-            try:
-                os.chmod(descriptor if by_descriptor else partial.path, mode)
-            except OSError:
-                rename = False
+    if rename and mode is not None:
+        # Through the descriptor where the system can: the name may no longer
+        # be this file's. (It cannot on Windows before Python 3.13, where an
+        # open file keeps its name.)
+        by_descriptor = os.chmod in os.supports_fd
+        try:
+            os.chmod(descriptor if by_descriptor else partial.path, mode)
+        except OSError:
+            rename = False
     partial.handle.close()  # Windows renames no open file
     if rename:
         try:
@@ -896,32 +928,33 @@ def _publish(
         except OSError:
             pass  # copied below, which asks less of the directory
         else:
-            return
+            return None
     with contextlib.ExitStack() as opened:
         rows = opened.enter_context(
             os.fdopen(_reopen(partial.path, mine, os.O_RDONLY), "rb")
         )
         if previous is None:
             new = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _BINARY
-            out = opened.enter_context(os.fdopen(os.open(target, new, 0o666), "wb"))
+            created = os.open(target, new, 0o666 if mode is None else mode)
+            out = opened.enter_context(os.fdopen(created, "wb"))
         else:
             out = opened.enter_context(
                 os.fdopen(_reopen(target, previous, os.O_WRONLY), "wb")
             )
             # The old content goes before the new is in: while it is still there,
-            # make sure the new will fit. (No room at all is not believed: a
-            # filesystem that cannot tell reports that, and a full one would
-            # not have held the partial file.)
+            # make sure the new will fit, on the filesystem the file is on (not
+            # the folder's, for a file mounted into it).
             needed = mine.st_size - os.fstat(out.fileno()).st_size
-            free = 0
-            with contextlib.suppress(OSError):
-                free = shutil.disk_usage(target.parent).free
-            if 0 < free < needed:
+            room = _room(out.fileno(), target.parent)
+            if room is not None and needed > room:
                 raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
             out.truncate(0)
         shutil.copyfileobj(rows, out)
-    with contextlib.suppress(OSError):
-        partial.path.unlink()
+    try:
+        os.unlink(partial.path)
+    except OSError:
+        return partial.path  # a folder that lets files be made but not removed
+    return None
 
 
 def _stage(
@@ -1022,8 +1055,8 @@ def _replacing(output: Path) -> Iterator[IO[str]]:
     left = _earlier_partial_files(target, part) if staged.beside else []
     if left:
         typer.echo(
-            f"note: {len(left)} partial file(s) of runs that did not finish lie "
-            f"beside {output} ({_some(left)}); this run leaves them as they are",
+            f"note: {len(left)} partial file(s) of earlier runs lie beside {output} "
+            f"({_some(left)}); this run leaves them as they are",
             err=True,
         )
     try:
@@ -1048,7 +1081,13 @@ def _replacing(output: Path) -> Iterator[IO[str]]:
             raise OSError(exc.errno, reason, str(part)) from exc
         raise
     try:
-        _publish(staged, mine, target, previous)
+        copy = _publish(staged, mine, target, previous)
+        if copy is not None:
+            typer.echo(
+                f"note: the rows are in {output}; the partial file they were "
+                f"copied from could not be removed: {copy}",
+                err=True,
+            )
     except KeyboardInterrupt:
         if _is(part, mine):
             typer.echo(

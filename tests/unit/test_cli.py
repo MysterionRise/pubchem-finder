@@ -2311,7 +2311,7 @@ def test_batch_leaves_files_it_did_not_create_alone(tmp_path, monkeypatch):
     # A run that was stopped, or killed without a word, left its rows in such a
     # file: the next run says that it is there.
     assert (
-        "note: 1 partial file(s) of runs that did not finish lie beside "
+        "note: 1 partial file(s) of earlier runs lie beside "
         f"{tmp_path / 'out.csv'} (out.csv.0badc0de.part)"
     ) in result.stderr.replace("\n", "")
 
@@ -2526,16 +2526,13 @@ def test_batch_keeps_an_output_that_the_new_rows_would_not_fit_in(
     # An output written in place loses its old content before the new is in.
     # When the disk has room, but not for that, it is said while the old
     # content is still there.
-    from collections import namedtuple
-
     from pubchem_finder import cli
 
     src, _ = _write_inputs(tmp_path)
     out = tmp_path / "out.csv"
     out.write_text("old\n")
-    monkeypatch.setattr(cli.os, "replace", _refuse)  # the other in-place case
-    usage = namedtuple("usage", "total used free")
-    monkeypatch.setattr(cli.shutil, "disk_usage", lambda path: usage(10**6, 10**6, 20))
+    monkeypatch.setattr(cli.os, "replace", _refuse)  # so it is written in place
+    monkeypatch.setattr(cli, "_room", lambda descriptor, folder: 20)
     result = runner.invoke(app, ["props", "-i", str(src), "-o", str(out)])
     assert result.exit_code == 1, result.output
     (name,) = _partial_files(tmp_path)
@@ -2547,11 +2544,93 @@ def test_batch_keeps_an_output_that_the_new_rows_would_not_fit_in(
     assert len((tmp_path / name).read_text().splitlines()) == 4
     (tmp_path / name).unlink()
 
-    # A filesystem that cannot tell its free space reports none: not believed.
-    monkeypatch.setattr(cli.shutil, "disk_usage", lambda path: usage(0, 0, 0))
+    # A filesystem that cannot tell its free space: the rows are written.
+    monkeypatch.setattr(cli, "_room", lambda descriptor, folder: None)
     result = runner.invoke(app, ["props", "-i", str(src), "-o", str(out)])
     assert result.exit_code == 0, result.output
     assert len(out.read_text().splitlines()) == 4
+
+
+def test_batch_measures_the_room_of_the_filesystem_the_output_is_on(
+    tmp_path, monkeypatch
+):
+    from collections import namedtuple
+
+    from pubchem_finder import cli
+
+    out = tmp_path / "out.csv"
+    out.write_text("old\n")
+    with out.open("rb") as fh:
+        room = cli._room(fh.fileno(), tmp_path)
+        assert room is not None
+        assert room > 0
+        if hasattr(os, "fstatvfs"):
+            # The file's own filesystem, which for a file mounted into a folder
+            # is not the folder's. One that reports no size cannot tell its room.
+            volume = namedtuple("volume", "f_bavail f_frsize f_blocks")
+            seen = []
+
+            def fstatvfs(descriptor):
+                seen.append(descriptor)
+                return volume(0, 4096, 0) if len(seen) == 1 else volume(3, 4096, 9)
+
+            monkeypatch.setattr(cli.os, "fstatvfs", fstatvfs)
+            assert cli._room(fh.fileno(), tmp_path) is None
+            assert cli._room(fh.fileno(), tmp_path) == 3 * 4096
+            assert seen == [fh.fileno(), fh.fileno()]
+
+
+@pytest.mark.parametrize("change", ["made private", "removed", "moved away"])
+def test_batch_gives_the_output_what_it_has_when_the_run_ends(tmp_path, change):
+    # A batch runs for hours. The mode its output had when it began is not the
+    # one to give the result if the owner has closed the file since, and an
+    # output that was removed or moved away meanwhile is simply written anew.
+    import stat
+
+    from pubchem_finder.cli import _run_batch
+
+    src, out = _write_inputs(tmp_path)
+    out.chmod(0o644)
+    aside = tmp_path / "old-results.csv"
+
+    def change_on_the_last(row):
+        if row.line == 3:
+            if change == "made private":
+                out.chmod(0o600)
+            elif change == "removed":
+                out.unlink()
+            else:
+                out.rename(aside)
+        return [{"value": row.line}]
+
+    _run_batch(src, out, ["value"], change_on_the_last)
+    assert len(out.read_text().splitlines()) == 4
+    assert _partial_files(tmp_path) == []
+    if change == "moved away":
+        assert aside.read_text() == "previous results\n"
+    if os.name != "nt":
+        expected = 0o600 if change == "made private" else 0o644
+        assert stat.S_IMODE(out.stat().st_mode) == expected
+
+
+def test_batch_says_when_the_copied_rows_could_not_be_removed(tmp_path, monkeypatch):
+    # A folder that lets files be made and written but not renamed or removed
+    # (append-only, or a retention rule): the rows reach the output, and the
+    # partial file they were copied from stays, which was not said.
+    from pubchem_finder import cli
+
+    src, out = _write_inputs(tmp_path)
+    monkeypatch.setattr(cli.os, "replace", _refuse)
+    monkeypatch.setattr(cli.os, "unlink", _refuse)
+    result = runner.invoke(app, ["props", "-i", str(src), "-o", str(out)])
+    monkeypatch.undo()
+    assert result.exit_code == 0, result.output
+    assert len(out.read_text().splitlines()) == 4
+    (name,) = _partial_files(tmp_path)
+    assert (
+        f"note: the rows are in {out}; the partial file they were copied from "
+        f"could not be removed: {tmp_path / name}"
+    ) in result.stderr.replace("\n", "")
 
 
 @pytest.mark.skipif(
