@@ -68,6 +68,10 @@ OutputOpt = Annotated[
         "-o",
         help="Batch mode: CSV file to write (default: stdout).",
         show_default=False,
+        # It is written, not read. Asking for a readable path refused a
+        # write-only file, and /dev/stdout on macOS, where a name for an open
+        # descriptor can be read only if the descriptor can.
+        readable=False,
     ),
 ]
 

@@ -79,7 +79,8 @@ All notable changes to this project are documented here. The format follows
   file in a read-only directory or mounted into a container, one with hard links or
   another owner) gets the finished rows written into it instead, and a device, a pipe
   or a name for an open descriptor (`-o /dev/stdout`, `-o >(gzip > out.csv.gz)`) is
-  written directly, as before.
+  written directly, as before. The output no longer has to be readable, which had
+  refused a write-only file, and `-o /dev/stdout` under a pipe on macOS.
 
 - Local index searches report invalid `PUBCHEM_FINDER_INDEX_MODE` values instead of silently choosing `auto` (#228).
 - `compound_properties`, `medchem_profile`, and the JSON output of `props` and `triage` serialize molecular weight, LogP, and TPSA to three decimal places. Batch CSV uses the same precision for these descriptors (#162).

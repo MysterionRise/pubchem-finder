@@ -2450,6 +2450,25 @@ def test_batch_writes_a_file_in_a_directory_it_cannot_write(tmp_path):
         results.chmod(0o755)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_batch_writes_an_output_it_may_write_but_not_read(tmp_path):
+    # The --output option asked for a path that can be read, so a write-only
+    # file was refused as "not readable"; so was /dev/stdout under a pipe on
+    # macOS, where such a name can be read only if the descriptor can.
+    import stat
+
+    if not _file_permissions_apply(tmp_path):
+        pytest.skip("this user is not held to file modes")
+    src, out = _write_inputs(tmp_path)
+    out.chmod(0o200)
+    result = runner.invoke(app, ["props", "-i", str(src), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    assert stat.S_IMODE(out.stat().st_mode) == 0o200
+    out.chmod(0o600)
+    assert len(out.read_text().splitlines()) == 4
+    assert _partial_files(tmp_path) == []
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX links and directory modes")
 def test_batch_does_not_follow_a_link_the_system_refuses(tmp_path):
     # A link the kernel will not follow (one planted in /tmp by another user,
