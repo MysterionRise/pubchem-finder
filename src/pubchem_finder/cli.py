@@ -887,7 +887,7 @@ def _publish(
     # end. If it was removed or moved away there is nothing to write into: the
     # rows become a new file of that name, with the mode the output had. What
     # was found at the start stands only where another file has taken the name.
-    mode = None if previous is None else stat.S_IMODE(previous.st_mode)
+    mode = None if previous is None else previous.st_mode & 0o777
     try:
         now = os.lstat(target)
     except FileNotFoundError:
@@ -900,7 +900,10 @@ def _publish(
             previous.st_ino,
         )
         if same:
-            previous, mode = now, stat.S_IMODE(now.st_mode)
+            previous, mode = now, now.st_mode & 0o777
+    # Read, write and execute only: a file of results has no use for the bits
+    # that lend its owner's or group's rights, least of all one made anew.
+    by_descriptor = os.chmod in os.supports_fd
     rename = partial.beside and _is(partial.path, mine)
     if previous is not None:
         attributes = _attributes(descriptor)
@@ -916,7 +919,6 @@ def _publish(
         # Through the descriptor where the system can: the name may no longer
         # be this file's. (It cannot on Windows before Python 3.13, where an
         # open file keeps its name.)
-        by_descriptor = os.chmod in os.supports_fd
         try:
             os.chmod(descriptor if by_descriptor else partial.path, mode)
         except OSError:
@@ -937,6 +939,9 @@ def _publish(
             new = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _BINARY
             created = os.open(target, new, 0o666 if mode is None else mode)
             out = opened.enter_context(os.fdopen(created, "wb"))
+            if mode is not None:
+                # The mode the output had, which what the umask leaves of it is not.
+                os.chmod(created if by_descriptor else target, mode)
         else:
             out = opened.enter_context(
                 os.fdopen(_reopen(target, previous, os.O_WRONLY), "wb")

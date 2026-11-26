@@ -2580,18 +2580,26 @@ def test_batch_measures_the_room_of_the_filesystem_the_output_is_on(
             assert seen == [fh.fileno(), fh.fileno()]
 
 
-@pytest.mark.parametrize("change", ["made private", "removed", "moved away"])
-def test_batch_gives_the_output_what_it_has_when_the_run_ends(tmp_path, change):
+@pytest.mark.parametrize("route", ["renamed", "copied"])
+@pytest.mark.parametrize(
+    "change", ["made private", "removed", "moved away", "given another name"]
+)
+def test_batch_gives_the_output_what_it_has_when_the_run_ends(
+    tmp_path, monkeypatch, route, change
+):
     # A batch runs for hours. The mode its output had when it began is not the
-    # one to give the result if the owner has closed the file since, and an
-    # output that was removed or moved away meanwhile is simply written anew.
+    # one to give the result if the owner has closed the file since; an output
+    # that was removed or moved away meanwhile is written anew, with the mode it
+    # had; and one that got a second name meanwhile is written in place.
     import stat
 
-    from pubchem_finder.cli import _run_batch
+    from pubchem_finder import cli
 
     src, out = _write_inputs(tmp_path)
-    out.chmod(0o644)
+    out.chmod(0o664)  # not what a new file gets, whatever the umask
     aside = tmp_path / "old-results.csv"
+    if route == "copied":
+        monkeypatch.setattr(cli.os, "replace", _refuse)
 
     def change_on_the_last(row):
         if row.line == 3:
@@ -2599,17 +2607,21 @@ def test_batch_gives_the_output_what_it_has_when_the_run_ends(tmp_path, change):
                 out.chmod(0o600)
             elif change == "removed":
                 out.unlink()
-            else:
+            elif change == "moved away":
                 out.rename(aside)
+            else:
+                os.link(out, aside)
         return [{"value": row.line}]
 
-    _run_batch(src, out, ["value"], change_on_the_last)
+    cli._run_batch(src, out, ["value"], change_on_the_last)
     assert len(out.read_text().splitlines()) == 4
     assert _partial_files(tmp_path) == []
     if change == "moved away":
         assert aside.read_text() == "previous results\n"
+    if change == "given another name":
+        assert aside.read_text() == out.read_text()
     if os.name != "nt":
-        expected = 0o600 if change == "made private" else 0o644
+        expected = 0o600 if change == "made private" else 0o664
         assert stat.S_IMODE(out.stat().st_mode) == expected
 
 
