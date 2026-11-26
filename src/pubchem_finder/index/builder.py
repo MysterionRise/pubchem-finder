@@ -450,8 +450,10 @@ def build_chunks(
     if todo:
         # Before any download or rebuild: FPSim2 can't merge new chunks with ones
         # another version wrote. Chunks about to be replaced don't count.
+        # In full, to run from any directory, but not resolved: a file given
+        # through a link is taken for its chunk by the link's name.
         given = {
-            src.name: str(src.local_path.resolve())  # as chunks record their files
+            src.name: os.path.abspath(src.local_path)
             for src in sources
             if src.local_path is not None
         }
@@ -737,6 +739,17 @@ def _check_versions(
         )
 
 
+def _taken_for(path: str, chunk: str) -> bool:
+    """Whether a file given at ``path`` is taken for ``chunk``: by its name alone."""
+    try:
+        name = chunk_name(path)
+    except IndexBuildError:
+        return False
+    return chunk_key(name) == chunk_key(chunk) or (
+        legacy_chunk_name(Path(path), name) == chunk
+    )
+
+
 def _stale_help(
     paths: IndexPaths, stale: Sequence[ChunkStats], given: Mapping[str, str]
 ) -> str:
@@ -745,15 +758,39 @@ def _stale_help(
     command has a FILE to fill in, and the new directory is the other way out."""
     files: list[str] = []
     unknown: list[ChunkStats] = []  # chunks whose file this index cannot name
+    downloaded: list[str] = []  # chunks of PubChem's download whose SDF is gone
     for stats in stale:
         recorded = stats.source.path if stats.source is not None else None
         path = given.get(stats.name) or recorded
+        if path is None and PUBCHEM_CHUNK.fullmatch(stats.name):
+            # Kept by --keep-sdf, the SDF is the chunk's file like any other.
+            kept = [
+                paths.downloads / f"{stats.name}{end}" for end in (".sdf.gz", ".sdf")
+            ]
+            path = next((str(sdf) for sdf in kept if os.path.isfile(sdf)), None)
+            if path is None:
+                downloaded.append(stats.name)
+                continue
         # os.path.isfile: a file in a directory that may not be entered is one
         # that is not there, not an error (which Path.is_file raised before 3.14).
-        if path is not None and os.path.isfile(path):
+        # And only a file whose name gives the chunk: one recorded through a link
+        # of another name would become a chunk of its own.
+        if path is not None and os.path.isfile(path) and _taken_for(path, stats.name):
             files.append(path)
         else:
             unknown.append(stats)
+    if downloaded:
+        # Not one FILE and one name for each: an index of all of PubChem has 359
+        # of them, and without their SDF files the new directory is the way.
+        n = len(downloaded)
+        span = downloaded[0] if n == 1 else f"{downloaded[0]} to {downloaded[-1]}"
+        return (
+            f"{n} of them came from PubChem's download ({span}) and "
+            f"{'has' if n == 1 else 'have'} no SDF file in {paths.downloads}, where "
+            "`--keep-sdf` leaves it: a build does not download a chunk again, though "
+            "one given its SDF file with `--sdf` is fingerprinted again. "
+            f"{_version_help(paths)}"
+        )
     again = (
         f"{_UNMERGEABLE} To grow it, first fingerprint those chunks again with this "
         "version, all of them in one build from their files: "
@@ -770,17 +807,20 @@ def _stale_help(
         f"{'FILE' if one else 'each FILE'}. A file is taken for its chunk by its "
         f"name ({first}.sdf or {first}.sdf.gz for {first})."
     ]
-    gone = [stats.source.path for stats in unknown if stats.source is not None]
+    recorded_files = [s.source.path for s in unknown if s.source is not None]
+    gone = [path for path in recorded_files if not os.path.isfile(path)]
     if gone:
         it = "that file where it is" if len(gone) == 1 else "those files where they are"
         what.append(
             f"The index recorded {' and '.join(gone)}, not there now: give {it} "
             f"now, or put {'it' if len(gone) == 1 else 'them'} back."
         )
-    if any(s.source is None and PUBCHEM_CHUNK.fullmatch(s.name) for s in unknown):
+    renamed = [path for path in recorded_files if os.path.isfile(path)]
+    if renamed:
         what.append(
-            "A chunk from PubChem's download needs its SDF file, which `--keep-sdf` "
-            f"leaves in {paths.downloads}; a build does not download it again."
+            f"The index recorded {' and '.join(renamed)}, under another name than "
+            "the chunk's (it was given through a link, or renamed since): give it "
+            "under the chunk's name."
         )
     what.append(
         f"Then run this build again. Without such a file, {_new_directory(paths)}"

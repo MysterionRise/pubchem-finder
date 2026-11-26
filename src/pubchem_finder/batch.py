@@ -14,6 +14,7 @@ column instead of stopping the run.
 """
 
 import csv
+import re
 import sys
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
@@ -21,9 +22,17 @@ from pathlib import Path
 from typing import IO, Any
 
 from .core.exceptions import InvalidInput, PubChemFinderError
-from .core.limits import is_cxsmiles
 
 SMILES_COLUMNS = ("smiles", "canonical_smiles", "isomeric_smiles", "smi")
+# How a CXSMILES extension begins, straight after its opening bar: coordinates,
+# atom labels or values, or one of the format's named features. A cell of a table
+# printed with bars (`| 702 | ethanol`) begins with none of them. Told by its
+# shape and not by whether RDKit can read it: RDKit reads a number between bars
+# as an extension that says nothing, and not every extension that others write.
+_CX_EXTENSION = re.compile(
+    r"\|(?:[($]|\^[1-7]:|[ao&]\d*\s*:|r(?:[,|]|$)|ctu:|[ct]:|w[UD]?:|[mfsu]:|[CHZ]:"
+    r"|Sg|LN:|RG:|LO:|lp:|rb:|atomProp)"
+)
 ID_COLUMNS = ("id", "name", "cid", "compound_id", "title")
 
 
@@ -106,14 +115,16 @@ def _read_smi(fh: IO[str]) -> Iterator[InputRow]:
         parts = line.split(maxsplit=1)
         smiles = parts[0]
         rest = parts[1].strip() if len(parts) > 1 else ""
-        end = rest.find("|", 1) if rest.startswith("|") else -1
-        if end > 1 and is_cxsmiles(f"{smiles} {rest[: end + 1]}"):
+        if _CX_EXTENSION.match(rest):
             # `SMILES |&1:1| name`: a CXSMILES extension is part of the structure,
             # not the id. Kept with the SMILES, the row is refused by name instead
-            # of a racemate being answered as one enantiomer. Bars that are not
-            # an extension (`CCO | ethanol`, as psql prints a table) begin the
-            # id, as they always did.
-            smiles, rest = f"{smiles} {rest[: end + 1]}", rest[end + 1 :].strip()
+            # of a racemate being answered as one enantiomer. It ends at the next
+            # bar (one inside a label is written &#124;), or with the line. Bars
+            # that begin no extension (`CCO | ethanol`, as psql prints a table)
+            # begin the id, as they always did.
+            end = rest.find("|", 1)
+            extension = rest if end == -1 else rest[: end + 1]
+            smiles, rest = f"{smiles} {extension}", rest[len(extension) :].strip()
         yield InputRow(line=n, id=rest or str(n), smiles=smiles)
 
 

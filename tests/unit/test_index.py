@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import tables as tb
 
-from pubchem_finder import service
+from pubchem_finder import hints, service
 from pubchem_finder.core.exceptions import (
     IndexBuildError,
     IndexIncompatible,
@@ -694,28 +694,48 @@ def test_version_refusal_asks_for_the_file_of_a_chunk_that_records_none(
     assert finalize(paths).n_compounds == N_GOOD
 
 
-def test_version_refusal_for_a_downloaded_chunk_asks_for_its_sdf(
+def test_version_refusal_for_downloaded_chunks_depends_on_their_sdf_files(
     tmp_path, sample_sdfs, monkeypatch
 ):
     """A chunk from PubChem's download records no file and is not downloaded
-    again, but its SDF fingerprints it again like any other file. Saying that it
-    cannot be done sent someone who kept the SDFs to a new directory."""
+    again. Without its SDF the new directory is the way, said once however many
+    such chunks there are (359 for all of PubChem). With the SDF that --keep-sdf
+    left, it is fingerprinted again like any other file."""
     import rdkit
 
     paths = IndexPaths(tmp_path)
-    _build_old_chunk(paths, sample_sdfs[0], monkeypatch)
-    stats_file = paths.chunk_stats(CHUNK_NAMES[0])
-    stats = json.loads(stats_file.read_text())
-    del stats["source"]  # a chunk PubChem's download built records no file
-    stats_file.write_text(json.dumps(stats))
+    with monkeypatch.context() as m:
+        m.setattr(rdkit, "__version__", OLD_RDKIT)
+        build_chunks(paths, sources(sample_sdfs[:2]), workers=1)
+        finalize(paths)
+    for name in CHUNK_NAMES[:2]:
+        stats_file = paths.chunk_stats(name)
+        stats = json.loads(stats_file.read_text())
+        del stats["source"]  # a chunk PubChem's download built records no file
+        stats_file.write_text(json.dumps(stats))
+    new = tmp_path / "mylib.sdf.gz"
+    new.write_bytes(sample_sdfs[1].read_bytes())
+
     with pytest.raises(IndexBuildError, match="still searchable") as err:
-        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+        build_chunks(paths, sources([new]), workers=1)
     message = str(err.value)
-    assert "index build --sdf FILE" in message
-    assert f"with the file of {CHUNK_NAMES[0]} in place of FILE" in message
-    assert f"`--keep-sdf` leaves in {paths.downloads}" in message
+    assert (
+        f"2 of them came from PubChem's download ({CHUNK_NAMES[0]} to "
+        f"{CHUNK_NAMES[1]}) and have no SDF file in {paths.downloads}"
+    ) in message
     assert "index build --home NEW_DIR" in message
-    build_chunks(paths, sources(sample_sdfs[:2]), workers=1)
+    assert "--sdf FILE" not in message
+
+    paths.downloads.mkdir()
+    kept = [paths.downloads / sdf.name for sdf in sample_sdfs[:2]]
+    for sdf, copy in zip(sample_sdfs[:2], kept, strict=True):
+        copy.write_bytes(sdf.read_bytes())
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([new]), workers=1)
+    message = str(err.value)
+    assert f"index build {_sdf_options(kept)}" in message
+    assert "PubChem's download" not in message
+    build_chunks(paths, sources(kept), workers=1)
     assert {c.rdkit_version for c in paths.completed_chunks()} == {rdkit.__version__}
 
 
@@ -793,6 +813,49 @@ def test_version_refusal_names_each_version_the_chunks_were_built_with(
         f"2 chunk(s) in {paths.chunks} were fingerprinted with RDKit {OLD_RDKIT} / "
         f"FPSim2 {runtime_versions()[1]} and RDKit 1999.09.1 / FPSim2 "
     ) in str(err.value)
+
+
+def test_version_refusal_names_a_file_only_under_its_chunks_name(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """A file is taken for its chunk by its name. One given through a link of
+    another name (a `latest` link, a checkout that names files by their hash) is
+    recorded under the name it resolves to: named in the build, it would become
+    a chunk of its own and the refusal would come again, word for word."""
+    data = tmp_path / "data"
+    data.mkdir()
+    target = data / "vendor_2026_11.sdf.gz"
+    target.write_bytes(sample_sdfs[0].read_bytes())
+    link = data / "current.sdf.gz"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("no permission to create links here")
+    paths = IndexPaths(tmp_path / "home")
+    _build_old_chunk(paths, link, monkeypatch)
+    assert [c.name for c in paths.completed_chunks()] == ["current"]
+
+    # Not given: its recorded file is not named in the build, but asked for.
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([sample_sdfs[1]]), workers=1)
+    message = str(err.value)
+    assert "index build --sdf FILE" in message
+    assert "vendor_2026_11.sdf.gz --home" not in message
+    assert "with the file of current in place of FILE" in message
+    assert f"The index recorded {target.resolve()}, under another name" in message
+
+    # Given: it is rebuilt, and with another stale chunk beside it the build
+    # that is named has the link in it, in full.
+    other = data / "libb.sdf.gz"
+    other.write_bytes(sample_sdfs[1].read_bytes())
+    _build_old_chunk(paths, other, monkeypatch)
+    monkeypatch.chdir(data)
+    with pytest.raises(IndexBuildError, match="still searchable") as err:
+        build_chunks(paths, sources([Path(link.name)]), workers=1)
+    quoted = " ".join(f"--sdf {hints._quote(str(p))}" for p in (link, other))
+    assert f"index build {quoted}" in str(err.value)
+    report = build_chunks(paths, sources([link, other]), workers=1)
+    assert sorted(report.rebuilt) == ["current", "libb"]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX directory modes")
@@ -970,6 +1033,47 @@ def test_ctrl_c_during_the_metadata_query_is_ctrl_c(built_home, raised):
         # And through the search, which tries a failed query again: not this one.
         with pytest.raises(KeyboardInterrupt):
             index.metadata([2244])
+
+
+def test_a_failed_query_that_mentions_interruption_is_not_ctrl_c(built_home):
+    """Told by what the error is, not by a word in it: DuckDB's errors quote
+    paths, and a data directory may be called anything. Such an error is an
+    error of the query, which is tried again; as Ctrl+C it ended an MCP server."""
+    import duckdb
+
+    index = LocalIndex(built_home)
+    chunks = list(index.merged.manifest.chunks)
+    failed = duckdb.IOException(
+        'Cannot open file "/data/interrupted-screens/home/chunks/lib1.parquet"'
+    )
+    calls = []
+
+    class Failing:
+        def cursor(self):
+            return self
+
+        def execute(self, sql):
+            calls.append(sql)
+            raise failed
+
+    index._db = Failing()
+    index._db_files = index.paths.metadata_files(chunks)
+    raised: BaseException | None = None
+    try:
+        index._metadata([2244], chunks)
+    except KeyboardInterrupt:  # caught here: let go, it would end the test run
+        pytest.fail("a failed query was taken for Ctrl+C")
+    except duckdb.IOException as exc:
+        raised = exc
+    assert raised is failed
+    # The search tries again, with a connection of its own, and answers.
+    index._db = Failing()
+    try:
+        found = index.metadata([2244])
+    except KeyboardInterrupt:
+        pytest.fail("a failed query was taken for Ctrl+C")
+    assert 2244 in found
+    assert len(calls) == 2
 
 
 def test_overlapping_chunks_give_each_substructure_hit_once(overlap_home):

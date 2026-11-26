@@ -455,8 +455,13 @@ class LocalIndex:
             # Ctrl+C during a query comes out of DuckDB as an error of its own,
             # or as RuntimeError("Query interrupted"). It is no fault of the
             # query: taken for one, it is retried above, and a batch throws away
-            # the rows it would keep on Ctrl+C.
-            if "interrupt" in str(exc).lower():
+            # the rows it would keep on Ctrl+C. Told by what the error is, not
+            # by a word in it: other errors quote paths, which may hold any word.
+            said = str(exc).strip().rstrip(".!").lower()
+            interrupted = isinstance(exc, duckdb.InterruptException) or (
+                type(exc) is RuntimeError and said == "query interrupted"
+            )
+            if interrupted:
                 raise KeyboardInterrupt from exc
             raise
         return [

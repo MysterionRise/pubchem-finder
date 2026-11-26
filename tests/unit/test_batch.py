@@ -96,6 +96,10 @@ def test_read_smi_keeps_a_cxsmiles_extension_with_its_smiles(tmp_path):
         "C[C@H](N)C(=O)O\t|o1:1|\n"
         "*CC(*)c1ccccc1 |$star_e;;;star_e;;;;;;$,Sg:n:1,2,4,5,6,7,8,9::ht| poly styrene\n"
         "CC |$_AV:first atom;second atom$| with a space inside\n"
+        # One RDKit cannot read, and one that is not closed: extensions all the same.
+        "C[C@H](N)C(=O)O |&1:1,SgD:1:note:racemic| data\n"
+        "C[C@H](N)C(=O)O |&1:1\n"
+        "C[C@H](N)C(=O)O |r| the flag | and a bar in the name\n"
         "C[C@H](N)C(=O)O L-alanine\n",
     )
     rows = list(batch.read_inputs(path))
@@ -107,6 +111,9 @@ def test_read_smi_keeps_a_cxsmiles_extension_with_its_smiles(tmp_path):
             "*CC(*)c1ccccc1 |$star_e;;;star_e;;;;;;$,Sg:n:1,2,4,5,6,7,8,9::ht|",
         ),
         ("with a space inside", "CC |$_AV:first atom;second atom$|"),
+        ("data", "C[C@H](N)C(=O)O |&1:1,SgD:1:note:racemic|"),
+        ("6", "C[C@H](N)C(=O)O |&1:1"),
+        ("the flag | and a bar in the name", "C[C@H](N)C(=O)O |r|"),
         ("L-alanine", "C[C@H](N)C(=O)O"),
     ]
 
@@ -117,36 +124,41 @@ def test_read_smi_keeps_a_cxsmiles_extension_with_its_smiles(tmp_path):
         ["canonical_smiles"],
         lambda row: [service.properties(row.smiles).model_dump()],
     )
-    assert report.errors == 4
+    assert report.errors == 7
     lines = list(csv.DictReader(io.StringIO(out.getvalue())))
-    assert [line["id"] for line in lines if "CXSMILES" in line["error"]] == [
-        "rac-alanine",
-        "2",
-        "poly styrene",
-        "with a space inside",
-    ]
-    assert lines[4]["canonical_smiles"] == "C[C@H](N)C(=O)O"
+    assert all("CXSMILES" in line["error"] for line in lines[:7])
+    assert lines[7]["canonical_smiles"] == "C[C@H](N)C(=O)O"
 
 
 def test_read_smi_leaves_bars_that_are_no_extension_to_the_id(tmp_path):
     # A table printed with bars between its columns (psql), an id in bars: not
-    # everything that begins with a bar after the SMILES is CXSMILES.
+    # everything that begins with a bar after the SMILES is CXSMILES. Told by
+    # how it begins, whatever the cell holds: RDKit reads a number between bars
+    # as an extension that says nothing.
     path = write(
         tmp_path,
         "bars.smi",
         " CCO                   | ethanol\n"
+        " CCO                   |  702 | ethanol\n"
         "CCO | ethanol | 64-17-5\n"
         "CCO |ethanol|\n"
+        "CCO |702|\n"
         "CCO || empty\n"
+        "CCO |  | blank\n"
+        "CCO | NULL | f\n"
         "CCO |unfinished\n"
         "CCO |\n",
     )
     rows = list(batch.read_inputs(path))
     assert [(r.id, r.smiles) for r in rows] == [
         ("| ethanol", "CCO"),
+        ("|  702 | ethanol", "CCO"),
         ("| ethanol | 64-17-5", "CCO"),
         ("|ethanol|", "CCO"),
+        ("|702|", "CCO"),
         ("|| empty", "CCO"),
+        ("|  | blank", "CCO"),
+        ("| NULL | f", "CCO"),
         ("|unfinished", "CCO"),
         ("|", "CCO"),
     ]
