@@ -79,7 +79,7 @@ All notable changes to this project are documented here. The format follows
   keeps the rows finished so far in the partial file and says where it is. No run removes
   a partial file; a run says when some lie beside its output. An output that cannot be written (a
   missing directory, a read-only file) is reported before the first row is processed. An
-  existing output with content is replaced by a new file of the same mode, so a program
+  existing output with content is replaced by a new file with the same permissions, so a program
   that has the old file open keeps reading the old content. Where that would change more
   than the content, or cannot be done, the finished rows are written into the file
   instead: an empty file (which its maker may hold open), one with hard links, another

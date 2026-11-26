@@ -2116,6 +2116,19 @@ def _partial_files(folder):
     return sorted(p.name for p in folder.iterdir() if p.name.endswith(".part"))
 
 
+@pytest.fixture
+def umask_027():
+    """New files are made without write access for the group, or any for others.
+
+    For the tests of a mode that is to be kept: 0o664 is then not what a new
+    file gets, whatever umask the tests were started under (0o002 where every
+    user has a group of their own, and a new file is 0o664 without any help).
+    """
+    previous = os.umask(0o027)
+    yield
+    os.umask(previous)
+
+
 def test_interrupted_batch_keeps_the_rows_done_and_the_previous_output(
     tmp_path, capsys
 ):
@@ -2140,6 +2153,7 @@ def test_interrupted_batch_keeps_the_rows_done_and_the_previous_output(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX links, file modes and pipes")
+@pytest.mark.usefixtures("umask_027")
 def test_batch_output_keeps_links_modes_and_special_files(tmp_path):
     import stat
     import threading
@@ -2147,7 +2161,7 @@ def test_batch_output_keeps_links_modes_and_special_files(tmp_path):
     src, _ = _write_inputs(tmp_path)
     real = tmp_path / "real.csv"
     real.write_text("old\n")
-    real.chmod(0o664)  # not the mode a new file gets, whatever the umask
+    real.chmod(0o664)  # not the mode a new file gets, under the umask set here
     link = tmp_path / "link.csv"
     link.symlink_to(real)
     result = runner.invoke(app, ["props", "-i", str(src), "-o", str(link)])
@@ -2584,6 +2598,7 @@ def test_batch_measures_the_room_of_the_filesystem_the_output_is_on(
 @pytest.mark.parametrize(
     "change", ["made private", "removed", "moved away", "given another name"]
 )
+@pytest.mark.usefixtures("umask_027")
 def test_batch_gives_the_output_what_it_has_when_the_run_ends(
     tmp_path, monkeypatch, route, change
 ):
@@ -2596,7 +2611,7 @@ def test_batch_gives_the_output_what_it_has_when_the_run_ends(
     from pubchem_finder import cli
 
     src, out = _write_inputs(tmp_path)
-    out.chmod(0o664)  # not what a new file gets, whatever the umask
+    out.chmod(0o664)  # not what a new file gets, under the umask set here
     aside = tmp_path / "old-results.csv"
     if route == "copied":
         monkeypatch.setattr(cli.os, "replace", _refuse)
@@ -2623,6 +2638,37 @@ def test_batch_gives_the_output_what_it_has_when_the_run_ends(
     if os.name != "nt":
         expected = 0o600 if change == "made private" else 0o664
         assert stat.S_IMODE(out.stat().st_mode) == expected
+
+
+@pytest.mark.parametrize("change", ["left alone", "removed", "moved away"])
+def test_batch_writes_its_output_where_no_mode_can_be_set(
+    tmp_path, monkeypatch, change
+):
+    # A share that shows every file as one owner's lets its users write, make,
+    # rename and remove files, and set no mode. That costs the rename into place,
+    # which needs the mode set first, and is no reason to fail: an output that was
+    # removed or moved away meanwhile was made anew, left empty, and the run
+    # ended with "could not write" over a mode it had no need to set.
+    from pubchem_finder import cli
+
+    src, out = _write_inputs(tmp_path)
+    aside = tmp_path / "old-results.csv"
+    monkeypatch.setattr(cli.os, "chmod", _refuse)
+
+    def change_on_the_last(row):
+        if row.line == 3:
+            if change == "removed":
+                out.unlink()
+            elif change == "moved away":
+                out.rename(aside)
+        return [{"value": row.line}]
+
+    cli._run_batch(src, out, ["value"], change_on_the_last)
+    monkeypatch.undo()
+    assert len(out.read_text().splitlines()) == 4
+    assert _partial_files(tmp_path) == []
+    if change == "moved away":
+        assert aside.read_text() == "previous results\n"
 
 
 def test_batch_says_when_the_copied_rows_could_not_be_removed(tmp_path, monkeypatch):
@@ -2720,6 +2766,7 @@ def test_batch_interrupted_while_the_output_is_written_says_where_the_rows_are(
 @pytest.mark.skipif(os.name == "nt", reason="POSIX links and renaming of open files")
 @pytest.mark.parametrize("swapped", ["the partial file", "the output", "both"])
 @pytest.mark.parametrize("route", ["renamed", "copied"])
+@pytest.mark.usefixtures("umask_027")  # the output's mode is not the 0o666 it is given
 def test_batch_reads_and_writes_only_the_files_it_began_with(
     tmp_path, capsys, route, swapped
 ):

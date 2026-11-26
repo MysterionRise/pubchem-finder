@@ -940,8 +940,12 @@ def _publish(
             created = os.open(target, new, 0o666 if mode is None else mode)
             out = opened.enter_context(os.fdopen(created, "wb"))
             if mode is not None:
-                # The mode the output had, which what the umask leaves of it is not.
-                os.chmod(created if by_descriptor else target, mode)
+                # The mode the output had, which what the umask leaves of it is
+                # not. Where no mode can be set (a share that shows every file
+                # as one owner's), the file keeps what it was made with, which
+                # is never more than the output had.
+                with contextlib.suppress(OSError):
+                    os.chmod(created if by_descriptor else target, mode)
         else:
             out = opened.enter_context(
                 os.fdopen(_reopen(target, previous, os.O_WRONLY), "wb")
