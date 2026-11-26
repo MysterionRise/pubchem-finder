@@ -274,10 +274,14 @@ class PubChemClient:
         )
 
     def substructure_search(
-        self, smiles: str, max_records: int = 25
+        self, smiles: str, max_records: int = 25, **options: str
     ) -> list[CompoundRecord]:
-        """Compounds that contain ``smiles`` as a substructure."""
-        return self.structure_search("fastsubstructure", smiles, max_records)
+        """Compounds that contain ``smiles`` as a substructure.
+
+        PubChem ignores stereo and isotope labels unless ``options`` asks for them,
+        e.g. ``Stereo="exact"`` or ``MatchIsotopes="true"``.
+        """
+        return self.structure_search("fastsubstructure", smiles, max_records, **options)
 
     def exact_match(
         self,

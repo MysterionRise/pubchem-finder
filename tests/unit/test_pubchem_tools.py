@@ -94,6 +94,31 @@ def test_substructure_and_exact(pubchem_knowledge_api):
     assert "same_connectivity" in exact.note
 
 
+def test_substructure_sends_label_options_for_stereo_and_isotopes(
+    pubchem_knowledge_api,
+):
+    calls = pubchem_knowledge_api.calls
+    stereo = service.pubchem_substructure_search(
+        "C1CC(=O)NC(=O)[C@H]1N2C(=O)C3=CC=CC=C3C2=O"
+    )
+    params = calls.last.request.url.params
+    assert params.get("Stereo") == "exact"
+    assert "MatchIsotopes" not in params
+    assert "matched as drawn" in stereo.note
+
+    labelled = service.pubchem_substructure_search("[2H]C([2H])([2H])CO")
+    params = calls.last.request.url.params
+    assert params.get("MatchIsotopes") == "true"
+    assert "Stereo" not in params
+    assert "matched as drawn" in labelled.note
+
+    plain = service.pubchem_substructure_search("c1ccccc1O")
+    params = calls.last.request.url.params
+    assert "Stereo" not in params
+    assert "MatchIsotopes" not in params
+    assert "matched as drawn" not in plain.note
+
+
 def test_no_hits_is_an_empty_result(monkeypatch):
     monkeypatch.setattr("pubchem_finder.data.pug_rest.time.sleep", lambda s: None)
     with respx.mock() as router:
@@ -447,6 +472,18 @@ def test_live_structure_searches():
     assert 2244 in [r.cid for r in similar]
     assert [r.cid for r in exact][:1] == [2244]
     assert sub
+
+
+@pytest.mark.live
+@live
+def test_live_labelled_substructure_hits_match_isotopes():
+    d5 = "[2H]C([2H])([2H])C([2H])([2H])OC1=CC=CC=C1C(=O)O"
+    result = service.pubchem_substructure_search(d5, max_records=10)
+    query = service.parse_smiles(d5)
+    assert result.hits
+    for hit in result.hits:
+        assert hit.smiles, f"CID {hit.cid} has no isomeric SMILES"
+        assert service.parse_smiles(hit.smiles).HasSubstructMatch(query), hit.cid
 
 
 @pytest.mark.live
