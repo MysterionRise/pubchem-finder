@@ -888,28 +888,38 @@ def test_version_refusal_names_a_file_only_under_its_chunks_name(
     quoted = " ".join(f"--sdf {hints._quote(str(p))}" for p in (link, other))
     assert f"index build {quoted}" in str(err.value)
 
-    # A folder that is a link: `..` after it is the parent of the folder it
-    # links to, which is where the system finds the file, not what is left when
-    # the two names are struck from the path.
-    third = data / "libc.sdf.gz"
-    third.write_bytes(sample_sdfs[1].read_bytes())
-    _build_old_chunk(paths, third, monkeypatch)
+    report = build_chunks(paths, sources([link, other]), workers=1)
+    assert sorted(report.rebuilt) == ["current", "libb"]
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="Windows takes `..` off a path before it follows links"
+)
+def test_version_refusal_names_a_file_given_through_a_linked_folder(
+    tmp_path, sample_sdfs, monkeypatch
+):
+    """`..` after a folder that is a link is the parent of the folder it links
+    to. That is where the system finds the file, not what is left when the two
+    names are struck from the path, which the refusal named."""
+    paths, (liba, libb) = _stale_libraries(tmp_path, sample_sdfs, monkeypatch, "ab")
     elsewhere = tmp_path / "elsewhere"
     (elsewhere / "sub").mkdir(parents=True)
     (tmp_path / "proj").mkdir()
     (tmp_path / "proj" / "sub").symlink_to(elsewhere / "sub")
-    moved = elsewhere / other.name
-    other.rename(moved)
+    moved = elsewhere / libb.name
+    libb.rename(moved)
     monkeypatch.chdir(tmp_path / "proj")
-    through = Path("sub") / ".." / other.name
+    through = Path("sub") / ".." / libb.name
+    new = tmp_path / "new.sdf.gz"
+    new.write_bytes(sample_sdfs[1].read_bytes())
     with pytest.raises(IndexBuildError, match="still searchable") as err:
-        build_chunks(paths, sources([link, through]), workers=1)
-    named = (link, moved, third)
+        build_chunks(paths, sources([through, new]), workers=1)
+    named = (liba, moved)
     quoted = " ".join(f"--sdf {hints._quote(str(p))}" for p in named)
     assert f"index build {quoted}" in str(err.value)
     assert "--sdf FILE" not in str(err.value)
     report = build_chunks(paths, sources(named), workers=1)
-    assert sorted(report.rebuilt) == ["current", "libb", "libc"]
+    assert sorted(report.rebuilt) == ["a", "b"]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX directory modes")
