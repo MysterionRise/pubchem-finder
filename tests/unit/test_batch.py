@@ -85,6 +85,49 @@ def test_read_smi(tmp_path):
     ]
 
 
+def test_read_smi_keeps_a_cxsmiles_extension_with_its_smiles(tmp_path):
+    # `SMILES |&1:1| name` was read as the SMILES with "|&1:1| name" as its id,
+    # so a racemate was answered as one enantiomer (issue #212). With the
+    # extension the row is refused by name, as the same text is anywhere else.
+    path = write(
+        tmp_path,
+        "cx.smi",
+        "C[C@H](N)C(=O)O |&1:1| rac-alanine\n"
+        "C[C@H](N)C(=O)O\t|o1:1|\n"
+        "*CC(*)c1ccccc1 |$star_e;;;star_e;;;;;;$,Sg:n:1,2,4,5,6,7,8,9::ht| poly styrene\n"
+        "C[C@H](N)C(=O)O |unfinished\n"
+        "C[C@H](N)C(=O)O L-alanine\n",
+    )
+    rows = list(batch.read_inputs(path))
+    assert [(r.id, r.smiles) for r in rows] == [
+        ("rac-alanine", "C[C@H](N)C(=O)O |&1:1|"),
+        ("2", "C[C@H](N)C(=O)O |o1:1|"),
+        (
+            "poly styrene",
+            "*CC(*)c1ccccc1 |$star_e;;;star_e;;;;;;$,Sg:n:1,2,4,5,6,7,8,9::ht|",
+        ),
+        ("4", "C[C@H](N)C(=O)O |unfinished"),
+        ("L-alanine", "C[C@H](N)C(=O)O"),
+    ]
+
+    out = io.StringIO()
+    report = batch.run(
+        rows,
+        out,
+        ["canonical_smiles"],
+        lambda row: [service.properties(row.smiles).model_dump()],
+    )
+    assert report.errors == 4
+    lines = list(csv.DictReader(io.StringIO(out.getvalue())))
+    assert [line["id"] for line in lines if "CXSMILES" in line["error"]] == [
+        "rac-alanine",
+        "2",
+        "poly styrene",
+        "4",
+    ]
+    assert lines[4]["canonical_smiles"] == "C[C@H](N)C(=O)O"
+
+
 def test_read_csv_and_tsv(tmp_path):
     csv_path = write(
         tmp_path,

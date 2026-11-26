@@ -75,6 +75,12 @@ def test_smarts_atoms_are_refused_where_a_smiles_belongs():
         assert 'query_type="smarts"' in str(err.value)
     with pytest.raises(MoleculeValidationError, match="SMILES at position 2"):
         drawing._parse(["CCO", PHENOL_AS_SMARTS])
+    # RDKit writes a labelled atom with its isotope first, [13#6]: a SMARTS in
+    # which every atom is labelled has no "[#" in it.
+    for labelled in ("[13#6]1:[13#6]:[13#6]:[13#6]:[13#6]:[13#6]:1", "[18#8]"):
+        with pytest.raises(MoleculeValidationError, match="atomic numbers"):
+            service.properties(labelled)
+    assert service.properties("[13cH]1[13cH][13cH][13cH][13cH][13cH]1").molecular_weight
     # As SMARTS it is a query, and still accepted as one.
     assert service.parse_query(PHENOL_AS_SMARTS, "smarts").GetNumAtoms() == 7
     # '#' as a triple bond next to a bracket atom is ordinary SMILES.

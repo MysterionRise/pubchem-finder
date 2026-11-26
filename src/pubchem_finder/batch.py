@@ -6,7 +6,8 @@ Input formats:
   ``canonical_smiles``, ``isomeric_smiles`` or ``smi``) and optionally an id
   column (``id``, ``name``, ``cid``, ``compound_id`` or ``title``).
 - anything else (``.smi``, ``.txt``, ``-`` for stdin): one structure per line,
-  ``SMILES [id ...]``; blank lines and ``#`` comments are skipped.
+  ``SMILES [id ...]``; blank lines and ``#`` comments are skipped. A CXSMILES
+  extension after the SMILES (``|&1:1|``) is read with it, not as the id.
 
 Rows that fail (invalid SMILES, no index, ...) are written with an ``error``
 column instead of stopping the run.
@@ -102,8 +103,16 @@ def _read_smi(fh: IO[str]) -> Iterator[InputRow]:
         if not line or line.startswith("#"):
             continue
         parts = line.split(maxsplit=1)
-        ident = parts[1].strip() if len(parts) > 1 else str(n)
-        yield InputRow(line=n, id=ident, smiles=parts[0])
+        smiles = parts[0]
+        rest = parts[1].strip() if len(parts) > 1 else ""
+        if rest.startswith("|"):
+            # `SMILES |&1:1| name`: a CXSMILES extension is part of the structure,
+            # not the id. Kept with the SMILES, the row is refused by name instead
+            # of a racemate being answered as one enantiomer.
+            end = rest.find("|", 1)
+            extension = rest if end == -1 else rest[: end + 1]
+            smiles, rest = f"{smiles} {extension}", rest[len(extension) :].strip()
+        yield InputRow(line=n, id=rest or str(n), smiles=smiles)
 
 
 def _cell(value: Any) -> Any:

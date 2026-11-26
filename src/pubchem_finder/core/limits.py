@@ -18,7 +18,7 @@ MAX_STRUCTURE_CHARS = 10_000
 MAX_ATOMS = 1_000
 
 _CX_EXTENSION = re.compile(r"\s\|")
-_ATOMIC_NUMBER_ATOM = re.compile(r"\[#\d")
+_ATOMIC_NUMBER_ATOM = re.compile(r"\[\d*#\d")  # [#6], and [13#6] with its isotope
 
 
 def check_length(text: str, what: str = "SMILES") -> None:

@@ -183,10 +183,16 @@ def _to_record(mol: Chem.Mol, cid: int) -> SdfRecord:
     shown: Chem.Mol | None = None
     for tag in SMILES_TAGS:
         text = _prop(mol, tag)
-        # A tag that does not parse is not SMILES: the index would store and show
-        # it, and the ID check could not compare it, so RDKit's own stands in.
-        parsed = Chem.MolFromSmiles(text) if text else None
-        if text and parsed is not None:
+        # A field that is not one SMILES is not used: the index would store and
+        # show it, and the ID check could not compare it. That is text RDKit
+        # cannot parse, and text of more than one word (a line a tool wrapped, a
+        # name after the SMILES): RDKit reads its first word, so a wrapped
+        # aspirin would be fingerprinted as phenyl acetate. RDKit's own SMILES
+        # of the mol block stands in.
+        if text is None or not all("!" <= c <= "~" for c in text):
+            continue
+        parsed = Chem.MolFromSmiles(text)
+        if parsed is not None:
             smiles, shown = text, parsed
             break
     if smiles is None or shown is None:

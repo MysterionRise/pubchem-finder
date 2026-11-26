@@ -262,3 +262,24 @@ def test_a_record_is_the_structure_of_its_smiles(tmp_path, tag):
         asked = morgan.GetFingerprint(Chem.MolFromSmiles(smiles))
         assert DataStructs.TanimotoSimilarity(stored, shown) == 1.0, cid
         assert DataStructs.TanimotoSimilarity(stored, asked) == 1.0, cid
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "CC(=O)OC1=CC=CC=C1\nC(=O)O",  # wrapped where its first line is a SMILES
+        "CC(=O)OC1=CC=CC=C1C(=O)O aspirin",
+        "CC(=O)OC1=CC=CC=C1C(=O)O |c:5,7,t:3|",
+    ],
+)
+def test_a_smiles_field_of_more_than_one_word_is_not_used(tmp_path, field):
+    """RDKit reads the first word of such text: the field passed as phenyl
+    acetate, and since the record is fingerprinted as its SMILES, aspirin no
+    longer matched itself (0.54). The mol block's own SMILES stands in."""
+    block = pubchem_block(2244, "CC(=O)OC1=CC=CC=C1C(=O)O", tag=False)
+    path = tmp_path / "wrapped.sdf"
+    path.write_text(block.replace("$$$$", f">  <PUBCHEM_SMILES>\n{field}\n\n$$$$"))
+    (record,) = SdfReader(path)
+    assert record.smiles == "CC(=O)Oc1ccccc1C(=O)O"
+    assert record.mol.GetNumAtoms() == 13
+    assert Chem.MolToSmiles(record.mol) == record.smiles
