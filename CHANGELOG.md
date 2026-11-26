@@ -70,17 +70,22 @@ All notable changes to this project are documented here. The format follows
   (#195). `props -i - -o lib.smi < lib.smi` kept 179 of 5,000 rows and
   `cat lib.smi | props -i - -o lib.smi` 3,478, both with exit status 0. Input redirected
   from the output file is now refused, as `-i lib.smi -o lib.smi` already was, also when
-  it is spelled `-i /dev/stdin`. The rows are written to a partial file beside the output
-  (`FILE.<random>.part`) that takes its place when the run ends: piped input is read to
-  its end first, a run that stops early leaves an existing output file untouched, and
-  Ctrl+C keeps the rows finished so far in the partial file and says where it is. An
-  output that cannot be written (a missing directory, a read-only file) is reported
-  before the first row is processed. An output that can be written but not replaced (a
-  file in a read-only directory or mounted into a container, one with hard links or
-  another owner) gets the finished rows written into it instead, and a device, a pipe
-  or a name for an open descriptor (`-o /dev/stdout`, `-o >(gzip > out.csv.gz)`) is
-  written directly, as before. The output no longer has to be readable, which had
-  refused a write-only file, and `-o /dev/stdout` under a pipe on macOS.
+  it is spelled `-i /dev/stdin`. The rows are written to a partial file
+  (`FILE.<random>.part` beside the output, or in the temporary directory when nothing can
+  be created there) and become the output when the run ends: piped input is read to its
+  end first, a run that stops early leaves an existing output file untouched, and Ctrl+C
+  keeps the rows finished so far in the partial file and says where it is. No run removes
+  a partial file; the next one says that it is there. An output that cannot be written (a
+  missing directory, a read-only file) is reported before the first row is processed. An
+  existing output with content is replaced by a new file of the same mode, so a program
+  that has the old file open keeps reading the old content. Where that would change more
+  than the content, or cannot be done, the finished rows are written into the file
+  instead: an empty file (which its maker may hold open), one with hard links, another
+  owner or group, an access list or other extended attributes, a file in a read-only
+  directory or mounted into a container. A device, a pipe or a name for an open
+  descriptor (`-o /dev/stdout`, `-o >(gzip > out.csv.gz)`) is written directly, as
+  before. The output no longer has to be readable, which had refused a write-only file,
+  and `-o /dev/stdout` under a pipe on macOS.
 
 - Local index searches report invalid `PUBCHEM_FINDER_INDEX_MODE` values instead of silently choosing `auto` (#228).
 - `compound_properties`, `medchem_profile`, and the JSON output of `props` and `triage` serialize molecular weight, LogP, and TPSA to three decimal places. Batch CSV uses the same precision for these descriptors (#162).

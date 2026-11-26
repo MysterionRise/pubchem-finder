@@ -1,6 +1,7 @@
 """Command-line interface: ``pubchem-finder``."""
 
 import contextlib
+import errno
 import itertools
 import os
 import re
@@ -10,6 +11,7 @@ import stat
 import sys
 import tempfile
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import IO, Annotated, Any, cast
@@ -681,7 +683,8 @@ _FD_PATH = re.compile(r"(?:/dev/fd|/proc/self/fd)/(\d+)")
 _DESCRIPTOR_PATH = re.compile(
     r"/dev/(?:stdin|stdout|stderr|fd/\d+)|/proc/[^/]+/(?:task/[^/]+/)?fd/\d+"
 )
-_PART_STEM = 60  # characters of the output's name that its partial file's name keeps
+_BINARY = getattr(os, "O_BINARY", 0)
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
 def _input_descriptor(path: Path) -> int | None:
@@ -715,6 +718,21 @@ def _same_file(a: Path, b: Path) -> bool:
         return False
 
 
+def _names_descriptor(path: Path) -> bool:
+    """Whether ``path`` is a name for an open descriptor, or a link to one
+    (`ln -s /dev/stdout out.csv`, for a program that wants a file name)."""
+    current = os.path.abspath(path)
+    for _ in range(40):  # links to links, as far as the kernel follows them
+        if _DESCRIPTOR_PATH.fullmatch(re.sub(r"^/+", "/", Path(current).as_posix())):
+            return True
+        try:
+            link = os.readlink(current)
+        except (OSError, ValueError):
+            return False  # no link: an ordinary name, or nothing yet
+        current = os.path.normpath(os.path.join(os.path.dirname(current), link))
+    return False
+
+
 def _replaceable(output: Path) -> tuple[Path, os.stat_result | None] | None:
     """The regular file a batch writing ``output`` replaces, with what is known of
     it now (None for a file that does not exist yet); or None when ``output`` has
@@ -725,7 +743,7 @@ def _replaceable(output: Path) -> tuple[Path, os.stat_result | None] | None:
     dangling or refused (as one planted in a shared directory is): following it
     here would overrule the kernel.
     """
-    if _DESCRIPTOR_PATH.fullmatch(Path(os.path.abspath(output)).as_posix()):
+    if _names_descriptor(output):
         return None
     try:
         entry = os.lstat(output)
@@ -747,63 +765,227 @@ def _replaceable(output: Path) -> tuple[Path, os.stat_result | None] | None:
     return None
 
 
-def _stage_beside(
-    target: Path, previous: os.stat_result | None
-) -> tuple[IO[str], Path]:
+def _part_stem(name: str) -> str:
+    """How the name of the partial file of an output called ``name`` begins: with
+    all of it, unless the 14 characters that follow (``.<random>.part``) would
+    make a name longer than a directory holds, 255 bytes."""
+    stem = name
+    while len(os.fsencode(stem)) > 255 - 14:
+        stem = stem[:-1]
+    return stem
+
+
+@dataclass
+class _Partial:
+    """The file a batch's rows are staged in until the run ends."""
+
+    handle: IO[str]
+    path: Path
+    beside: bool  # next to the output, where it can be renamed over it
+
+
+def _stage_beside(target: Path, private: bool) -> _Partial:
     """Create the partial file for ``target`` next to it, under a name nothing has.
 
-    No file is removed or written over to make room for it (a guessable name
-    could be the batch's own input, or a link someone put there), and others can
-    read it no more than they can read the output it will replace.
+    No file is removed or written over to make room for it: a name that can be
+    guessed could be the batch's own input, or a link someone put there. With
+    ``private`` only this user can read it: an existing output's mode, group and
+    access list say who may read its rows, and the partial file has none of them
+    until it takes the output's place.
     """
-    mode = 0o666
-    if previous is not None:
-        mode = (stat.S_IMODE(previous.st_mode) & 0o777) | 0o600  # this user's to write
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | _BINARY
     while True:
-        name = f"{target.name[:_PART_STEM]}.{secrets.token_hex(4)}.part"
+        name = f"{_part_stem(target.name)}.{secrets.token_hex(4)}.part"
         part = target.with_name(name)
         try:
-            descriptor = os.open(part, flags, mode)
+            descriptor = os.open(part, flags, 0o600 if private else 0o666)
         except FileExistsError:
             continue
-        return os.fdopen(descriptor, "w", newline="", encoding="utf-8"), part
+        handle = os.fdopen(descriptor, "w", newline="", encoding="utf-8")
+        return _Partial(handle, part, beside=True)
+
+
+def _is(path: Path, known: os.stat_result) -> bool:
+    """Whether ``path`` still names the file ``known`` describes."""
+    try:
+        now = os.lstat(path)
+    except OSError:
+        return False
+    return (now.st_dev, now.st_ino) == (known.st_dev, known.st_ino)
+
+
+def _reopen(path: Path, known: os.stat_result, flags: int) -> int:
+    """Open ``path`` if it is still the file ``known`` describes.
+
+    A batch can run for hours, in a directory where others may rename things.
+    What lies under a name at the end is read or written only if it is the file
+    this run made, or found at the start: never a link, never another file.
+    """
+    replaced = OSError(f"{path} was replaced by another file while the batch ran")
+    try:
+        descriptor = os.open(path, flags | _NOFOLLOW | _BINARY)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:  # a link now
+            raise replaced from exc
+        raise
+    now = os.fstat(descriptor)
+    if (now.st_dev, now.st_ino) != (known.st_dev, known.st_ino):
+        os.close(descriptor)
+        raise replaced
+    return descriptor
+
+
+def _attributes(file: int | Path) -> dict[str, bytes] | None:
+    """A file's extended attributes (an access list, a security label) where the
+    system lets Python read them, or None if they cannot be told."""
+    if not hasattr(os, "listxattr"):
+        return {}
+    try:
+        if isinstance(file, int):
+            return {name: os.getxattr(file, name) for name in os.listxattr(file)}
+        names = os.listxattr(file, follow_symlinks=False)
+        return {n: os.getxattr(file, n, follow_symlinks=False) for n in names}
+    except OSError as exc:
+        return {} if exc.errno in (errno.ENOTSUP, errno.EOPNOTSUPP) else None
 
 
 def _publish(
-    part: Path, target: Path, previous: os.stat_result | None, beside: bool
+    partial: _Partial,
+    mine: os.stat_result,
+    target: Path,
+    previous: os.stat_result | None,
 ) -> None:
-    """Make the finished ``part`` the content of ``target``.
+    """Make the finished partial file the content of ``target``.
 
-    By renaming it into place where that changes nothing else. A file with other
-    names (hard links), another owner or another group keeps them by being
-    written in place instead, and so is one that cannot be replaced: a file
-    mounted into a container, or one in a directory that only lets its content
-    change.
+    By renaming it into place where that changes nothing else: a new output, or
+    one with content, a single name, this user's owner and group and no access
+    list or attributes of its own. Any other output keeps what it has by being
+    written in place: so is an empty one, which a caller may hold open to read
+    the rows from (``tempfile.NamedTemporaryFile``), and one that cannot be
+    replaced, such as a file mounted into a container or one in a directory
+    that only lets its content change.
+
+    ``mine`` identifies the partial file: see :func:`_reopen`.
     """
-    if previous is None:
-        os.replace(part, target)
-        return
-    staged = os.stat(part)
-    unshared = previous.st_nlink == 1 and (previous.st_uid, previous.st_gid) == (
-        staged.st_uid,
-        staged.st_gid,
-    )
-    if beside and unshared:
+    descriptor = partial.handle.fileno()
+    rename = partial.beside and _is(partial.path, mine)
+    if previous is not None:
+        attributes = _attributes(descriptor)
+        rename = (
+            rename
+            and previous.st_size > 0
+            and previous.st_nlink == 1
+            and (previous.st_uid, previous.st_gid) == (mine.st_uid, mine.st_gid)
+            and attributes is not None
+            and attributes == _attributes(target)
+        )
+        if rename:
+            # Through the descriptor where the system can: the name may no longer
+            # be this file's. (It cannot on Windows before Python 3.13, where an
+            # open file keeps its name.)
+            by_descriptor = os.chmod in os.supports_fd
+            mode = stat.S_IMODE(previous.st_mode)
+            try:
+                os.chmod(descriptor if by_descriptor else partial.path, mode)
+            except OSError:
+                rename = False
+    partial.handle.close()  # Windows renames no open file
+    if rename:
         try:
-            with contextlib.suppress(FileNotFoundError):  # removed during the run
-                shutil.copymode(target, part)
-            os.replace(part, target)
+            os.replace(partial.path, target)
         except OSError:
-            pass
+            pass  # copied below, which asks less of the directory
         else:
             return
-    flags = os.O_WRONLY | os.O_TRUNC | getattr(os, "O_BINARY", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0)  # the file found at the start, not a link
-    with part.open("rb") as rows, os.fdopen(os.open(target, flags), "wb") as out:
+    with contextlib.ExitStack() as opened:
+        rows = opened.enter_context(
+            os.fdopen(_reopen(partial.path, mine, os.O_RDONLY), "rb")
+        )
+        if previous is None:
+            new = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _BINARY
+            out = opened.enter_context(os.fdopen(os.open(target, new, 0o666), "wb"))
+        else:
+            out = opened.enter_context(
+                os.fdopen(_reopen(target, previous, os.O_WRONLY), "wb")
+            )
+            # The old content goes before the new is in: while it is still there,
+            # make sure the new will fit.
+            needed = mine.st_size - os.fstat(out.fileno()).st_size
+            free = None
+            with contextlib.suppress(OSError):
+                free = shutil.disk_usage(target.parent).free
+            if free is not None and needed > free:
+                raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+            out.truncate(0)
         shutil.copyfileobj(rows, out)
     with contextlib.suppress(OSError):
-        part.unlink()
+        partial.path.unlink()
+
+
+def _stage(
+    output: Path, target: Path, previous: os.stat_result | None
+) -> _Partial | IO[str]:
+    """Where the rows of a run go until it ends: a partial file beside the output,
+    or in the system's temporary directory when nothing can be created beside an
+    output that exists. Where neither can be had, the output itself, opened to be
+    written directly: it is then not protected, and written as it always was.
+    """
+    try:
+        if previous is None:
+            try:
+                return _stage_beside(target, private=False)
+            except OSError:
+                # If the output itself can be created, the trouble was the
+                # partial file's (its longer name, say). If not, this is the
+                # error to report.
+                new = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _BINARY
+                descriptor = os.open(target, new, 0o666)
+                return os.fdopen(descriptor, "w", newline="", encoding="utf-8")
+        # Writable and not locked; its content is untouched. Not opened for
+        # appending: an append-only file would pass, and can then be neither
+        # replaced nor rewritten.
+        os.close(os.open(target, os.O_WRONLY | _BINARY))
+        with contextlib.suppress(OSError):
+            return _stage_beside(target, private=True)
+        try:
+            descriptor, name = tempfile.mkstemp(
+                prefix=f"{_part_stem(target.name)}.", suffix=".part"
+            )
+        except OSError:
+            descriptor = _reopen(target, previous, os.O_WRONLY)
+            os.ftruncate(descriptor, 0)
+            return os.fdopen(descriptor, "w", newline="", encoding="utf-8")
+        handle = os.fdopen(descriptor, "w", newline="", encoding="utf-8")
+        return _Partial(handle, Path(name), beside=False)
+    except OSError as exc:
+        if exc.errno is None or exc.strerror is None:
+            raise
+        # Name the file that was asked for, not a partial file or a link's target.
+        raise OSError(exc.errno, exc.strerror, str(output)) from exc
+
+
+def _earlier_partial_files(target: Path, mine: Path) -> list[str]:
+    stem = re.escape(_part_stem(target.name))
+    partial = re.compile(stem + r"\.[0-9a-f]{8}\.part")
+    try:
+        with os.scandir(target.parent) as entries:
+            names = [e.name for e in entries if partial.fullmatch(e.name)]
+    except OSError:
+        return []
+    return sorted(name for name in names if name != mine.name)
+
+
+def _from_interrupt(exc: BaseException | None) -> bool:
+    """Whether Ctrl+C is behind ``exc``: itself, or wrapped by a library that was
+    running Python code when it came (pydantic wraps one that arrives in a
+    serializer in a ValueError)."""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, KeyboardInterrupt):
+            return True
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return False
 
 
 @contextlib.contextmanager
@@ -816,8 +998,9 @@ def _replacing(output: Path) -> Iterator[IO[str]]:
     changes. What cannot be written is reported before the batch runs, not after
     it: a missing directory, a read-only or locked output.
 
-    After an error the partial file is removed. After Ctrl+C it is kept: the rows
-    finished so far may be hours of work.
+    After an error the partial file is removed. After Ctrl+C it is kept, and so
+    it is when the run is killed: the rows finished so far may be hours of work.
+    No run removes the partial file of another.
 
     A device, a pipe or an open descriptor (``-o /dev/stdout``) has nothing to
     keep and is written directly: see :func:`_replaceable`.
@@ -828,45 +1011,58 @@ def _replacing(output: Path) -> Iterator[IO[str]]:
             yield direct
         return
     target, previous = plan
+    staged = _stage(output, target, previous)
+    if not isinstance(staged, _Partial):
+        with staged as direct:
+            yield direct
+        return
+    part = staged.path
+    left = _earlier_partial_files(target, part) if staged.beside else []
+    if left:
+        typer.echo(
+            f"note: {len(left)} partial file(s) of runs that did not finish lie "
+            f"beside {output} ({_some(left)}); this run leaves them as they are",
+            err=True,
+        )
     try:
-        if previous is not None:
-            with target.open("a", encoding="utf-8"):
-                pass  # writable and not locked; its content is untouched
-        try:
-            fh, part = _stage_beside(target, previous)
-            beside = True
-        except OSError:
-            if previous is None:
-                raise  # the output could not be created there either
-            # A file that can be written in a directory where nothing can be
-            # created: its rows wait in the system's temporary directory.
-            descriptor, name = tempfile.mkstemp(
-                prefix=f"{target.name[:_PART_STEM]}.", suffix=".part"
-            )
-            fh = os.fdopen(descriptor, "w", newline="", encoding="utf-8")
-            part, beside = Path(name), False
-    except OSError as exc:
-        if exc.errno is None or exc.strerror is None:
-            raise
-        # Name the file that was asked for, not a partial file or a link's target.
-        raise OSError(exc.errno, exc.strerror, str(output)) from exc
-    try:
-        with fh:
-            yield fh
-    except KeyboardInterrupt:
-        typer.echo(f"interrupted: the rows finished so far are in {part}", err=True)
-        raise
-    except BaseException:
+        yield staged.handle
+        staged.handle.flush()
+        mine = os.fstat(staged.handle.fileno())
+    except BaseException as exc:
+        with contextlib.suppress(OSError):
+            staged.handle.close()
+        if _from_interrupt(exc):
+            typer.echo(f"interrupted: the rows finished so far are in {part}", err=True)
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            raise KeyboardInterrupt from exc
         with contextlib.suppress(OSError):  # the error that stopped the run counts
             part.unlink()
+        if isinstance(exc, OSError) and exc.errno == errno.ENOSPC and not exc.filename:
+            # A full disk names no file, and the rows may be staged on another
+            # one than the output's.
+            where = "" if staged.beside else " (set TMPDIR to a directory with room)"
+            reason = f"{exc.strerror} where the rows are staged{where}"
+            raise OSError(exc.errno, reason, str(part)) from exc
         raise
     try:
-        _publish(part, target, previous, beside)
+        _publish(staged, mine, target, previous)
+    except KeyboardInterrupt:
+        if _is(part, mine):
+            typer.echo(
+                f"interrupted while {output} was being written: the complete rows "
+                f"are in {part}",
+                err=True,
+            )
+        raise
     except OSError as exc:
+        kept = f"; the results are in {part}" if _is(part, mine) else ""
         raise OSError(
-            f"could not write {output} ({exc.strerror or exc}); "
-            f"the results are in {part}"
+            f"could not write {output} ({exc.strerror or exc}){kept}"
         ) from exc
+    finally:
+        with contextlib.suppress(OSError):
+            staged.handle.close()
 
 
 def _default_workers() -> int:

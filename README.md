@@ -262,10 +262,12 @@ pubchem-finder substructure -i fragments.smi -o hits.csv
 
 Rows that fail in batch mode get an `error` column instead of stopping the run; the exit
 status is 1 only when every row failed. The rows are written to a partial file beside
-the output (`FILE.<random>.part`) that takes its place when the run ends, so a run that
-stops early leaves an existing output as it was, and Ctrl+C keeps the rows finished so
-far in the partial file and says where it is. A pipe or `-o /dev/stdout` is written
-directly. `search -i` says on standard error when inputs had more hits than `--top`.
+the output (`FILE.<random>.part`) and become the output when the run ends, so a run that
+stops early leaves an existing output as it was. Ctrl+C keeps the rows finished so far
+in the partial file and says where it is; partial files are yours to delete, and no
+later run removes them. An existing output with content is replaced by a new file. A
+pipe or `-o /dev/stdout` is written directly. `search -i` says on standard error when
+inputs had more hits than `--top`.
 
 ![Aspirin analogues, with the atoms each one adds to aspirin highlighted](https://raw.githubusercontent.com/MysterionRise/pubchem-finder/master/docs/images/analogues-diff.png)
 
