@@ -3335,7 +3335,13 @@ def test_relative_home_cli_warning_is_on_stderr(tmp_path, source, warning_filter
     env = {
         **os.environ,
         "PUBCHEM_FINDER_HOME": "relative-data",
-        "PYTHONWARNINGS": warning_filter,
+        # Typer 0.16 imports these deprecated Click 8.5 helpers. Ignore only
+        # those import warnings; the requested policy still covers UserWarning.
+        "PYTHONWARNINGS": (
+            f"{warning_filter},"
+            "ignore:'click.utils.get_binary_stream' is deprecated:DeprecationWarning:typer,"
+            "ignore:'click.utils.get_text_stream' is deprecated:DeprecationWarning:typer"
+        ),
     }
     if source == "option":
         args += ["--home", "relative-data"]

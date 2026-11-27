@@ -63,5 +63,7 @@ def test_whitespace_environment_home_still_names_its_relative_directory(
 ):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PUBCHEM_FINDER_HOME", "   ")
-    assert resolve_home() == tmp_path / "   "
-    assert str(tmp_path / "   ") in relative_home_warning("   ")
+    expected = (tmp_path / "   ").resolve()
+    assert resolve_home() == expected
+    assert resolve_home() != default_home()
+    assert str(expected) in relative_home_warning("   ")
