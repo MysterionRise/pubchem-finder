@@ -20,6 +20,9 @@ others, [help is welcome](#add-your-client).
 | Arguments | `--python`, `3.14`, `pubchem-finder`, `mcp` |
 | Environment (optional) | `PUBCHEM_FINDER_HOME=/path` to keep the local index somewhere other than the default data directory |
 
+Use an absolute path or `~/…` for `PUBCHEM_FINDER_HOME`. Relative paths use the
+client process working directory, which may differ from your terminal.
+
 Before adding it to a client, run `uvx --python 3.14 pubchem-finder --version` once in a
 terminal. The
 first run downloads Python packages (RDKit, PyArrow, DuckDB...) and can take a minute,

@@ -93,7 +93,9 @@ an index, they search a built-in demo set of 1,932 FDA-approved drugs (built in 
 second on first use) and say so. Build a PubChem index from the command line (below) and
 the server switches to it, no restart needed. To use a non-default data directory, add
 `"env": {"PUBCHEM_FINDER_HOME": "/path"}` to the Claude Desktop entry, or
-`--env PUBCHEM_FINDER_HOME=/path` to `claude mcp add`.
+`--env PUBCHEM_FINDER_HOME=/path` to `claude mcp add`. Use an absolute path or
+`~/…`: relative paths use the client process working directory, which may differ
+from your terminal.
 
 **Other MCP clients:** the server speaks standard MCP over stdio, so any client that runs
 local MCP servers (Cursor, VS Code, Windsurf, Zed, JetBrains IDEs, Codex CLI, LM Studio...)
@@ -313,7 +315,7 @@ Data lives in the platform data directory (`~/.local/share/pubchem-finder` on Li
 `~/Library/Application Support/pubchem-finder` on macOS, `%LOCALAPPDATA%\pubchem-finder`
 on Windows). Override it with `--home DIR` or `PUBCHEM_FINDER_HOME`.
 Relative paths resolve against the process working directory and emit a warning.
-Use an absolute path (or a path starting with `~`) in an MCP client configuration:
+Use an absolute path (or `~/…`) in an MCP client configuration:
 the client may start the server from a different working directory than your terminal.
 
 ## Use it from Python

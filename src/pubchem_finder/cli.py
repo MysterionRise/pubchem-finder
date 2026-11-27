@@ -20,7 +20,7 @@ import typer
 from pydantic import BaseModel
 
 from . import __version__, batch, service
-from .config import HOME_ENV, resolve_home
+from .config import HOME_ENV, relative_home_warning, resolve_home
 from .core.exceptions import InvalidInput, PubChemFinderError
 from .data.pug_rest import ANNOTATION_HEADINGS, AnnotationHeading, CompoundNotFound
 from .models import RemoteSearchResults, SubstructureResults
@@ -93,11 +93,20 @@ def _home_path(value: str) -> Path:
     return Path(value)
 
 
+def _resolve_home_option(ctx: typer.Context, value: Path | None) -> Path | None:
+    if ctx.resilient_parsing or value is None:
+        return value
+    if warning := relative_home_warning(value):
+        typer.echo(f"warning: {warning}", err=True)
+    return resolve_home(value)
+
+
 HomeOpt = Annotated[
     Path | None,
     typer.Option(
         "--home",
         parser=_home_path,
+        callback=_resolve_home_option,
         envvar="PUBCHEM_FINDER_HOME",
         help="Data directory (default: platform user data dir). "
         "Relative paths use the process working directory; prefer an absolute path.",

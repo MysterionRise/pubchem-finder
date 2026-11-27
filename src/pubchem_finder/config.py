@@ -7,7 +7,6 @@ be overridden with ``PUBCHEM_FINDER_HOME`` or an explicit path.
 """
 
 import os
-import warnings
 from pathlib import Path
 
 from platformdirs import user_data_dir
@@ -22,24 +21,28 @@ DEMO_ENV = "PUBCHEM_FINDER_DEMO"
 
 def resolve_home(explicit: Path | str | None = None) -> Path:
     """Return the data directory: explicit path, then ``$PUBCHEM_FINDER_HOME``,
-    then the platform default. Relative paths use the process working directory
-    and emit a warning. The directory is not created."""
+    then the platform default. Relative paths use the process working directory.
+    The directory is not created."""
     if explicit is not None and not str(explicit).strip():
         explicit = None  # an empty path would otherwise resolve to the CWD
     value = explicit if explicit is not None else os.environ.get(HOME_ENV)
     if not value:
         return default_home()
+    return Path(value).expanduser().resolve()
+
+
+def relative_home_warning(value: Path | str | None) -> str | None:
+    """A diagnostic for launchers using a relative data directory, without output."""
+    if value is None or not str(value):
+        return None
     path = Path(value).expanduser()
-    resolved = path.resolve()
-    if not path.is_absolute():
-        warnings.warn(
-            f"The relative data directory {str(value)!r} resolves to {resolved} "
-            "against the process working directory. Use an absolute path for "
-            "--home or PUBCHEM_FINDER_HOME, especially in an MCP client.",
-            UserWarning,
-            stacklevel=2,
-        )
-    return resolved
+    if path.is_absolute():
+        return None
+    return (
+        f"The relative data directory {str(value)!r} resolves to {path.resolve()} "
+        "against the process working directory. Use an absolute path for "
+        "--home or PUBCHEM_FINDER_HOME, especially in an MCP client."
+    )
 
 
 def default_home() -> Path:

@@ -114,16 +114,38 @@ async def test_first_search_builds_the_demo_index_over_stdio(tmp_path):
 
 
 @pytest.mark.parametrize("source", ["option", "environment", "module"])
-async def test_relative_home_warns_without_corrupting_stdio(tmp_path, source):
-    args = ["-m", "pubchem_finder", "mcp"]
-    env = {**os.environ, "PUBCHEM_FINDER_HOME": "relative-data"}
+@pytest.mark.parametrize("warning_filter", ["default", "error", "ignore"])
+async def test_relative_home_warns_without_corrupting_stdio(
+    tmp_path, source, warning_filter
+):
+    # Run the real entry point, tools and HTTP client, replacing only the network.
+    # Unexpected requests fail rather than reaching PubChem.
+    mocked_server = """
+import runpy
+import sys
+import respx
+
+module = sys.argv.pop(1)
+with respx.mock as router:
+    router.get("https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/2244/synonyms/JSON").respond(
+        200, json={"InformationList": {"Information": [{"CID": 2244, "Synonym": ["aspirin"]}]}}
+    )
+    runpy.run_module(module, run_name="__main__")
+"""
+    args = ["pubchem_finder", "mcp"]
+    env = {
+        **os.environ,
+        "PUBCHEM_FINDER_HOME": "relative-data",
+        "PUBCHEM_FINDER_CACHE": "0",
+        "PYTHONWARNINGS": warning_filter,
+    }
     if source == "option":
         args += ["--home", "relative-data"]
         env["PUBCHEM_FINDER_HOME"] = str(tmp_path / "ignored")
     elif source == "module":
-        args = ["-m", "pubchem_finder.mcp_server"]
+        args = ["pubchem_finder.mcp_server"]
     params = StdioServerParameters(
-        command=sys.executable, args=args, env=env, cwd=tmp_path
+        command=sys.executable, args=["-c", mocked_server, *args], env=env, cwd=tmp_path
     )
     log = tmp_path / "server-stderr.log"
     with log.open("w", encoding="utf-8") as errlog:
@@ -138,8 +160,13 @@ async def test_relative_home_warns_without_corrupting_stdio(tmp_path, source):
                 assert status.structured_content["home"] == str(
                     tmp_path / "relative-data"
                 )
+                synonyms = await session.call_tool("pubchem_synonyms", {"cid": 2244})
+                assert synonyms.is_error is False
+                assert synonyms.structured_content["synonyms"] == ["aspirin"]
     stderr = log.read_text()
-    assert "relative data directory" in stderr
+    assert stderr.startswith("warning: The relative data directory")
     assert str(tmp_path / "relative-data") in stderr
-    assert stderr.count("UserWarning:") == 1
+    assert stderr.count("relative data directory") == 1
+    assert stderr.count("warning: ") == 1
+    assert "UserWarning" not in stderr
     assert not (tmp_path / "relative-data").exists()

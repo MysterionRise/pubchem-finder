@@ -3329,17 +3329,70 @@ def test_extending_an_index_keeps_its_fingerprint_settings(
 
 
 @pytest.mark.parametrize("source", ["option", "environment"])
-def test_relative_home_cli_warning_is_on_stderr(tmp_path, source):
+@pytest.mark.parametrize("warning_filter", ["default", "error", "ignore"])
+def test_relative_home_cli_warning_is_on_stderr(tmp_path, source, warning_filter):
     args = [sys.executable, "-m", "pubchem_finder", "index", "status", "--json"]
-    env = {**os.environ, "PUBCHEM_FINDER_HOME": "relative-data"}
+    env = {
+        **os.environ,
+        "PUBCHEM_FINDER_HOME": "relative-data",
+        "PYTHONWARNINGS": warning_filter,
+    }
     if source == "option":
         args += ["--home", "relative-data"]
         env["PUBCHEM_FINDER_HOME"] = str(tmp_path / "ignored")
     result = subprocess.run(
         args, env=env, cwd=tmp_path, capture_output=True, text=True, check=True
     )
-    data = json.loads(result.stdout)
-    assert data["home"] == str(tmp_path / "relative-data")
-    assert "relative data directory" in result.stderr
+    assert json.loads(result.stdout)["home"] == str(tmp_path / "relative-data")
+    assert result.stderr.startswith("warning: The relative data directory")
     assert str(tmp_path / "relative-data") in result.stderr
+    assert len(result.stderr.splitlines()) == 1
     assert not (tmp_path / "relative-data").exists()
+
+
+@pytest.mark.parametrize("source", ["option", "environment"])
+@pytest.mark.parametrize(
+    "command", [["index", "status"], ["pubchem", "synonyms", "2244"]]
+)
+def test_home_callback_warns_once_for_local_and_live_commands(
+    tmp_path, monkeypatch, pubchem_knowledge_api, source, command
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PUBCHEM_FINDER_HOME", "relative-data")
+    monkeypatch.setenv("PUBCHEM_FINDER_CACHE", "0")
+    args = [*command, "--json"]
+    if source == "option":
+        args += ["--home", "relative-data"]
+        monkeypatch.setenv("PUBCHEM_FINDER_HOME", "ignored-relative")
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    if command[0] == "index":
+        assert data["home"] == str(tmp_path / "relative-data")
+    else:
+        assert data["cid"] == 2244
+        assert data["synonyms"]
+    assert result.stderr.startswith("warning: The relative data directory")
+    assert str(tmp_path / "relative-data") in result.stderr
+    assert len(result.stderr.splitlines()) == 1
+
+
+def test_home_callback_is_quiet_during_completion(monkeypatch, tmp_path, capsys):
+    from typer.main import get_command
+
+    monkeypatch.chdir(tmp_path)
+    command = get_command(app).commands["index"].commands["status"]
+    with command.make_context(
+        "status", ["--home", "relative-data"], resilient_parsing=True
+    ) as ctx:
+        assert ctx.params["home"] == Path("relative-data")
+    assert capsys.readouterr() == ("", "")
+    assert not (tmp_path / "relative-data").exists()
+
+
+def test_absolute_home_override_does_not_warn_for_relative_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("PUBCHEM_FINDER_HOME", "ignored-relative")
+    result = runner.invoke(app, ["index", "status", "--home", str(tmp_path), "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["home"] == str(tmp_path)
+    assert result.stderr == ""
