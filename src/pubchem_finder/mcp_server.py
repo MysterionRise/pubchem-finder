@@ -8,6 +8,7 @@ stdout: over stdio, stdout is the MCP transport.
 import asyncio
 import functools
 import logging
+import os
 import sys
 import weakref
 from collections.abc import Callable
@@ -27,6 +28,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from . import __version__, service
+from .config import HOME_ENV, relative_home_warning
 from .core.exceptions import PubChemFinderError
 from .data.pug_rest import (
     AnnotationHeading,
@@ -656,6 +658,8 @@ def main(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000) ->
     logging.basicConfig(
         level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s"
     )
+    if warning := relative_home_warning(os.environ.get(HOME_ENV)):
+        print(f"warning: {warning}", file=sys.stderr)
     match transport:
         case "stdio":
             mcp.run(transport="stdio")

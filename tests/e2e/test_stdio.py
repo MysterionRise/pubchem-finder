@@ -111,3 +111,68 @@ async def test_first_search_builds_the_demo_index_over_stdio(tmp_path):
     assert similar.structured_content["hits"][0]["cid"] == 2244
     assert len(fragment.structured_content["hits"]) == 5
     assert (tmp_path / "home" / "demo").is_dir()
+
+
+@pytest.mark.parametrize("source", ["option", "environment", "module"])
+@pytest.mark.parametrize("warning_filter", ["default", "error", "ignore"])
+async def test_relative_home_warns_without_corrupting_stdio(
+    tmp_path, source, warning_filter
+):
+    # Run the real entry point, tools and HTTP client, replacing only the network.
+    # Unexpected requests fail rather than reaching PubChem.
+    mocked_server = """
+import runpy
+import sys
+import respx
+
+module = sys.argv.pop(1)
+with respx.mock as router:
+    router.get("https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/2244/synonyms/JSON").respond(
+        200, json={"InformationList": {"Information": [{"CID": 2244, "Synonym": ["aspirin"]}]}}
+    )
+    runpy.run_module(module, run_name="__main__")
+"""
+    args = ["pubchem_finder", "mcp"]
+    env = {
+        **os.environ,
+        "PUBCHEM_FINDER_HOME": "relative-data",
+        "PUBCHEM_FINDER_CACHE": "0",
+        # Typer 0.16 imports these deprecated Click 8.5 helpers. Ignore only
+        # those import warnings; the requested policy still covers UserWarning.
+        "PYTHONWARNINGS": (
+            f"{warning_filter},"
+            "ignore:'click.utils.get_binary_stream' is deprecated:DeprecationWarning:typer,"
+            "ignore:'click.utils.get_text_stream' is deprecated:DeprecationWarning:typer"
+        ),
+    }
+    if source == "option":
+        args += ["--home", "relative-data"]
+        env["PUBCHEM_FINDER_HOME"] = str(tmp_path / "ignored")
+    elif source == "module":
+        args = ["pubchem_finder.mcp_server"]
+    params = StdioServerParameters(
+        command=sys.executable, args=["-c", mocked_server, *args], env=env, cwd=tmp_path
+    )
+    log = tmp_path / "server-stderr.log"
+    with log.open("w", encoding="utf-8") as errlog:
+        async with (
+            stdio_client(params, errlog=errlog) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            for _ in range(2):
+                status = await session.call_tool("index_status", {})
+                assert status.is_error is False
+                assert status.structured_content["home"] == str(
+                    tmp_path / "relative-data"
+                )
+                synonyms = await session.call_tool("pubchem_synonyms", {"cid": 2244})
+                assert synonyms.is_error is False
+                assert synonyms.structured_content["synonyms"] == ["aspirin"]
+    stderr = log.read_text()
+    assert stderr.startswith("warning: The relative data directory")
+    assert str(tmp_path / "relative-data") in stderr
+    assert stderr.count("relative data directory") == 1
+    assert stderr.count("warning: ") == 1
+    assert "UserWarning" not in stderr
+    assert not (tmp_path / "relative-data").exists()
