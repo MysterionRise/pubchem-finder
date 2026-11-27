@@ -4,7 +4,7 @@ import pytest
 from rdkit import Chem
 
 from pubchem_finder.data.sdf import SdfReader
-from tests.conftest import CHUNK_A, write_sdf
+from tests.conftest import CHUNK_A, IMINES, pubchem_block, write_sdf
 
 
 def test_reads_good_records_and_counts_failures(sample_sdfs):
@@ -236,3 +236,50 @@ def test_record_without_atoms_is_skipped_and_bad_smiles_tag_is_replaced(tmp_path
     assert records[0].smiles == "CCO"
     assert (reader.n_ok, reader.n_failed) == (1, 1)
     assert [r.cid for r in records] == [702]
+
+
+@pytest.mark.parametrize("tag", [True, False])
+def test_a_record_is_the_structure_of_its_smiles(tmp_path, tag):
+    """Issue #187: read from PubChem's mol block, an imine keeps its N-H as an
+    atom, so the molecule that was fingerprinted was not the one of the SMILES
+    stored with it, and metformin scored 0.68 against its own SMILES."""
+    from rdkit import DataStructs
+    from rdkit.Chem import rdFingerprintGenerator
+
+    path = tmp_path / "imines.sdf"
+    path.write_text("".join(pubchem_block(cid, smiles, tag) for cid, smiles in IMINES))
+    records = {record.cid: record for record in SdfReader(path)}
+    assert set(records) == {cid for cid, _ in IMINES}
+    morgan = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=1024)
+    for cid, smiles in IMINES:
+        record = records[cid]
+        assert "[H]" not in record.smiles, record.smiles
+        if tag:
+            assert record.smiles == smiles  # PubChem's own text is kept
+        assert not any(atom.GetAtomicNum() == 1 for atom in record.mol.GetAtoms())
+        stored = morgan.GetFingerprint(record.mol)
+        shown = morgan.GetFingerprint(Chem.MolFromSmiles(record.smiles))
+        asked = morgan.GetFingerprint(Chem.MolFromSmiles(smiles))
+        assert DataStructs.TanimotoSimilarity(stored, shown) == 1.0, cid
+        assert DataStructs.TanimotoSimilarity(stored, asked) == 1.0, cid
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "CC(=O)OC1=CC=CC=C1\nC(=O)O",  # wrapped where its first line is a SMILES
+        "CC(=O)OC1=CC=CC=C1C(=O)O aspirin",
+        "CC(=O)OC1=CC=CC=C1C(=O)O |c:5,7,t:3|",
+    ],
+)
+def test_a_smiles_field_of_more_than_one_word_is_not_used(tmp_path, field):
+    """RDKit reads the first word of such text: the field passed as phenyl
+    acetate, and since the record is fingerprinted as its SMILES, aspirin no
+    longer matched itself (0.54). The mol block's own SMILES stands in."""
+    block = pubchem_block(2244, "CC(=O)OC1=CC=CC=C1C(=O)O", tag=False)
+    path = tmp_path / "wrapped.sdf"
+    path.write_text(block.replace("$$$$", f">  <PUBCHEM_SMILES>\n{field}\n\n$$$$"))
+    (record,) = SdfReader(path)
+    assert record.smiles == "CC(=O)Oc1ccccc1C(=O)O"
+    assert record.mol.GetNumAtoms() == 13
+    assert Chem.MolToSmiles(record.mol) == record.smiles

@@ -206,6 +206,41 @@ def _good_block(cid, smiles, name, tag):
     return mol
 
 
+def pubchem_block(cid, smiles, tag=True):
+    """One SDF record the way PubChem writes it: every hydrogen an atom, 2D
+    coordinates, plain double-bond lines, and (with ``tag``) the SMILES as a field.
+
+    RDKit's own writer marks a double bond of unknown geometry as "either", and a
+    reader then drops the hydrogens around it; PubChem's files carry no such
+    mark, so RDKit reads the geometry off the coordinates and keeps the N-H of an
+    imine as an atom.
+    """
+    from rdkit.Chem import AllChem
+
+    mol = Chem.AddHs(Chem.MolFromSmiles(smiles))
+    AllChem.Compute2DCoords(mol)
+    lines = Chem.MolToMolBlock(mol).splitlines()
+    first = 4 + mol.GetNumAtoms()
+    for i in range(first, first + mol.GetNumBonds()):
+        if lines[i][6:9].strip() == "2":
+            lines[i] = lines[i][:9] + "  0" + lines[i][12:]
+    text = "\n".join(lines) + f"\n>  <PUBCHEM_COMPOUND_CID>\n{cid}\n\n"
+    if tag:
+        text += f">  <PUBCHEM_SMILES>\n{smiles}\n\n"
+    return text + "$$$$\n"
+
+
+# Compounds with an imine or amidine N-H, as PubChem writes their SMILES, and
+# aspirin as one without.
+IMINES = [
+    (4091, "CN(C)C(=N)N=C(N)N"),  # metformin
+    (2332, "C1=CC=C(C=C1)C(=N)N"),  # benzamidine
+    (3520, "C(=N)(N)N"),  # guanidine
+    (586, "CN(CC(=O)O)C(=N)N"),  # creatine
+    (2244, "CC(=O)OC1=CC=CC=C1C(=O)O"),
+]
+
+
 def _bad_valence_block(cid):
     mol = Chem.MolFromSmiles("C(C)(C)(C)(C)C", sanitize=False)
     mol.UpdatePropertyCache(strict=False)

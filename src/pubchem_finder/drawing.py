@@ -33,7 +33,12 @@ from rdkit.Chem import (
 from rdkit.Chem.Draw import SimilarityMaps, rdMolDraw2D
 
 from .core.exceptions import InvalidInput, MoleculeValidationError
-from .core.limits import check_atoms, check_length
+from .core.limits import (
+    check_atoms,
+    check_length,
+    check_one_structure,
+    check_smiles_atoms,
+)
 
 Highlight = Literal["none", "smarts", "diff", "similarity_map"]
 MAX_MOLECULES = 24
@@ -71,6 +76,8 @@ def _parse(smiles: Sequence[str]) -> list[Chem.Mol]:
     mols: list[Chem.Mol] = []
     for i, s in enumerate(smiles):
         check_length(s.strip(), f"SMILES at position {i + 1}")
+        check_one_structure(s.strip(), f"SMILES at position {i + 1}")
+        check_smiles_atoms(s.strip(), f"SMILES at position {i + 1}")
         mol = Chem.MolFromSmiles(s.strip()) if s.strip() else None
         if mol is None:
             raise MoleculeValidationError(f"Invalid SMILES at position {i + 1}: {s!r}")
@@ -99,6 +106,7 @@ def smarts_highlights(
 ) -> tuple[list[list[int]], list[list[int]]]:
     """Atoms and bonds of every match of ``smarts`` in each molecule."""
     check_length(smarts, "SMARTS")
+    check_one_structure(smarts.strip(), "SMARTS")
     pattern = Chem.MolFromSmarts(smarts)
     if pattern is None:
         raise InvalidInput(f"Invalid SMARTS: {smarts!r}")

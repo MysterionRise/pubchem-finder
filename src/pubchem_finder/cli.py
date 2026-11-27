@@ -1,12 +1,20 @@
 """Command-line interface: ``pubchem-finder``."""
 
+import contextlib
+import errno
 import itertools
 import os
+import re
+import secrets
+import shutil
+import stat
 import sys
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import IO, Annotated, Any, cast
 
 import typer
 from pydantic import BaseModel
@@ -62,6 +70,10 @@ OutputOpt = Annotated[
         "-o",
         help="Batch mode: CSV file to write (default: stdout).",
         show_default=False,
+        # It is written, not read. Asking for a readable path refused a
+        # write-only file, and /dev/stdout on macOS, where a name for an open
+        # descriptor can be read only if the descriptor can.
+        readable=False,
     ),
 ]
 
@@ -168,6 +180,11 @@ def _warn_once(warning: str | None, seen: list[str]) -> None:
     if warning and warning not in seen:
         seen.append(warning)
         typer.echo(f"warning: {warning}", err=True)
+
+
+def _some(names: list[str]) -> str:
+    more = f" and {len(names) - 3} more" if len(names) > 3 else ""
+    return ", ".join(names[:3]) + more
 
 
 def _fail(exc: Exception) -> None:
@@ -318,6 +335,7 @@ def search(
     """
     if _batch_requested(smiles, input_file):
         warned: list[str] = []
+        cut: list[str] = []
 
         def one(row: batch.InputRow) -> list[dict[str, Any]]:
             found = service.similarity_search(
@@ -328,12 +346,28 @@ def search(
                 home=home,
             )
             _warn_once(found.warning, warned)
+            if found.truncated:
+                cut.append(row.id)
             return [
                 {"rank": rank, **hit.model_dump()}
                 for rank, hit in enumerate(found.hits, start=1)
             ]
 
         _run_batch(input_file, output, SEARCH_COLUMNS, one)
+        if cut:
+            # The CSV has no place for it, and a count of an input's rows would
+            # be read as its number of hits at the threshold.
+            more = (
+                f"raise --top (up to {service.MAX_TOP_K}) or --threshold"
+                if top < service.MAX_TOP_K
+                else "raise --threshold"
+            )
+            typer.echo(
+                f"note: {len(cut)} input(s) have more hits than --top {top} "
+                f"({_some(cut)}): their rows are the best {top}, not all; {more} "
+                "for complete lists",
+                err=True,
+            )
         return
     try:
         result = service.similarity_search(
@@ -352,10 +386,15 @@ def search(
         return
     if result.note:
         typer.echo(f"note: {result.note}", err=True)
+    if result.hint:
+        typer.echo(f"hint: {result.hint}", err=True)
     if result.warning:
         typer.echo(f"warning: {result.warning}", err=True)
+    # A list cut at --top is not the count at the threshold; say which it is.
+    n = len(result.hits)
+    count = f"top {n} of more than {n} hit(s)" if result.truncated else f"{n} hit(s)"
     typer.echo(
-        f"{len(result.hits)} hit(s) >= {result.threshold} {result.metric} "
+        f"{count} >= {result.threshold} {result.metric} "
         f"among {result.n_indexed:,} compounds ({result.fingerprint})"
     )
     for hit in result.hits:
@@ -445,6 +484,8 @@ def substructure(
     )
     if result.note:
         typer.echo(f"note: {result.note}", err=True)
+    if result.hint:
+        typer.echo(f"hint: {result.hint}", err=True)
     if result.warning:
         typer.echo(f"warning: {result.warning}", err=True)
     for hit in result.hits:
@@ -612,14 +653,14 @@ def _run_batch(
     try:
         reader = batch.read_inputs(input_file)
         # Read the first row now: that opens the input and checks its header before
-        # the output file is opened, and so emptied.
+        # anything is created for the output.
         first = next(reader, None)
         rows = itertools.chain([] if first is None else [first], reader)
         if output is None or str(output) == "-":
             report = batch.run(rows, sys.stdout, columns, fn)
             where = "stdout"
         else:
-            with output.open("w", newline="", encoding="utf-8") as fh:
+            with _replacing(output) as fh:
                 report = batch.run(rows, fh, columns, fn)
             where = str(output)
     except (InvalidInput, OSError) as exc:
@@ -630,15 +671,448 @@ def _run_batch(
         f"{report.errors} error(s)",
         err=True,
     )
+    if report.rows_in and report.errors == report.rows_in:
+        raise typer.Exit(code=1)
+
+
+# Paths that name an open descriptor rather than a file. `-i /dev/stdin` reads what
+# `-i -` reads; `-o /dev/stdout`, or the /dev/fd/63 that `-o >(command)` becomes,
+# writes to whatever that descriptor is: a pipe, or a file another program holds
+# open, which must be written through the descriptor and not replaced.
+_FD_PATH = re.compile(r"(?:/dev/fd|/proc/self/fd)/(\d+)")
+_DESCRIPTOR_PATH = re.compile(
+    r"/dev/(?:stdin|stdout|stderr|fd/\d+)|/proc/[^/]+/(?:task/[^/]+/)?fd/\d+"
+)
+_BINARY = getattr(os, "O_BINARY", 0)
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+
+
+def _input_descriptor(path: Path) -> int | None:
+    """The open descriptor ``path`` stands for (0 for ``-``), or None for a file."""
+    text = path.as_posix()
+    if text in ("-", "/dev/stdin"):
+        return 0
+    named = _FD_PATH.fullmatch(text)
+    return int(named.group(1)) if named else None
 
 
 def _same_file(a: Path, b: Path) -> bool:
-    if str(a) == "-" or not b.exists():
-        return False
+    """Whether the batch input ``a`` and the output ``b`` are one file.
+
+    Standard input counts when it is redirected from a file (`< lib.smi`):
+    reading a file while writing over it lost most of it. Piped input
+    (`cat lib.smi | ...`) cannot be recognised; :func:`_replacing` keeps that
+    case whole.
+    """
     try:
-        return os.path.samefile(a, b)
+        target = os.stat(b)
+        descriptor = _input_descriptor(a)
+        if descriptor is None:
+            return os.path.samestat(os.stat(a), target)
+        source = os.fstat(descriptor)
+        # A terminal or a pipe is not a file that could be written over.
+        return stat.S_ISREG(source.st_mode) and os.path.samestat(source, target)
+    except (OSError, ValueError, OverflowError):
+        # No such file or descriptor, or one that cannot be looked at. Nothing
+        # says the two are one file, and opening them reports what is wrong.
+        return False
+
+
+def _names_descriptor(path: Path) -> bool:
+    """Whether ``path`` is a name for an open descriptor, or a link to one
+    (`ln -s /dev/stdout out.csv`, for a program that wants a file name)."""
+    current = os.path.abspath(path)
+    for _ in range(40):  # links to links, as far as the kernel follows them
+        if _DESCRIPTOR_PATH.fullmatch(re.sub(r"^/+", "/", Path(current).as_posix())):
+            return True
+        try:
+            link = os.readlink(current)
+        except (OSError, ValueError):
+            return False  # no link: an ordinary name, or nothing yet
+        current = os.path.normpath(os.path.join(os.path.dirname(current), link))
+    return False
+
+
+def _replaceable(output: Path) -> tuple[Path, os.stat_result | None] | None:
+    """The regular file a batch writing ``output`` replaces, with what is known of
+    it now (None for a file that does not exist yet); or None when ``output`` has
+    to be written the way :func:`open` writes it.
+
+    That is the case for whatever is not a file of its own: a device, a FIFO, a
+    name for an open descriptor. And for a link the kernel does not follow, be it
+    dangling or refused (as one planted in a shared directory is): following it
+    here would overrule the kernel.
+    """
+    if _names_descriptor(output):
+        return None
+    try:
+        entry = os.lstat(output)
+    except FileNotFoundError:
+        return output, None  # or its directory is missing, which staging reports
+    except OSError:
+        return None
+    if stat.S_ISREG(entry.st_mode):
+        return output, entry
+    if not stat.S_ISLNK(entry.st_mode):
+        return None
+    try:
+        found = os.stat(output)  # the kernel follows the link, by its own rules
+        resolved = Path(os.path.realpath(output))
+        if stat.S_ISREG(found.st_mode) and os.path.samestat(found, os.stat(resolved)):
+            return resolved, found  # the link stays, the file it names is replaced
+    except OSError:
+        pass
+    return None
+
+
+def _part_stem(name: str) -> str:
+    """How the name of the partial file of an output called ``name`` begins: with
+    all of it, unless the 14 characters that follow (``.<random>.part``) would
+    make a name longer than a directory holds, 255 bytes."""
+    stem = name
+    while len(os.fsencode(stem)) > 255 - 14:
+        stem = stem[:-1]
+    return stem
+
+
+@dataclass
+class _Partial:
+    """The file a batch's rows are staged in until the run ends."""
+
+    handle: IO[str]
+    path: Path
+    beside: bool  # next to the output, where it can be renamed over it
+
+
+def _stage_beside(target: Path, private: bool) -> _Partial:
+    """Create the partial file for ``target`` next to it, under a name nothing has.
+
+    No file is removed or written over to make room for it: a name that can be
+    guessed could be the batch's own input, or a link someone put there. With
+    ``private`` only this user can read it: an existing output's mode, group and
+    access list say who may read its rows, and the partial file has none of them
+    until it takes the output's place.
+    """
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | _BINARY
+    while True:
+        name = f"{_part_stem(target.name)}.{secrets.token_hex(4)}.part"
+        part = target.with_name(name)
+        try:
+            descriptor = os.open(part, flags, 0o600 if private else 0o666)
+        except FileExistsError:
+            continue
+        handle = os.fdopen(descriptor, "w", newline="", encoding="utf-8")
+        return _Partial(handle, part, beside=True)
+
+
+def _is(path: Path, known: os.stat_result) -> bool:
+    """Whether ``path`` still names the file ``known`` describes."""
+    try:
+        now = os.lstat(path)
     except OSError:
         return False
+    return (now.st_dev, now.st_ino) == (known.st_dev, known.st_ino)
+
+
+def _reopen(path: Path, known: os.stat_result, flags: int) -> int:
+    """Open ``path`` if it is still the file ``known`` describes.
+
+    A batch can run for hours, in a directory where others may rename things.
+    What lies under a name at the end is read or written only if it is the file
+    this run made, or found at the start: never a link, never another file.
+    """
+    replaced = OSError(f"{path} was replaced by another file while the batch ran")
+    try:
+        descriptor = os.open(path, flags | _NOFOLLOW | _BINARY)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:  # a link now
+            raise replaced from exc
+        raise
+    now = os.fstat(descriptor)
+    if (now.st_dev, now.st_ino) != (known.st_dev, known.st_ino):
+        os.close(descriptor)
+        raise replaced
+    return descriptor
+
+
+def _attributes(file: int | Path) -> dict[str, bytes] | None:
+    """A file's extended attributes (an access list, a security label) where the
+    system lets Python read them, or None if they cannot be told."""
+    if not hasattr(os, "listxattr"):
+        return {}
+    try:
+        if isinstance(file, int):
+            return {name: os.getxattr(file, name) for name in os.listxattr(file)}
+        names = os.listxattr(file, follow_symlinks=False)
+        return {n: os.getxattr(file, n, follow_symlinks=False) for n in names}
+    except OSError as exc:
+        return {} if exc.errno in (errno.ENOTSUP, errno.EOPNOTSUPP) else None
+
+
+def _room(descriptor: int, folder: Path) -> int | None:
+    """Free bytes on the filesystem an open file is on, or None where that cannot
+    be told (a filesystem that reports no size at all reports no room either)."""
+    try:
+        if hasattr(os, "fstatvfs"):
+            volume = os.fstatvfs(descriptor)
+            return volume.f_bavail * volume.f_frsize if volume.f_blocks else None
+        usage = shutil.disk_usage(folder)  # Windows: the folder's volume is the file's
+        return usage.free if usage.total else None
+    except OSError:
+        return None
+
+
+def _publish(
+    partial: _Partial,
+    mine: os.stat_result,
+    target: Path,
+    previous: os.stat_result | None,
+) -> Path | None:
+    """Make the finished partial file the content of ``target``.
+
+    By renaming it into place where that changes nothing else: a new output, or
+    one with content, a single name, this user's owner and group and no access
+    list or attributes of its own. Any other output keeps what it has by being
+    written in place: so is an empty one, which a caller may hold open to read
+    the rows from (``tempfile.NamedTemporaryFile``), and one that cannot be
+    replaced, such as a file mounted into a container or one in a directory
+    that only lets its content change.
+
+    ``mine`` identifies the partial file: see :func:`_reopen`. Returns the
+    partial file if its rows were copied and it could then not be removed.
+    """
+    descriptor = partial.handle.fileno()
+    # What the output is by now. Its owner may have changed its mode or group
+    # while the batch ran, and the result is to have what the file has at the
+    # end. If it was removed or moved away there is nothing to write into: the
+    # rows become a new file of that name, with the mode the output had. What
+    # was found at the start stands only where another file has taken the name.
+    mode = None if previous is None else previous.st_mode & 0o777
+    try:
+        now = os.lstat(target)
+    except FileNotFoundError:
+        previous = None
+    except OSError:
+        pass
+    else:
+        same = previous is not None and (now.st_dev, now.st_ino) == (
+            previous.st_dev,
+            previous.st_ino,
+        )
+        if same:
+            previous, mode = now, now.st_mode & 0o777
+    # Read, write and execute only: a file of results has no use for the bits
+    # that lend its owner's or group's rights, least of all one made anew.
+    by_descriptor = os.chmod in os.supports_fd
+    rename = partial.beside and _is(partial.path, mine)
+    if previous is not None:
+        attributes = _attributes(descriptor)
+        rename = (
+            rename
+            and previous.st_size > 0
+            and previous.st_nlink == 1
+            and (previous.st_uid, previous.st_gid) == (mine.st_uid, mine.st_gid)
+            and attributes is not None
+            and attributes == _attributes(target)
+        )
+    if rename and mode is not None:
+        # Through the descriptor where the system can: the name may no longer
+        # be this file's. (It cannot on Windows before Python 3.13, where an
+        # open file keeps its name.)
+        try:
+            os.chmod(descriptor if by_descriptor else partial.path, mode)
+        except OSError:
+            rename = False
+    partial.handle.close()  # Windows renames no open file
+    if rename:
+        try:
+            os.replace(partial.path, target)
+        except OSError:
+            pass  # copied below, which asks less of the directory
+        else:
+            return None
+    with contextlib.ExitStack() as opened:
+        rows = opened.enter_context(
+            os.fdopen(_reopen(partial.path, mine, os.O_RDONLY), "rb")
+        )
+        if previous is None:
+            new = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _BINARY
+            created = os.open(target, new, 0o666 if mode is None else mode)
+            out = opened.enter_context(os.fdopen(created, "wb"))
+            if mode is not None:
+                # The mode the output had, which what the umask leaves of it is
+                # not. Where no mode can be set (a share that shows every file
+                # as one owner's), the file keeps what it was made with, which
+                # is never more than the output had.
+                with contextlib.suppress(OSError):
+                    os.chmod(created if by_descriptor else target, mode)
+        else:
+            out = opened.enter_context(
+                os.fdopen(_reopen(target, previous, os.O_WRONLY), "wb")
+            )
+            # The old content goes before the new is in: while it is still there,
+            # make sure the new will fit, on the filesystem the file is on (not
+            # the folder's, for a file mounted into it).
+            needed = mine.st_size - os.fstat(out.fileno()).st_size
+            room = _room(out.fileno(), target.parent)
+            if room is not None and needed > room:
+                raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+            out.truncate(0)
+        shutil.copyfileobj(rows, out)
+    try:
+        os.unlink(partial.path)
+    except OSError:
+        return partial.path  # a folder that lets files be made but not removed
+    return None
+
+
+def _stage(
+    output: Path, target: Path, previous: os.stat_result | None
+) -> _Partial | IO[str]:
+    """Where the rows of a run go until it ends: a partial file beside the output,
+    or in the system's temporary directory when nothing can be created beside an
+    output that exists. Where neither can be had, the output itself, opened to be
+    written directly: it is then not protected, and written as it always was.
+    """
+    try:
+        if previous is None:
+            try:
+                return _stage_beside(target, private=False)
+            except OSError:
+                # If the output itself can be created, the trouble was the
+                # partial file's (its longer name, say). If not, this is the
+                # error to report.
+                new = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _BINARY
+                descriptor = os.open(target, new, 0o666)
+                return os.fdopen(descriptor, "w", newline="", encoding="utf-8")
+        # Writable and not locked; its content is untouched. Not opened for
+        # appending: an append-only file would pass, and can then be neither
+        # replaced nor rewritten.
+        os.close(os.open(target, os.O_WRONLY | _BINARY))
+        with contextlib.suppress(OSError):
+            return _stage_beside(target, private=True)
+        try:
+            descriptor, name = tempfile.mkstemp(
+                prefix=f"{_part_stem(target.name)}.", suffix=".part"
+            )
+        except OSError:
+            descriptor = _reopen(target, previous, os.O_WRONLY)
+            os.ftruncate(descriptor, 0)
+            return os.fdopen(descriptor, "w", newline="", encoding="utf-8")
+        handle = os.fdopen(descriptor, "w", newline="", encoding="utf-8")
+        return _Partial(handle, Path(name), beside=False)
+    except OSError as exc:
+        if exc.errno is None or exc.strerror is None:
+            raise
+        # Name the file that was asked for, not a partial file or a link's target.
+        raise OSError(exc.errno, exc.strerror, str(output)) from exc
+
+
+def _earlier_partial_files(target: Path, mine: Path) -> list[str]:
+    stem = re.escape(_part_stem(target.name))
+    partial = re.compile(stem + r"\.[0-9a-f]{8}\.part")
+    try:
+        with os.scandir(target.parent) as entries:
+            names = [e.name for e in entries if partial.fullmatch(e.name)]
+    except OSError:
+        return []
+    return sorted(name for name in names if name != mine.name)
+
+
+def _from_interrupt(exc: BaseException | None) -> bool:
+    """Whether Ctrl+C is behind ``exc``: itself, or wrapped by a library that was
+    running Python code when it came (pydantic wraps one that arrives in a
+    serializer in a ValueError)."""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, KeyboardInterrupt):
+            return True
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
+@contextlib.contextmanager
+def _replacing(output: Path) -> Iterator[IO[str]]:
+    """Open a text file whose content becomes ``output`` when the block succeeds.
+
+    The rows are staged in a partial file that takes the output's place at the
+    end. So a run that stops early leaves an existing output as it was, and input
+    that is being piped from the output file is read to its end before the file
+    changes. What cannot be written is reported before the batch runs, not after
+    it: a missing directory, a read-only or locked output.
+
+    After an error the partial file is removed. After Ctrl+C it is kept, and so
+    it is when the run is killed: the rows finished so far may be hours of work.
+    No run removes the partial file of another.
+
+    A device, a pipe or an open descriptor (``-o /dev/stdout``) has nothing to
+    keep and is written directly: see :func:`_replaceable`.
+    """
+    plan = _replaceable(output)
+    if plan is None:
+        with output.open("w", newline="", encoding="utf-8") as direct:
+            yield direct
+        return
+    target, previous = plan
+    staged = _stage(output, target, previous)
+    if not isinstance(staged, _Partial):
+        with staged as direct:
+            yield direct
+        return
+    part = staged.path
+    left = _earlier_partial_files(target, part) if staged.beside else []
+    if left:
+        typer.echo(
+            f"note: {len(left)} partial file(s) of earlier runs lie beside {output} "
+            f"({_some(left)}); this run leaves them as they are",
+            err=True,
+        )
+    try:
+        yield staged.handle
+        staged.handle.flush()
+        mine = os.fstat(staged.handle.fileno())
+    except BaseException as exc:
+        with contextlib.suppress(OSError):
+            staged.handle.close()
+        if _from_interrupt(exc):
+            typer.echo(f"interrupted: the rows finished so far are in {part}", err=True)
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            raise KeyboardInterrupt from exc
+        with contextlib.suppress(OSError):  # the error that stopped the run counts
+            part.unlink()
+        if isinstance(exc, OSError) and exc.errno == errno.ENOSPC and not exc.filename:
+            # A full disk names no file, and the rows may be staged on another
+            # one than the output's.
+            where = "" if staged.beside else " (set TMPDIR to a directory with room)"
+            reason = f"{exc.strerror} where the rows are staged{where}"
+            raise OSError(exc.errno, reason, str(part)) from exc
+        raise
+    try:
+        copy = _publish(staged, mine, target, previous)
+        if copy is not None:
+            typer.echo(
+                f"note: the rows are in {output}; the partial file they were "
+                f"copied from could not be removed: {copy}",
+                err=True,
+            )
+    except KeyboardInterrupt:
+        if _is(part, mine):
+            typer.echo(
+                f"interrupted while {output} was being written: the complete rows "
+                f"are in {part}",
+                err=True,
+            )
+        raise
+    except OSError as exc:
+        kept = f"; the results are in {part}" if _is(part, mine) else ""
+        raise OSError(
+            f"could not write {output} ({exc.strerror or exc}){kept}"
+        ) from exc
+    finally:
+        with contextlib.suppress(OSError):
+            staged.handle.close()
 
 
 def _default_workers() -> int:
@@ -692,10 +1166,24 @@ def index_build(
     workers: Annotated[
         int, typer.Option(min=1, help="Parallel fingerprinting processes.")
     ] = _default_workers(),
-    radius: Annotated[int, typer.Option(min=1, max=6, help="Morgan radius.")] = 2,
+    radius: Annotated[
+        int | None,
+        typer.Option(
+            min=1,
+            max=6,
+            help="Morgan radius (existing index setting, or 2).",
+            show_default=False,
+        ),
+    ] = None,
     fp_size: Annotated[
-        int, typer.Option(min=64, max=8192, help="Fingerprint length in bits.")
-    ] = 1024,
+        int | None,
+        typer.Option(
+            min=64,
+            max=8192,
+            help="Fingerprint length in bits (existing index setting, or 1024).",
+            show_default=False,
+        ),
+    ] = None,
     keep_sdf: Annotated[
         bool, typer.Option(help="Keep downloaded SDF files after indexing them.")
     ] = False,
@@ -717,7 +1205,13 @@ def index_build(
     Re-running is safe: finished chunks are skipped, so an interrupted build
     resumes and a larger --limit adds chunks to an existing index.
     """
-    from .index.builder import BuildReport, SdfSource, build_chunks, finalize
+    from .index.builder import (
+        DEFAULT_FP_PARAMS,
+        BuildReport,
+        SdfSource,
+        build_chunks,
+        finalize,
+    )
     from .index.layout import IndexPaths, chunk_name
 
     chosen = sum([limit is not None, all_chunks, bool(sdf), demo])
@@ -733,8 +1227,15 @@ def index_build(
         )
         raise typer.Exit(code=2)
 
+    if (demo or chosen == 0) and (radius is not None or fp_size is not None):
+        typer.echo(
+            "error: --radius / --fp-size applies only when chunks are built "
+            "(--sdf, --limit, --all)",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
     paths = IndexPaths(resolve_home(home))
-    params = {"radius": radius, "fpSize": fp_size}
 
     def say(msg: str) -> None:
         typer.echo(msg, err=True)
@@ -744,6 +1245,12 @@ def index_build(
         return
 
     try:
+        completed = paths.completed_chunks()
+        params = dict(completed[0].fp_params if completed else DEFAULT_FP_PARAMS)
+        if radius is not None:
+            params["radius"] = radius
+        if fp_size is not None:
+            params["fpSize"] = fp_size
         if chosen == 0:
             report = BuildReport()
         elif sdf:

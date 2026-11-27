@@ -16,6 +16,83 @@ All notable changes to this project are documented here. The format follows
 - MCP output schemas now declare `pubchem_url` for compound records, search
   hits, and bioactivity summaries, matching the fields returned by the tools
   (#233).
+- The `compare` tool description and `ecfp4_tanimoto` field explain that its 2048-bit fingerprint can give a different score from the 1024-bit search default for the same pair. The scores and fingerprint settings are unchanged (#220).
+- SMILES and SMARTS inputs with a space, tab, line break, or non-ASCII character are refused with an error instead of being cut at that point. Previously `CCO CCN` or `CCO😀` was silently answered as ethanol. Clients that sent a `SMILES name` line or several structures in one string now get an error and should send one structure per call, joining the parts of a mixture with `.` (#212).
+- `index build` fingerprints the structure it stores and shows (#187). Read from
+  PubChem's mol block, a compound with an imine or amidine N-H kept that hydrogen as an
+  atom, so 0.8% of PubChem did not match themselves: metformin scored 0.68 against its
+  own SMILES, benzamidine 0.67 and guanidine 0.5, and at the default threshold of 0.7
+  they were not found at all. Records without a SMILES field no longer store
+  `[H]/N=...`, and a SMILES field of more than one word (a wrapped line, a name after
+  the SMILES) is not used: RDKit reads only its first word. A chunk built before this
+  fix keeps its fingerprints until it is built again; chunks built from now on record
+  `fingerprint_of: "smiles"`, so older ones can be told apart.
+- A SMARTS passed where a SMILES belongs is refused when its atoms are written as
+  atomic numbers (#212). RDKit reads `[#6]` in a SMILES as a carbon without hydrogens,
+  so phenol written `[#6]1:[#6]:[#6]:[#6]:[#6]:[#6]:1-[#8]` came back with a molecular
+  weight of 88.07 instead of 94.11. That covers atoms with an isotope too (`[13#6]`).
+  A CXSMILES extension (`C[C@H](N)C(=O)O |&1:1|`) is refused with a message that names
+  it: its stereo groups were read and then dropped, so a racemate came back as one
+  enantiomer. In a `.smi` batch file, where the extension used to be read as the start
+  of the row's id, the row now gets that error.
+- Local similarity results say when they were cut at `top_k` (#191). A list of 20 looked
+  like the whole answer, so counts were reported as totals: "17 hits in 4 series" where
+  44 compounds in 17 series reach the threshold. `similarity_search` returns
+  `truncated: true` and a sentence in `note` when more compounds reach the threshold
+  than were returned, the `search` command prints "top 20 of more than 20 hit(s)"
+  instead of "20 hit(s)", and the `find_analogues` prompt asks for 40 hits and tells
+  the model to say when its counts are partial. `search -i` writes the same CSV as
+  before and says on standard error which inputs had more hits than `--top`.
+- At most eight MCP tool calls to PubChem run at once, so lookups waiting for the rate limit no longer hold every worker thread and delay local tools (#200).
+- PubChem's gateway answers 502 and 504 are retried like 429 and 503, with the same
+  backoff; they used to fail on the first request. PubChem's own timeout fault is still
+  not retried (part of #199).
+- `medchem_profile` and `triage` give the synthetic accessibility and QED of the
+  structure without its isotope labels, and rotatable bonds are counted the same way
+  (#211). DMSO-d6 scored 7.93 where DMSO scores 3.11, [14C]urea 6.4 against 1.93, and
+  `CCO[2H]` had one rotatable bond. Molecular weight still includes the labels.
+- `index build` can extend an index after an RDKit or FPSim2 upgrade (#214). A chunk
+  another version fingerprinted is built again when its `--sdf` file is given and has
+  not changed, also when the file has moved, instead of blocking the build; such a file
+  is now fingerprinted again even when nothing is being added. A build that leaves
+  such a chunk as it is is still refused, and the refusal now names the one build that
+  brings every such chunk up to date (`index build --sdf` with all of their files)
+  where it used to offer only a new data directory. Where the index cannot name a
+  chunk's file (it was moved, removed or renamed, or the chunk records none), the
+  command has `--sdf FILE` in its place and the message says which file that has to be.
+  A chunk from PubChem's download is fingerprinted again from its SDF where `--keep-sdf`
+  kept it; without it the message keeps to the new data directory.
+- `pubchem_synonyms` and `pubchem synonyms` return an empty list for an existing
+  compound with no synonyms, instead of reporting it as not found (#223).
+- Demo similarity and substructure results keep their caveat in a short `note`
+  and expose build instructions and live-search alternatives separately in `hint`
+  (#224).
+- Index builds inherit existing fingerprint settings when `--radius` and
+  `--fp-size` are omitted. These options are refused with `--demo` or a
+  substructure-only build, which previously ignored them (#227).
+- Batch commands exit with status 1 when every input row fails, while retaining the error CSV and summary (#216).
+- Batch inputs with oversized CSV or TSV fields report the file and line. A parsing error after valid rows preserves an existing output file (#216).
+- Batch mode no longer destroys its input when standard input comes from the `-o` file
+  (#195). `props -i - -o lib.smi < lib.smi` kept 179 of 5,000 rows and
+  `cat lib.smi | props -i - -o lib.smi` 3,478, both with exit status 0. Input redirected
+  from the output file is now refused, as `-i lib.smi -o lib.smi` already was, also when
+  it is spelled `-i /dev/stdin`. The rows are written to a partial file
+  (`FILE.<random>.part` beside the output, or in the temporary directory when nothing can
+  be created there) and become the output when the run ends: piped input is read to its
+  end first, a run that stops early leaves an existing output file untouched, and Ctrl+C
+  keeps the rows finished so far in the partial file and says where it is. No run removes
+  a partial file; a run says when some lie beside its output. An output that cannot be written (a
+  missing directory, a read-only file) is reported before the first row is processed. An
+  existing output with content is replaced by a new file with the same permissions, so a program
+  that has the old file open keeps reading the old content. Where that would change more
+  than the content, or cannot be done, the finished rows are written into the file
+  instead: an empty file (which its maker may hold open), one with hard links, another
+  owner or group, on Linux an access list or other extended attributes, a file in a
+  read-only directory or mounted into a container. A device, a pipe or a name for an open
+  descriptor (`-o /dev/stdout`, `-o >(gzip > out.csv.gz)`) is written directly, as
+  before. The output no longer has to be readable, which had refused a write-only file,
+  and `-o /dev/stdout` under a pipe on macOS.
+
 - Local index searches report invalid `PUBCHEM_FINDER_INDEX_MODE` values instead of silently choosing `auto` (#228).
 - `compound_properties`, `medchem_profile`, and the JSON output of `props` and `triage` serialize molecular weight, LogP, and TPSA to three decimal places. Batch CSV uses the same precision for these descriptors (#162).
 - Recognize mixed-case SDF and gzip suffixes, reject filenames without a chunk name, and reuse existing chunks named by older releases (#152).
@@ -45,6 +122,12 @@ All notable changes to this project are documented here. The format follows
   RDKit cannot parse with a SMILES generated from the structure (#169). A chunk built
   before this fix keeps its stored values until its source file changes and is rebuilt.
 
+- A failed SDF chunk download no longer ends a build that may already have run for hours.
+  Timeouts, dropped connections and the 408, 425, 429, 500, 502, 503 and 504 answers from
+  the mirror are retried, up to four attempts with the pause doubling from five seconds,
+  and every attempt resumes at the bytes already in the `.part` file. The directory listing
+  is retried the same way. A permanent answer (a 404, a checksum file that cannot be read)
+  still fails on the first try (#121).
 
 
 

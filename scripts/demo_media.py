@@ -195,6 +195,18 @@ def paste_faded(
 Scene = Callable[[float], Image.Image]
 
 
+def found_caption(search: dict[str, Any]) -> str:
+    """ "top 40 hits" for a list that was cut at top_k, "17 hits" for a whole one.
+
+    Data collected before results said whether they were cut (the committed
+    docs/media/demo-data.json) has no ``truncated``: there a list as long as
+    top_k counts as cut, as it always did.
+    """
+    n = len(search["hits"])
+    cut = search.get("truncated", n == search.get("top_k"))
+    return f"{'top ' if cut else ''}{n} hits ≥ {search['threshold']} Tanimoto"
+
+
 def similarity_scene(
     query: Chem.Mol,
     query_name: str,
@@ -205,9 +217,7 @@ def similarity_scene(
     cards = [render_tile(t) for t in tiles]
     query_img = draw_mol(query, (360, 300))
     n_indexed = f"{search['n_indexed']:,}"
-    n = len(search["hits"])
-    capped = "top " if n == search.get("top_k") else ""
-    found = f"{capped}{n} hits ≥ {search['threshold']} Tanimoto"
+    found = found_caption(search)
     timing = f" in {ms:g} ms" if ms is not None else ""
     start, gap, duration = 1.6, 0.6, 1.6 + 0.6 * len(cards) + 1.6
 

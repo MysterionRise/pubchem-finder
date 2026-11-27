@@ -2,6 +2,8 @@
 
 import csv
 import io
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -48,6 +50,25 @@ def test_read_non_utf8_error_after_first_row(tmp_path):
         list(rows)
 
 
+@pytest.mark.parametrize("suffix", ["csv", "tsv"])
+def test_oversized_table_field_has_actionable_error(tmp_path, suffix):
+    delimiter = "," if suffix == "csv" else "\t"
+    path = tmp_path / f"large.{suffix}"
+    path.write_text(
+        "smiles"
+        + delimiter
+        + "comment\nCCO"
+        + delimiter
+        + "x" * (csv.field_size_limit() + 1)
+        + "\n"
+    )
+    with pytest.raises(InvalidInput) as exc:
+        list(batch.read_inputs(path))
+    assert str(path) in str(exc.value)
+    assert "line 2" in str(exc.value)
+    assert "field" in str(exc.value)
+
+
 def write(tmp_path, name, text):
     path = tmp_path / name
     path.write_text(text)
@@ -63,6 +84,217 @@ def test_read_smi(tmp_path):
         ("ethanol", "CCO"),
         ("4", "c1ccccc1"),
         ("ethyl amine", "CCN"),
+    ]
+
+
+def test_read_smi_keeps_a_cxsmiles_extension_with_its_smiles(tmp_path):
+    # `SMILES |&1:1| name` was read as the SMILES with "|&1:1| name" as its id,
+    # so a racemate was answered as one enantiomer (issue #212). With the
+    # extension the row is refused by name, as the same text is anywhere else.
+    path = write(
+        tmp_path,
+        "cx.smi",
+        "C[C@H](N)C(=O)O |&1:1| rac-alanine\n"
+        "C[C@H](N)C(=O)O\t|o1:1|\n"
+        "*CC(*)c1ccccc1 |$star_e;;;star_e;;;;;;$,Sg:n:1,2,4,5,6,7,8,9::ht| poly styrene\n"
+        "CC |$_AV:first atom;second atom$| with a space inside\n"
+        # One RDKit cannot read, and one that is not closed: extensions all the same.
+        "C[C@H](N)C(=O)O |&1:1,SgD:1:note:racemic| data\n"
+        "C[C@H](N)C(=O)O |&1:1\n"
+        "C[C@H](N)C(=O)O |r| the flag | and a bar in the name\n"
+        "C[C@H](N)C(=O)O L-alanine\n",
+    )
+    rows = list(batch.read_inputs(path))
+    assert [(r.id, r.smiles) for r in rows] == [
+        ("rac-alanine", "C[C@H](N)C(=O)O |&1:1|"),
+        ("2", "C[C@H](N)C(=O)O |o1:1|"),
+        (
+            "poly styrene",
+            "*CC(*)c1ccccc1 |$star_e;;;star_e;;;;;;$,Sg:n:1,2,4,5,6,7,8,9::ht|",
+        ),
+        ("with a space inside", "CC |$_AV:first atom;second atom$|"),
+        ("data", "C[C@H](N)C(=O)O |&1:1,SgD:1:note:racemic|"),
+        ("6", "C[C@H](N)C(=O)O |&1:1"),
+        ("the flag | and a bar in the name", "C[C@H](N)C(=O)O |r|"),
+        ("L-alanine", "C[C@H](N)C(=O)O"),
+    ]
+
+    out = io.StringIO()
+    report = batch.run(
+        rows,
+        out,
+        ["canonical_smiles"],
+        lambda row: [service.properties(row.smiles).model_dump()],
+    )
+    assert report.errors == 7
+    lines = list(csv.DictReader(io.StringIO(out.getvalue())))
+    assert all("CXSMILES" in line["error"] for line in lines[:7])
+    assert lines[7]["canonical_smiles"] == "C[C@H](N)C(=O)O"
+
+
+@pytest.mark.parametrize(
+    "extension",
+    [
+        "|(0,0,;1.5,0,;2.25,1.3,)|",  # coordinates, which RDKit writes with every conformer
+        "|(-0.75,1.299,0.5;0,0,0;1.5e-05,0,0)|",
+        "|(.5,-.25,;1.,0,;1E+02,2e3,)|",  # every way a number is written
+        "|(12.5,-120,;340.25,1e+10,)|",  # and with more digits than one
+        "|( 0 , 0 , ; 1.5 ,0, ;2.25, 1.3 , )|",
+        "|(nan,0,;inf,-inf,;2.25,1.3,)|",  # what RDKit writes where there is no number
+        "|(NaN,0,;-Infinity,0,)|",  # and what Java does
+        "|(0,0,;1.5,0,;2.25,1.3,),wD:1.0,&1:1|",  # with the next feature behind them
+        "|$;;R1$|",
+        "|$_AV:;note;$|",
+        "|^1:1|",
+        "|a:1|",
+        "|o1:1|",
+        "|&2:1|",
+        "|r|",
+        "|r,wU:1.0|",
+        "|c:5|",
+        "|t:5|",
+        "|ctu:5|",
+        "|w:1.0|",
+        "|wU:1.0|",
+        "|wD:1.0|",
+        "|m:2:3.5.4|",
+        "|f:0.1|",
+        "|s:1:*|",
+        "|u:1|",
+        "|C:0.0|",
+        "|H:2.1|",
+        "|Z:0|",
+        "|Sg:n:1::ht|",
+        "|SgD:1:note:x|",
+        "|SgH:0:1|",
+        "|LN:1:1.3|",
+        "|RG:_R1={C*}|",
+        "|LO:1:2|",
+        "|lp:0:2|",
+        "|rb:1:*|",
+        "|atomProp:0.p.v|",
+    ],
+)
+def test_read_smi_knows_each_kind_of_cxsmiles_extension(extension):
+    # One row for each way an extension begins: a kind the reader does not know
+    # would be the id again, and its row answered without the extension.
+    (row,) = batch._read_smi(io.StringIO(f"CCO {extension} the name\n"))
+    assert (row.smiles, row.id) == (f"CCO {extension}", "the name")
+
+
+@pytest.mark.parametrize(
+    "extension",
+    ["|&1:1", "|r", "|$;;R1$", "|(0,0,;1.5,0,;2.25,1.3,)", "|(0,0,;1.5,0,),wD:1.0"],
+)
+def test_read_smi_takes_an_extension_that_ends_with_the_row(extension):
+    # The closing bar is the one thing an extension may lack: a row that was cut
+    # off there still says what the bar would have closed.
+    (row,) = batch._read_smi(io.StringIO(f"CCO {extension}\n"))
+    assert (row.smiles, row.id) == (f"CCO {extension}", "1")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "|(S)-ibuprofen|",  # a third of the demo set's IUPAC names begin like this
+        "|(2S)-2-aminopropanoic acid|L-alanine",
+        "|(1,1-dimethylethyl)benzene",
+        # Numbers in parentheses that close, as coordinates do, and a name behind
+        # them where coordinates have the next feature or the closing bar.
+        "|(6,6)-phenyl-C61-butyric acid methyl ester|PCBM",
+        "|(1,2,4)triazolo(4,3-a)pyridin-3(2H)-one|",
+        "|(1,2) and (3,4)|",
+        "|(2,5,8,11-tetraoxatridecan-13-yl)phosphonic acid|",
+        "|(inflow,nanopure)|",  # words, for all that they begin like `inf` and `nan`
+        "|(702)|",  # one number is an id in parentheses: coordinates have a separator
+        "|()|",
+        "|(-)-nicotine|54-11-5",
+        "|(+)-tartaric acid",
+        "|$12.50|per litre",
+        "|racemate|",
+        "|t|",
+        "|c|",
+        "|Sgarbossa|",
+        "|atomProperties|",
+        "| c:5 | x",  # a table's cell, with the space psql puts after the bar
+        "ethanol |c:5|",  # the id came first: what follows it is the id's
+    ],
+)
+def test_read_smi_takes_a_name_in_bars_for_the_id(name):
+    # Coordinates are numbers and labels are closed: a name that begins with a
+    # parenthesis or a letter of the format is no extension.
+    (row,) = batch._read_smi(io.StringIO(f"CCO {name}\n"))
+    assert (row.smiles, row.id) == ("CCO", name)
+
+
+def test_read_smi_says_no_to_what_only_begins_like_coordinates_at_once():
+    # Numbers after `|(` that do not end as coordinates do: the locants of a long
+    # name, coordinates that were cut off with the file, a list that ends in a
+    # word. A pattern that can share out a number's digits in several ways tries
+    # every way for every number before it says no: 22 s for a name with 28
+    # locants and twice that for each one more, where these rows have 48. One
+    # row for each place where digits or blanks could be shared out: before the
+    # point, after it, in the exponent, and around the separators. Read in a
+    # child, so that such a pattern fails this test and does not hold the run.
+    locants = ",".join(str(n) for n in range(2, 144, 3))
+    rows = [
+        f"CCO |({locants}-octatetracontaoxapentatetracontahectan-145-yl)phosphonic acid|",
+        "CCO |(" + "".join(f"{120 + 15 * n},340,;" for n in range(48)),
+        "CCO |(" + ", ".join(str(2244 + 37 * n) for n in range(48)) + " and others)|",
+        "CCO |(" + "".join(f"{n}.5 , {n} , ; " for n in range(48)) + "and a name",
+        "CCO |(" + "".join(f"{n}.25e-05,.75e+10,;" for n in range(48)),
+    ]
+    script = (
+        "import io, sys\n"
+        "from pubchem_finder import batch\n"
+        "for row in batch._read_smi(io.StringIO(sys.stdin.read())):\n"
+        "    print(row.smiles, row.id)\n"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            input="\n".join(rows) + "\n",
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"the reader did not answer {len(rows)} rows in a minute")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == rows  # each of them a name: the id
+
+
+def test_read_smi_leaves_bars_that_are_no_extension_to_the_id(tmp_path):
+    # A table printed with bars between its columns (psql), an id in bars: not
+    # everything that begins with a bar after the SMILES is CXSMILES. Told by
+    # how it begins, whatever the cell holds: RDKit reads a number between bars
+    # as an extension that says nothing.
+    path = write(
+        tmp_path,
+        "bars.smi",
+        " CCO                   | ethanol\n"
+        " CCO                   |  702 | ethanol\n"
+        "CCO | ethanol | 64-17-5\n"
+        "CCO |ethanol|\n"
+        "CCO |702|\n"
+        "CCO || empty\n"
+        "CCO |  | blank\n"
+        "CCO | NULL | f\n"
+        "CCO |unfinished\n"
+        "CCO |\n",
+    )
+    rows = list(batch.read_inputs(path))
+    assert [(r.id, r.smiles) for r in rows] == [
+        ("| ethanol", "CCO"),
+        ("|  702 | ethanol", "CCO"),
+        ("| ethanol | 64-17-5", "CCO"),
+        ("|ethanol|", "CCO"),
+        ("|702|", "CCO"),
+        ("|| empty", "CCO"),
+        ("|  | blank", "CCO"),
+        ("| NULL | f", "CCO"),
+        ("|unfinished", "CCO"),
+        ("|", "CCO"),
     ]
 
 

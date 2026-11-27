@@ -129,22 +129,32 @@ def test_client_argument_validation(call, match):
 
 
 @pytest.mark.parametrize(
-    "response",
+    ("response", "retries"),
     [
-        httpx.Response(504, text="Gateway Timeout"),
-        httpx.Response(503, json=fx.fault("PUGREST.Timeout", "Request timed out")),
-        httpx.Response(500, json=fx.fault("PUGREST.Timeout", "Request timed out")),
+        (httpx.Response(504, text="Gateway Timeout"), True),
+        (
+            httpx.Response(504, json=fx.fault("PUGREST.Timeout", "Request timed out")),
+            False,
+        ),
+        (
+            httpx.Response(503, json=fx.fault("PUGREST.Timeout", "Request timed out")),
+            False,
+        ),
+        (
+            httpx.Response(500, json=fx.fault("PUGREST.Timeout", "Request timed out")),
+            False,
+        ),
     ],
 )
-def test_search_timeouts(response, monkeypatch):
-    monkeypatch.setattr("pubchem_finder.data.pug_rest.time.sleep", lambda s: None)
+def test_search_timeouts(response, retries, monkeypatch, fast_client):
+    monkeypatch.setattr(service, "get_client", lambda home=None: fast_client)
     with respx.mock() as router:
         route = router.post(url__regex=r".*fastsubstructure.*").mock(
             return_value=response
         )
         with pytest.raises(PubChemTimeout):
             service.pubchem_substructure_search("c1ccccc1")
-    assert route.call_count == 1  # a timeout is not retried
+    assert route.call_count == (fast_client.max_retries if retries else 1)
 
 
 def test_transport_timeout(monkeypatch):
@@ -177,8 +187,35 @@ def test_synonyms(pubchem_knowledge_api):
     assert result.total == 6
     with pytest.raises(BadQuery):
         service.pubchem_synonyms(2244, limit=0)
-    with pytest.raises(CompoundNotFound):
-        service.pubchem_synonyms(5)
+    assert service.pubchem_synonyms(5).synonyms == []
+
+
+@pytest.mark.parametrize("exists", [False, True])
+def test_synonyms_distinguishes_no_names_from_no_compound(
+    pubchem_knowledge_api, tmp_path, exists
+):
+    cid = 10
+    pubchem_knowledge_api.get(f"{fx.REST}/compound/cid/{cid}/synonyms/JSON").respond(
+        404, json=fx.NOT_FOUND
+    )
+    properties = pubchem_knowledge_api.get(
+        url__regex=rf"{fx.REST}/compound/cid/{cid}/property/.*"
+    ).respond(
+        200 if exists else 404,
+        json=fx.table(fx.row(cid, "Example", "C", "CH4", "16.04"))
+        if exists
+        else fx.NOT_FOUND,
+    )
+    if exists:
+        found = service.pubchem_synonyms(cid, home=tmp_path)
+        assert found.cid == cid
+        assert found.synonyms == []
+        assert found.cas_numbers == []
+        assert found.total == 0
+    else:
+        with pytest.raises(CompoundNotFound):
+            service.pubchem_synonyms(cid, home=tmp_path)
+    assert properties.call_count == 1
 
 
 def test_xrefs(pubchem_knowledge_api):
@@ -240,7 +277,7 @@ def test_xrefs_without_patents_when_pubchem_cannot_list_them(
         ),
         (
             httpx.Response(502, text="Bad Gateway"),
-            "could not be read (PubChem returned",
+            "too busy",
         ),
     ],
 )

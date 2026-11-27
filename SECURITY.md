@@ -11,7 +11,10 @@ Fixes are released for the latest version only.
 It runs locally. It makes outbound HTTPS requests only to PubChem
 (`pubchem.ncbi.nlm.nih.gov`) and, while building an index, to NCBI's download server
 (`ftp.ncbi.nlm.nih.gov`). It writes only to its data directory, to files you name with
-`--output`, and to the downloads folder inside the data directory.
+`--output`, and to the downloads folder inside the data directory. A batch command
+(`-i`) stages its rows in a partial file beside the `--output` file
+(`FILE.<random>.part`) until the run ends, or in the system's temporary directory when
+nothing can be created beside it.
 
 `pubchem-finder mcp` talks over stdio by default. With `--transport http` it also listens
 on a port: `127.0.0.1:8000` unless you choose otherwise. The HTTP server has no

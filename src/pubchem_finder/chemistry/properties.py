@@ -4,6 +4,18 @@ from rdkit import Chem
 from rdkit.Chem import rdMolDescriptors
 
 
+def unlabelled(mol: Chem.Mol) -> Chem.Mol:
+    """Copy of ``mol`` with isotope labels removed, so [2H] counts as plain H.
+
+    Labels such as deuterium are not chemical difficulty or flexibility; RDKit
+    would otherwise count them as extra atoms and unknown fragments.
+    """
+    plain = Chem.Mol(mol)
+    for atom in plain.GetAtoms():
+        atom.SetIsotope(0)
+    return Chem.RemoveHs(plain)
+
+
 def calculate_properties(mol: Chem.Mol) -> dict[str, float | int]:
     """
     Calculate common molecular properties.
@@ -23,7 +35,9 @@ def calculate_properties(mol: Chem.Mol) -> dict[str, float | int]:
         "num_h_donors": int(rdMolDescriptors.CalcNumHBD(mol)),
         "num_h_acceptors": int(rdMolDescriptors.CalcNumHBA(mol)),
         "tpsa": float(rdMolDescriptors.CalcTPSA(mol)),
-        "num_rotatable_bonds": int(rdMolDescriptors.CalcNumRotatableBonds(mol)),
+        "num_rotatable_bonds": int(
+            rdMolDescriptors.CalcNumRotatableBonds(unlabelled(mol))
+        ),
         "num_aromatic_rings": int(rdMolDescriptors.CalcNumAromaticRings(mol)),
         "num_heavy_atoms": int(mol.GetNumHeavyAtoms()),
     }

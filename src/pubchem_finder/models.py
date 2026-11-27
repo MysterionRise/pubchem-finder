@@ -90,7 +90,11 @@ class Comparison(BaseModel):
 
     smiles_a: str
     smiles_b: str
-    ecfp4_tanimoto: float = Field(description="Tanimoto on Morgan r=2, 2048 bits")
+    ecfp4_tanimoto: float = Field(
+        description="Tanimoto on Morgan r=2, 2048 bits. Search scores use 1024 bits "
+        "by default and can differ for the same pair; local search uses the "
+        "index's fingerprint settings"
+    )
     maccs_tanimoto: float = Field(description="Tanimoto on MACCS keys")
 
 
@@ -131,13 +135,27 @@ class SimilarityResults(BaseModel):
         description="'index': the local index built with `index build`; 'demo': the "
         "built-in demo set of FDA-approved drugs, searched while no index is built",
     )
+    truncated: bool = Field(
+        default=False,
+        description="True when more compounds reach the threshold than top_k: hits "
+        "and scaffolds then hold only the best top_k, so their counts are not "
+        "totals. Raise top_k (up to 1000) to see more, or the threshold for a "
+        "list that is complete",
+    )
     note: str | None = Field(
         default=None,
-        description="What was searched, when it was the demo set; tell the user",
+        description="Caveats in a sentence each: that the demo set was searched, "
+        "that the list was cut at top_k; tell the user",
+    )
+    hint: str | None = Field(
+        default=None,
+        description="How to search all of PubChem or build a local index when "
+        "the demo set was searched",
     )
     hits: list[SimilarityHit]
     scaffolds: list["ScaffoldGroup"] | None = Field(
-        default=None, description="Hits grouped by Murcko scaffold, when requested"
+        default=None,
+        description="The hits returned, grouped by Murcko scaffold, when requested",
     )
     warning: str | None = Field(
         default=None,
@@ -159,7 +177,12 @@ class SubstructureResults(BaseModel):
     )
     note: str | None = Field(
         default=None,
-        description="What was searched, when it was the demo set; tell the user",
+        description="A one-sentence caveat about the demo set searched; tell the user",
+    )
+    hint: str | None = Field(
+        default=None,
+        description="How to search all of PubChem or build a local index when "
+        "the demo set was searched",
     )
     n_candidates: int = Field(
         description="Compounds that passed the fingerprint screen: an upper bound on matches"
@@ -405,11 +428,13 @@ class MedchemProfile(BaseModel):
     input_smiles: str
     canonical_smiles: str
     qed: float = Field(
-        description="Quantitative estimate of drug-likeness, 0 (poor) to 1"
+        description="Quantitative estimate of drug-likeness, 0 (poor) to 1, of the "
+        "structure without isotope labels"
     )
     sa_score: float | None = Field(
         default=None,
-        description="Synthetic accessibility, 1 (easy) to 10 (very hard); None if unavailable",
+        description="Synthetic accessibility, 1 (easy) to 10 (very hard), of the "
+        "structure without isotope labels; None if unavailable",
     )
     molecular_weight: Descriptor
     logp: Descriptor

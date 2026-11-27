@@ -465,7 +465,15 @@ async def test_find_analogues_prompt():
     text = await text_of(
         "find_analogues", {"compound": "ibuprofen", "threshold": "0.70"}
     )
-    assert "similarity_search with threshold=0.7 and group_by_scaffold=true" in text
+    assert (
+        "similarity_search with threshold=0.7, top_k=40 and group_by_scaffold=true"
+        in text
+    )
+    assert "of the best 40, not totals" in text
+    # Issue #191: with the default top_k the list was cut at 20 and its counts
+    # reported as totals; ask for more and say when the result is still cut.
+    assert "truncated=true" in text
+    assert "not totals" in text
     assert 'search_scope is "demo"' in text
     # PubChem's search sends the structure there: offered, not run unasked.
     assert "offer to run pubchem_similarity_search" in text
@@ -636,3 +644,76 @@ async def test_pubchem_urls_are_declared_in_output_schemas():
 
         assert field_schema["type"] == "string", tool_name
         assert field_schema["readOnly"] is True, tool_name
+async def test_local_tools_do_not_queue_behind_pubchem_lookups(
+    monkeypatch, aspirin_smiles
+):
+    """Lookups waiting for the PubChem rate limit must not take every worker thread."""
+    import time
+
+    import anyio
+    import httpx
+
+    from pubchem_finder.data.pug_rest import PubChemClient
+    from tests.pubchem_fixtures import ASPIRIN, table
+
+    def answer(request):
+        return httpx.Response(200, json=table(ASPIRIN))
+
+    pubchem = PubChemClient(
+        client=httpx.Client(transport=httpx.MockTransport(answer)),
+        min_interval=0.1,
+        cache=None,
+    )
+    monkeypatch.setattr("pubchem_finder.service.get_client", lambda home=None: pubchem)
+    async with Client(mcp) as client, anyio.create_task_group() as tasks:
+        for cid in range(1, 61):  # more than the default pool's 40 threads
+            tasks.start_soon(
+                client.call_tool,
+                "pubchem_lookup",
+                {"query": str(cid), "by": "cid"},
+            )
+        await anyio.sleep(0.3)  # let the lookups queue behind the rate limit
+        started = time.monotonic()
+        result = await client.call_tool(
+            "compound_properties", {"smiles": aspirin_smiles}
+        )
+        waited = time.monotonic() - started
+        # Measured: the other 50-odd lookups need not run to their end, six
+        # seconds behind the rate limit.
+        tasks.cancel_scope.cancel()
+    assert result.is_error is False
+    assert waited < 0.5, (
+        f"compound_properties waited {waited:.2f}s behind PubChem lookups"
+    )
+
+
+async def test_pubchem_limiter_is_not_shared_across_event_loops():
+    """A limiter is bound to the loop it was first used in, so each loop gets its own."""
+    import asyncio
+
+    import anyio
+
+    from pubchem_finder.mcp_server import _pubchem_limiter
+
+    async def limiter_in_new_loop():
+        return _pubchem_limiter()
+
+    here = _pubchem_limiter()
+    there = await anyio.to_thread.run_sync(lambda: asyncio.run(limiter_in_new_loop()))
+    assert there is not here
+    assert _pubchem_limiter() is here
+
+
+async def test_compare_explains_why_search_scores_can_differ():
+    async with Client(mcp) as client:
+        listed = await client.list_tools()
+        tools = {tool.name: tool for tool in listed.tools}
+    compare = tools["compare"]
+    for description in (
+        compare.description,
+        compare.output_schema["properties"]["ecfp4_tanimoto"]["description"],
+    ):
+        assert "2048 bits" in description
+        assert "1024 bits" in description
+        assert "search" in description
+        assert "differ" in description

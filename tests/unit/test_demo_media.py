@@ -56,3 +56,15 @@ def test_single_component_skips_salts_and_mixtures():
     ]
     assert [h["cid"] for h in demo.single_component(hits, 5)] == [1, 4]
     assert [h["cid"] for h in demo.single_component(hits, 1)] == [1]
+
+
+def test_similarity_caption_says_top_only_for_a_list_that_was_cut():
+    demo = load_script()
+    hits = [{"cid": n} for n in range(40)]
+    search = {"hits": hits, "threshold": 0.6, "top_k": 40}
+    assert demo.found_caption({**search, "truncated": True}).startswith("top 40 hits")
+    # Exactly top_k compounds reach the threshold: the list is whole.
+    assert demo.found_caption({**search, "truncated": False}).startswith("40 hits")
+    # Data collected before results said so, like docs/media/demo-data.json.
+    assert demo.found_caption(search).startswith("top 40 hits")
+    assert demo.found_caption({**search, "top_k": 100}).startswith("40 hits")

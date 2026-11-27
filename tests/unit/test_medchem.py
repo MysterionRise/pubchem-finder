@@ -1,10 +1,16 @@
 """Tests for med-chem triage and scaffold grouping."""
 
+import csv
+import io
+import re
+
 import pytest
 from rdkit import Chem
 
 from pubchem_finder import medchem, service
+from pubchem_finder.chemistry import calculate_properties
 from pubchem_finder.core.exceptions import MoleculeValidationError
+from pubchem_finder.index import demo
 from pubchem_finder.models import SimilarityHit
 
 RHODANINE = "O=C1C(=Cc2ccccc2)SC(=S)N1"
@@ -50,6 +56,38 @@ def test_rule_violations_and_acyclic_scaffold():
     assert "H-bond donors > 5" in donors.lipinski_violations
     acceptors = profile("O=C(OC)C(=O)OC(=O)OC(=O)OC(=O)OC(=O)OC(=O)OC")
     assert "H-bond acceptors > 10" in acceptors.lipinski_violations
+
+
+def test_sa_score_ignores_isotope_labels():
+    # Isotope labels are not synthetic difficulty: a labelled solvent scores like its plain form.
+    assert medchem.sa_score(
+        Chem.MolFromSmiles("[2H]C([2H])([2H])S(=O)C([2H])([2H])[2H]")
+    ) == (medchem.sa_score(Chem.MolFromSmiles("CS(C)=O")))
+    assert medchem.sa_score(Chem.MolFromSmiles("[14C](=O)(N)N")) == (
+        medchem.sa_score(Chem.MolFromSmiles("NC(N)=O"))
+    )
+
+
+def test_every_labelled_demo_drug_scores_like_its_unlabelled_copy():
+    labelled = [
+        row["smiles"]
+        for row in csv.DictReader(
+            io.StringIO(demo.data().decode("utf-8")), delimiter="\t"
+        )
+        if re.search(r"\[\d", row["smiles"])
+    ]
+    assert len(labelled) > 10
+    for smiles in labelled:
+        plain = re.sub(r"\[(\d+)", "[", smiles)
+        assert medchem.sa_score(Chem.MolFromSmiles(smiles)) == medchem.sa_score(
+            Chem.MolFromSmiles(plain)
+        ), smiles
+
+
+def test_isotope_labels_do_not_change_rotatable_bonds():
+    assert (
+        calculate_properties(Chem.MolFromSmiles("CCO[2H]"))["num_rotatable_bonds"] == 0
+    )
 
 
 def test_sa_score_missing_contrib(monkeypatch):
