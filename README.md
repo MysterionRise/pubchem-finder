@@ -335,8 +335,11 @@ does it with the plain MCP client in under 50 lines (`uv run examples/mcp_client
 API key). For a LangGraph agent, see
 [examples/langgraph_client.py](https://github.com/MysterionRise/pubchem-finder/blob/master/examples/langgraph_client.py)
 (`OPENAI_API_KEY=... uv run examples/langgraph_client.py`). It uses
-`langchain-mcp-adapters` to connect the agent to the same MCP tools. Both examples
+LangChain's MCP adapter to connect the agent to the same MCP tools. Both examples
 start the server with `uvx --python 3.14 pubchem-finder mcp`.
+
+Examples for other frameworks are welcome, see
+[Example: PydanticAI or LlamaIndex #107](https://github.com/MysterionRise/pubchem-finder/issues/107).
 
 ## What leaves your machine
 

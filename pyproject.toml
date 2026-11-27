@@ -8,7 +8,7 @@ version = "2.2.3"
 description = "Search PubChem by chemical structure: a local similarity and substructure index, live PubChem tools, a CLI and an MCP server"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.11"
+requires-python = ">=3.11, <3.15"
 authors = [{ name = "Konstantin Perikov" }]
 keywords = ["cheminformatics", "pubchem", "rdkit", "similarity-search", "substructure-search", "mcp", "mcp-server", "claude"]
 classifiers = [
@@ -119,7 +119,7 @@ ignore_missing_imports = true
 # Agent-framework dependencies are installed by the standalone example,
 # not in the main project environment.
 [[tool.mypy.overrides]]
-module = ["langchain_mcp_adapters.*", "langchain_openai.*", "langgraph.*"]
+module = ["fastmcp.*", "langchain.*", "langchain_openai.*", "langgraph.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
