@@ -13,6 +13,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- MCP output schemas now declare `pubchem_url` for compound records, search
+  hits, and bioactivity summaries, matching the fields returned by the tools
+  (#233).
 - Local index searches report invalid `PUBCHEM_FINDER_INDEX_MODE` values instead of silently choosing `auto` (#228).
 - `compound_properties`, `medchem_profile`, and the JSON output of `props` and `triage` serialize molecular weight, LogP, and TPSA to three decimal places. Batch CSV uses the same precision for these descriptors (#162).
 - Recognize mixed-case SDF and gzip suffixes, reject filenames without a chunk name, and reuse existing chunks named by older releases (#152).
@@ -41,6 +44,8 @@ All notable changes to this project are documented here. The format follows
 - SDF indexing skips records with no atoms and replaces a `PUBCHEM_SMILES` tag that
   RDKit cannot parse with a SMILES generated from the structure (#169). A chunk built
   before this fix keeps its stored values until its source file changes and is rebuilt.
+
+
 
 
 ## [2.2.3] - 2026-11-11
