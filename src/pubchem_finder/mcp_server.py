@@ -106,15 +106,20 @@ LARGE_RESULTS = {"anthropic/maxResultSizeChars": 100_000}
 
 
 def _tool(
-    title: str, *, calls_pubchem: bool, large_results: bool = False
+    title: str,
+    *,
+    calls_pubchem: bool,
+    large_results: bool = False,
 ) -> Callable[[F], F]:
     """Register a tool with a title and annotations, as directory policies require.
 
-    Every tool only reads: its arguments, the local index or PubChem. The response
-    cache and the demo index (built on the first local search when no index
-    exists) are internal state, not the tool's environment. ``calls_pubchem`` marks
-    the tools that reach an external service (the open world); ``large_results``
-    the ones whose results can pass Claude Code's default size limit.
+    Every tool only reads: its arguments, the local index or PubChem. The PubChem
+    tools write responses to the cache in the data directory. The local similarity
+    and substructure searches build the demo index in the data directory on the
+    first search when no index exists. Both are internal state, not the tool's
+    environment. ``calls_pubchem`` marks the tools that reach an external service
+    (the open world); ``large_results`` the ones whose results can pass Claude
+    Code's default size limit.
     """
     return mcp.tool(
         title=title,

@@ -28,6 +28,64 @@ EXPECTED_TOOLS = {
 }
 
 
+def _assert_declared_properties(value, schema, root_schema, path):
+    """Check that returned JSON properties are declared in the output schema."""
+    if "$ref" in schema:
+        name = schema["$ref"].rsplit("/", 1)[-1]
+        schema = root_schema["$defs"][name]
+
+    if "anyOf" in schema:
+        for alternative in schema["anyOf"]:
+            try:
+                _assert_declared_properties(value, alternative, root_schema, path)
+                return
+            except AssertionError:
+                pass
+
+        raise AssertionError(f"{path}: no matching schema alternative")
+
+    if isinstance(value, dict):
+        assert schema.get("type") == "object", path
+        properties = schema.get("properties", {})
+        additional = schema.get("additionalProperties", False)
+
+        for key, item in value.items():
+            item_path = f"{path}.{key}"
+            field_schema = properties.get(key, additional)
+
+            assert field_schema is not False, f"{item_path}: missing from output schema"
+
+            if isinstance(field_schema, dict):
+                _assert_declared_properties(item, field_schema, root_schema, item_path)
+
+        return
+
+    if isinstance(value, list):
+        assert schema.get("type") == "array", path
+
+        for index, item in enumerate(value):
+            _assert_declared_properties(
+                item, schema["items"], root_schema, f"{path}[{index}]"
+            )
+
+        return
+
+    assert schema.get("type") not in {"object", "array"}, path
+
+
+def _assert_output_schema(tool, result):
+    assert not result.is_error, tool.name
+    assert result.structured_content is not None, tool.name
+    assert tool.output_schema is not None, tool.name
+
+    _assert_declared_properties(
+        result.structured_content,
+        tool.output_schema,
+        tool.output_schema,
+        tool.name,
+    )
+
+
 async def test_tools_are_listed_with_schemas():
     async with Client(mcp) as client:
         result = await client.list_tools()
@@ -85,9 +143,12 @@ async def test_unexpected_errors_name_their_cause(monkeypatch, aspirin_smiles):
 
 async def test_compound_properties_structured(aspirin_smiles):
     async with Client(mcp) as client:
+        tools = {t.name: t for t in (await client.list_tools()).tools}
         result = await client.call_tool(
             "compound_properties", {"smiles": aspirin_smiles}
         )
+
+    _assert_output_schema(tools["compound_properties"], result)
     assert result.is_error is False
     assert result.structured_content["canonical_smiles"] == "CC(=O)Oc1ccccc1C(=O)O"
     assert result.structured_content["molecular_weight"] == 180.159
@@ -121,8 +182,11 @@ async def test_invalid_smiles_is_tool_error(invalid_smiles):
 
 async def test_standardize_and_compare():
     async with Client(mcp) as client:
+        tools = {t.name: t for t in (await client.list_tools()).tools}
         std = await client.call_tool("standardize", {"smiles": "CC(=O)[O-].[Na+]"})
         cmp = await client.call_tool("compare", {"smiles_a": "CCO", "smiles_b": "CCO"})
+    _assert_output_schema(tools["standardize"], std)
+    _assert_output_schema(tools["compare"], cmp)
     assert std.structured_content["smiles"] == "CC(=O)O"
     assert cmp.structured_content["ecfp4_tanimoto"] == 1.0
 
@@ -130,8 +194,12 @@ async def test_standardize_and_compare():
 async def test_pubchem_lookup(pubchem_api, monkeypatch):
     monkeypatch.setattr("pubchem_finder.data.pug_rest.time.sleep", lambda s: None)
     async with Client(mcp) as client:
+        tools = {t.name: t for t in (await client.list_tools()).tools}
         ok = await client.call_tool("pubchem_lookup", {"query": "caffeine"})
         missing = await client.call_tool("pubchem_lookup", {"query": "notacompound"})
+
+    _assert_output_schema(tools["pubchem_lookup"], ok)
+
     assert ok.structured_content["compounds"][0]["cid"] == 2519
     assert ok.structured_content["compounds"][0]["pubchem_url"].endswith("/2519")
     assert missing.is_error is True
@@ -141,10 +209,14 @@ async def test_pubchem_lookup(pubchem_api, monkeypatch):
 async def test_similarity_search_and_status(built_home, monkeypatch):
     monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(built_home))
     async with Client(mcp) as client:
+        tools = {t.name: t for t in (await client.list_tools()).tools}
         status = await client.call_tool("index_status", {})
         result = await client.call_tool(
             "similarity_search", {"smiles": "CC(=O)Oc1ccccc1C(=O)O", "threshold": 0.3}
         )
+
+    _assert_output_schema(tools["index_status"], status)
+    _assert_output_schema(tools["similarity_search"], result)
     assert status.structured_content["state"] == "ready"
     assert result.is_error is False
     top = result.structured_content["hits"][0]
@@ -165,6 +237,8 @@ async def test_similarity_search_without_index(tmp_path, monkeypatch):
 async def test_substructure_search_tool(substructure_home, monkeypatch):
     monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(substructure_home))
     async with Client(mcp) as client:
+        tools = {t.name: t for t in (await client.list_tools()).tools}
+
         status = await client.call_tool("index_status", {})
         smiles = await client.call_tool(
             "substructure_search", {"query": "c1ccccc1C(=O)O"}
@@ -176,6 +250,8 @@ async def test_substructure_search_tool(substructure_home, monkeypatch):
         bad = await client.call_tool(
             "substructure_search", {"query": "[C", "query_type": "smarts"}
         )
+    _assert_output_schema(tools["substructure_search"], smiles)
+    _assert_output_schema(tools["substructure_search"], smarts)
     assert status.structured_content["substructure"] is True
     assert smiles.is_error is False
     assert [h["cid"] for h in smiles.structured_content["hits"]] == [
@@ -251,6 +327,14 @@ async def test_pubchem_knowledge_tools(pubchem_knowledge_api):
     assert desc.structured_content["title"] == "Aspirin"
     assert exact.structured_content["hits"][0]["cid"] == 2244
     assert len(sub.structured_content["hits"]) == 2
+    _assert_output_schema(tools["pubchem_similarity_search"], sim)
+    _assert_output_schema(tools["pubchem_synonyms"], syn)
+    _assert_output_schema(tools["pubchem_annotations"], ghs)
+    _assert_output_schema(tools["pubchem_bioactivity"], bio)
+    _assert_output_schema(tools["pubchem_xrefs"], xrefs)
+    _assert_output_schema(tools["pubchem_description"], desc)
+    _assert_output_schema(tools["pubchem_exact_match"], exact)
+    _assert_output_schema(tools["pubchem_substructure_search"], sub)
 
 
 async def test_annotation_and_timeout_errors_are_actionable(pubchem_knowledge_api):
@@ -326,6 +410,7 @@ async def test_draw_molecules_returns_png_image():
 async def test_medchem_profile_and_scaffold_grouping(built_home, monkeypatch):
     monkeypatch.setenv("PUBCHEM_FINDER_HOME", str(built_home))
     async with Client(mcp) as client:
+        tools = {t.name: t for t in (await client.list_tools()).tools}
         triage = await client.call_tool(
             "medchem_profile", {"smiles": "O=C1C(=Cc2ccccc2)SC(=S)N1"}
         )
@@ -337,6 +422,8 @@ async def test_medchem_profile_and_scaffold_grouping(built_home, monkeypatch):
                 "group_by_scaffold": True,
             },
         )
+    _assert_output_schema(tools["medchem_profile"], triage)
+    _assert_output_schema(tools["similarity_search"], grouped)
     assert triage.structured_content["pains_free"] is False
     scaffolds = grouped.structured_content["scaffolds"]
     assert scaffolds[0]["scaffold"] == "c1ccccc1"
@@ -524,6 +611,39 @@ async def test_oversized_smiles_get_a_tool_error_not_a_crash():
     assert after.is_error is False
 
 
+async def test_pubchem_urls_are_declared_in_output_schemas():
+    """Every returned pubchem_url must be declared in the published schema."""
+    expected_paths = {
+        "pubchem_lookup": ("compounds", "items", "pubchem_url"),
+        "similarity_search": ("hits", "items", "pubchem_url"),
+        "substructure_search": ("hits", "items", "pubchem_url"),
+        "pubchem_similarity_search": ("hits", "items", "pubchem_url"),
+        "pubchem_substructure_search": ("hits", "items", "pubchem_url"),
+        "pubchem_exact_match": ("hits", "items", "pubchem_url"),
+        "pubchem_bioactivity": ("pubchem_url",),
+    }
+
+    async with Client(mcp) as client:
+        result = await client.list_tools()
+
+    tools = {tool.name: tool for tool in result.tools}
+
+    for tool_name, path in expected_paths.items():
+        schema = tools[tool_name].output_schema
+        field_schema = schema
+
+        for segment in path:
+            if "$ref" in field_schema:
+                definition_name = field_schema["$ref"].rsplit("/", 1)[-1]
+                field_schema = schema["$defs"][definition_name]
+
+            if segment == "items":
+                field_schema = field_schema["items"]
+            else:
+                field_schema = field_schema["properties"][segment]
+
+        assert field_schema["type"] == "string", tool_name
+        assert field_schema["readOnly"] is True, tool_name
 async def test_local_tools_do_not_queue_behind_pubchem_lookups(
     monkeypatch, aspirin_smiles
 ):

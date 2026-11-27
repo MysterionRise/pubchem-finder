@@ -13,6 +13,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- MCP output schemas now declare `pubchem_url` for compound records, search
+  hits, and bioactivity summaries, matching the fields returned by the tools
+  (#233).
 - The `compare` tool description and `ecfp4_tanimoto` field explain that its 2048-bit fingerprint can give a different score from the 1024-bit search default for the same pair. The scores and fingerprint settings are unchanged (#220).
 - SMILES and SMARTS inputs with a space, tab, line break, or non-ASCII character are refused with an error instead of being cut at that point. Previously `CCO CCN` or `CCO😀` was silently answered as ethanol. Clients that sent a `SMILES name` line or several structures in one string now get an error and should send one structure per call, joining the parts of a mixture with `.` (#212).
 - `index build` fingerprints the structure it stores and shows (#187). Read from
@@ -125,6 +128,8 @@ All notable changes to this project are documented here. The format follows
   and every attempt resumes at the bytes already in the `.part` file. The directory listing
   is retried the same way. A permanent answer (a 404, a checksum file that cannot be read)
   still fails on the first try (#121).
+
+
 
 ## [2.2.3] - 2026-11-11
 

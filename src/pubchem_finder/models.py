@@ -1,8 +1,8 @@
 """Pydantic models shared by the CLI and the MCP server."""
 
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import BaseModel, Field, PlainSerializer, computed_field
+from pydantic import BaseModel, Field, PlainSerializer, model_validator
 
 PUBCHEM_COMPOUND_URL = "https://pubchem.ncbi.nlm.nih.gov/compound/{cid}"
 
@@ -25,10 +25,12 @@ class CompoundRecord(BaseModel):
     h_bond_acceptors: int | None = None
     tpsa: float | None = None
 
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def pubchem_url(self) -> str:
-        return PUBCHEM_COMPOUND_URL.format(cid=self.cid)
+    pubchem_url: str = Field(default="", json_schema_extra={"readOnly": True})
+
+    @model_validator(mode="after")
+    def populate_pubchem_url(self) -> Self:
+        self.pubchem_url = PUBCHEM_COMPOUND_URL.format(cid=self.cid)
+        return self
 
 
 class LookupResult(BaseModel):
@@ -106,10 +108,12 @@ class IndexedCompound(BaseModel):
     molecular_formula: str | None = None
     molecular_weight: float | None = None
 
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def pubchem_url(self) -> str:
-        return PUBCHEM_COMPOUND_URL.format(cid=self.cid)
+    pubchem_url: str = Field(default="", json_schema_extra={"readOnly": True})
+
+    @model_validator(mode="after")
+    def populate_pubchem_url(self) -> Self:
+        self.pubchem_url = PUBCHEM_COMPOUND_URL.format(cid=self.cid)
+        return self
 
 
 class SimilarityHit(IndexedCompound):
@@ -367,10 +371,14 @@ class BioactivitySummary(BaseModel):
         "value is not always the most meaningful: check the assay"
     )
 
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def pubchem_url(self) -> str:
-        return PUBCHEM_COMPOUND_URL.format(cid=self.cid) + "#section=BioAssay-Results"
+    pubchem_url: str = Field(default="", json_schema_extra={"readOnly": True})
+
+    @model_validator(mode="after")
+    def populate_pubchem_url(self) -> Self:
+        self.pubchem_url = (
+            PUBCHEM_COMPOUND_URL.format(cid=self.cid) + "#section=BioAssay-Results"
+        )
+        return self
 
 
 class Annotation(BaseModel):
