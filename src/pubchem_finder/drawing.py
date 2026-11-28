@@ -291,6 +291,10 @@ def atom_contributions(reference: Chem.Mol, probe: Chem.Mol) -> list[float]:
 
 
 LEGEND_HEIGHT = 28
+LEGEND_FONT_SIZE = 16
+LEGEND_LINE_HEIGHT = 20
+MAX_LEGEND_LINES = 3
+LEGEND_PADDING = 8
 # RDKit shrinks atom labels along with the molecule, down to 6 px by default,
 # which makes drug-sized molecules unreadable in a 300 px panel.
 MIN_FONT_SIZE = 13
@@ -302,10 +306,62 @@ def _draw_options() -> Draw.MolDrawOptions:
     return options
 
 
+def _legend_lines(legend: str, size: int) -> list[str]:
+    """Wrap to the caption's pixel width, keeping a fixed font and at most three lines."""
+    font = ImageFont.load_default(size=LEGEND_FONT_SIZE)
+    width = size - 2 * LEGEND_PADDING
+    paragraphs = [" ".join(p.split()) for p in legend.splitlines() if p.strip()]
+    lines: list[str] = []
+    for index, text in enumerate(paragraphs):
+        while text:
+            low, high = 0, len(text)
+            while low < high:
+                mid = (low + high + 1) // 2
+                if font.getlength(text[:mid]) <= width:
+                    low = mid
+                else:
+                    high = mid - 1
+            end = low
+            if end < len(text) and (space := text.rfind(" ", 0, end + 1)) > 0:
+                end = space
+            lines.append(text[:end].rstrip())
+            text = text[end:].lstrip()
+            if len(lines) == MAX_LEGEND_LINES:
+                if text or index < len(paragraphs) - 1:
+                    while font.getlength(lines[-1] + "…") > width:
+                        lines[-1] = lines[-1][:-1].rstrip()
+                    lines[-1] += "…"
+                return lines
+    return lines
+
+
+def _legend_height(lines: Sequence[str]) -> int:
+    return LEGEND_HEIGHT + (len(lines) - 1) * LEGEND_LINE_HEIGHT if lines else 0
+
+
+def _draw_legend(
+    panel: PILImage.Image, lines: Sequence[str], size: int, x: int, y: int
+) -> None:
+    font = ImageFont.load_default(size=LEGEND_FONT_SIZE)
+    draw = ImageDraw.Draw(panel)
+    for i, line in enumerate(lines):
+        draw.text(
+            (x + size / 2, y + 6 + i * LEGEND_LINE_HEIGHT),
+            line,
+            fill="black",
+            font=font,
+            anchor="mt",
+        )
+
+
 def _similarity_map_png(
-    reference: Chem.Mol, probe: Chem.Mol, size: int, legend: str
+    reference: Chem.Mol,
+    probe: Chem.Mol,
+    size: int,
+    lines: Sequence[str],
+    caption_height: int,
 ) -> bytes:
-    map_height = size - LEGEND_HEIGHT if legend else size
+    map_height = size - caption_height
     drawer = rdMolDraw2D.MolDraw2DCairo(size, map_height)
     drawer.drawOptions().minFontSize = MIN_FONT_SIZE  # type: ignore[assignment]
     weights = atom_contributions(reference, probe)
@@ -317,16 +373,7 @@ def _similarity_map_png(
     panel.paste(
         PILImage.open(io.BytesIO(drawer.GetDrawingText())).convert("RGB"), (0, 0)
     )
-    if legend:
-        # Pillow draws captions at a fixed size; RDKit would scale them with the molecule.
-        font = ImageFont.load_default(size=16)
-        ImageDraw.Draw(panel).text(
-            (size / 2, size - LEGEND_HEIGHT / 2),
-            legend,
-            fill="black",
-            font=font,
-            anchor="mm",
-        )
+    _draw_legend(panel, lines, size, 0, map_height)
     out = io.BytesIO()
     panel.save(out, format="PNG")
     return out.getvalue()
@@ -358,7 +405,8 @@ def draw_grid(
 
     Args:
         smiles: Molecules to draw.
-        legends: One caption per molecule (defaults to none).
+        legends: One caption per molecule (defaults to none). Captions wrap to
+            three lines at a fixed font size; longer text ends in an ellipsis.
         highlight: ``none``, ``smarts`` (needs ``smarts``), ``diff`` or
             ``similarity_map`` (both need ``reference``).
         smarts: Pattern to highlight in ``smarts`` mode.
@@ -396,9 +444,11 @@ def draw_grid(
             )
         # Only to align depictions to the shared core.
         diff_highlights([m for m in mols if m.GetNumAtoms() <= ALIGN_MAX_ATOMS], ref)
+        captions = [_legend_lines(label, size) for label in labels]
+        caption_height = max(map(_legend_height, captions))
         panels = [
-            _similarity_map_png(ref, mol, size, label)
-            for mol, label in zip(mols, labels, strict=True)
+            _similarity_map_png(ref, mol, size, lines, caption_height)
+            for mol, lines in zip(mols, captions, strict=True)
         ]
         return _tile(panels, per_row, size)
 
@@ -410,18 +460,37 @@ def draw_grid(
         atom_lists, bond_lists, not_computed = diff_highlights(mols, ref)
         for position in not_computed:
             label = labels[position]
-            labels[position] = f"{label} ({NOT_COMPUTED})" if label else NOT_COMPUTED
+            # Keep the scientific warning visible even when the user's caption is cut.
+            labels[position] = f"{NOT_COMPUTED}\n{label}" if label else NOT_COMPUTED
     elif highlight != "none":
         raise InvalidInput(f"Unknown highlight mode {highlight!r}")
 
+    captions = [_legend_lines(label, size) for label in labels]
+    caption_height = max(map(_legend_height, captions))
+    molecule_height = size - caption_height
+    cols = min(per_row, len(mols))
     png = Draw.MolsToGridImage(  # type: ignore[no-untyped-call]
         mols,
-        molsPerRow=min(per_row, len(mols)),
-        subImgSize=(size, size),
-        legends=labels,
+        molsPerRow=cols,
+        subImgSize=(size, molecule_height),
+        legends=[""] * len(mols),
         highlightAtomLists=atom_lists,
         highlightBondLists=bond_lists,
         returnPNG=True,
         drawOptions=_draw_options(),
     )
-    return bytes(png)
+    if not caption_height:
+        return bytes(png)
+    molecules = PILImage.open(io.BytesIO(png)).convert("RGB")
+    rows = (len(mols) + cols - 1) // cols
+    canvas = PILImage.new("RGB", (cols * size, rows * size), "white")
+    for i, lines in enumerate(captions):
+        x, row = (i % cols) * size, i // cols
+        molecule = molecules.crop(
+            (x, row * molecule_height, x + size, (row + 1) * molecule_height)
+        )
+        canvas.paste(molecule, (x, row * size))
+        _draw_legend(canvas, lines, size, x, row * size + molecule_height)
+    out = io.BytesIO()
+    canvas.save(out, format="PNG", optimize=True)
+    return out.getvalue()

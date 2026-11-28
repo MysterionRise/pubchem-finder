@@ -421,6 +421,8 @@ async def test_triage_structures_prompt():
     listed = await text_of("triage_structures", {"structures": "CCO,c1ccccc1,"})
     assert "these structures:\n- CCO\n- c1ccccc1\n" in listed
     assert "medchem_profile" in listed
+    assert "alert count as short legends" in listed
+    assert "List the alert names in the text" in listed
     empty = await text_of("triage_structures", {})
     assert "ask me for them as SMILES" in empty
     # The assistant has to pass on what standardizing changed.
