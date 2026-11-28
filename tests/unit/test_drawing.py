@@ -3,7 +3,7 @@
 import io
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from rdkit import Chem
 
 from pubchem_finder import drawing
@@ -344,17 +344,24 @@ def test_a_difference_that_cannot_be_computed_is_labelled(monkeypatch):
         return real(mols, **kwargs)
 
     monkeypatch.setattr(drawing.Draw, "MolsToGridImage", spy)
+    drawn_text = []
+    real_text = ImageDraw.ImageDraw.text
+
+    def record_text(self, xy, text, **kwargs):
+        drawn_text.append(text)
+        return real_text(self, xy, text, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record_text)
     png = drawing.draw_grid(
         [DOLUTEGRAVIR, DOLUTEGRAVIR],
-        legends=["dolutegravir", ""],
+        legends=["dolutegravir " * 500, ""],
         highlight="diff",
         reference=CABOTEGRAVIR,
     )
     assert png.startswith(b"\x89PNG")
-    assert seen["legends"] == [
-        "dolutegravir (difference not computed)",
-        "difference not computed",
-    ]
+    assert seen["legends"] == ["", ""]  # Pillow captions keep a readable font.
+    assert drawn_text.count("difference not computed") == 2
+    assert any(text.endswith("…") for text in drawn_text)
     assert seen["highlightAtomLists"] == [[], []]  # not the whole molecule
 
 
@@ -424,3 +431,91 @@ def test_similarity_maps_are_bounded(monkeypatch):
     assert aligned == [9]  # the long chain keeps RDKit's own layout
     with pytest.raises(InvalidInput, match="2,700 atoms in one request"):
         drawing.draw_grid(["C" * 900] * 3, highlight="similarity_map", reference="CCO")
+
+
+def _dark_row_bands(img):
+    rows = [
+        y
+        for y in range(img.height)
+        if any(max(img.getpixel((x, y))) < 128 for x in range(img.width))
+    ]
+    bands = []
+    for y in rows:
+        if not bands or y > bands[-1][-1] + 1:
+            bands.append([y])
+        else:
+            bands[-1].append(y)
+    return bands
+
+
+@pytest.mark.parametrize("mode", ["none", "similarity_map"])
+@pytest.mark.parametrize(
+    "legend",
+    [
+        "ene_rhod_A(235) [PAINS]; rhodanine [NIH]; Michael_acceptor_1, Thiocarbonyl_group [Brenk]; two more alerts",
+        "W" * 100,
+        "W" * 5000,
+    ],
+)
+def test_long_captions_render_readable_rows_without_clipping(mode, legend):
+    img = image(
+        drawing.draw_grid([ASPIRIN], [legend], highlight=mode, reference=SALICYLIC)
+    ).convert("RGB")
+    assert img.size == (300, 300)
+    caption = img.crop((0, 232, 300, 300))
+    bands = _dark_row_bands(caption)
+    assert len(bands) == 3
+    assert all(len(band) >= 10 for band in bands)
+    # A clipped single line reaches a panel edge; wrapped captions leave padding.
+    assert all(
+        max(caption.getpixel((x, y))) >= 128 for x in [0, 299] for y in range(68)
+    )
+
+
+@pytest.mark.parametrize("size", [150, 300, 600])
+@pytest.mark.parametrize(
+    "legend", ["short caption", "W" * 5000, "first\nsecond\nthird\nfourth"]
+)
+def test_legend_layout_is_bounded_in_pixels(size, legend):
+    lines = drawing._legend_lines(legend, size)
+    font = ImageFont.load_default(size=16)
+    assert 1 <= len(lines) <= 3
+    assert all(font.getlength(line) <= size - 16 for line in lines)
+    if len(legend) > 100 or "fourth" in legend:
+        assert lines[-1].endswith("…")
+    else:
+        assert lines == [legend]
+
+
+@pytest.mark.parametrize("mode", ["none", "similarity_map"])
+def test_unicode_caption_uses_the_existing_pillow_font(mode):
+    legend = "IC50 5 µM"
+    img = image(
+        drawing.draw_grid([ASPIRIN], [legend], highlight=mode, reference=SALICYLIC)
+    )
+    caption = img.convert("RGB").crop((0, 272, 300, 300))
+    expected = Image.new("RGB", (300, 28), "white")
+    ImageDraw.Draw(expected).text(
+        (150, 6),
+        legend,
+        fill="black",
+        font=ImageFont.load_default(size=16),
+        anchor="mt",
+    )
+    assert caption.tobytes() == expected.tobytes()
+
+
+@pytest.mark.parametrize("mode", ["none", "similarity_map"])
+def test_mixed_captions_keep_grid_rows_and_empty_cells(mode):
+    img = image(
+        drawing.draw_grid(
+            [ASPIRIN, SALICYLIC, "CCO"],
+            ["short", "W" * 100, ""],
+            highlight=mode,
+            reference=ASPIRIN,
+            per_row=2,
+            size=150,
+        )
+    ).convert("RGB")
+    assert img.size == (300, 300)
+    assert img.crop((150, 150, 300, 300)).getextrema() == ((255, 255),) * 3

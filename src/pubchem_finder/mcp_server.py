@@ -458,7 +458,8 @@ async def draw_molecules(
 ) -> Image:
     """Draw 1-24 molecules as a PNG grid image the user can see.
 
-    legends: one caption per molecule (names or CIDs). highlight:
+    legends: one short caption per molecule (names or CIDs); wraps to three lines,
+    with an ellipsis for longer text. highlight:
     - "smarts": atoms matching the smarts pattern (e.g. a pharmacophore or an alert),
     - "diff": what each molecule adds relative to reference_smiles (atoms outside
       their maximum common substructure), with drawings aligned to the shared core.
@@ -647,7 +648,8 @@ def triage_structures(structures: str = "") -> str:
         "synthetic accessibility, Lipinski and Veber rules, PAINS/Brenk/NIH alerts. Show "
         "one table ranked from most to least promising, with the reason for each "
         "rank. Then draw the structures that have alerts with draw_molecules, their "
-        "alert names as legends, and say what each alert is about."
+        "index or CID and alert count as short legends. List the alert names in "
+        "the text and say what each alert is about."
     )
 
 
